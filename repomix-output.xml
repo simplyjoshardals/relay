@@ -1,0 +1,2300 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+app/
+  dashboard/
+    page.tsx
+  favicon.ico
+  globals.css
+  layout.tsx
+  page.tsx
+components/
+  dashboard/
+    ActivityFeed.tsx
+    Avatar.tsx
+    IncidentsPanel.tsx
+    LiveIndicator.tsx
+    PresenceRail.tsx
+    ServiceHealthGrid.tsx
+    StatRow.tsx
+    TicketBoard.tsx
+    TopBar.tsx
+lib/
+  mock-data.ts
+  prisma.ts
+  style.ts
+prisma/
+  migrations/
+    20260909021348_init/
+      migration.sql
+    migration_lock.toml
+  schema.prisma
+public/
+  assets/
+    logo.png
+  inspirations/
+    data-dog.jpg
+    grafana-labs.jpg
+    linear.jpg
+    pager-duty.jpg
+    vercel.jpg
+types/
+  index.ts
+.gitignore
+eslint.config.mjs
+next.config.ts
+package.json
+postcss.config.mjs
+prisma7.config.ts
+README.md
+tsconfig.json
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="app/dashboard/page.tsx">
+import { TopBar } from "@/components/dashboard/TopBar";
+import { StatRow } from "@/components/dashboard/StatRow";
+import { IncidentsPanel } from "@/components/dashboard/IncidentsPanel";
+import { ServiceHealthGrid } from "@/components/dashboard/ServiceHealthGrid";
+import { TicketBoard } from "@/components/dashboard/TicketBoard";
+import { PresenceRail } from "@/components/dashboard/PresenceRail";
+import { ActivityFeed } from "@/components/dashboard/ActivityFeed";
+import {
+  activities,
+  currentOrgName,
+  incidents,
+  onlineUserIds,
+  resolveUser,
+  services,
+  tickets,
+  users,
+} from "@/lib/mock-data";
+
+// TODO(milestone 9): replace the mock-data import above with real
+// org-scoped queries once auth + the API routes land (README §15 /
+// implementation plan). Every component below already takes its data as
+// props shaped like the query result, so that swap shouldn't touch JSX.
+
+export default function DashboardPage() {
+  const self = users[0];
+
+  const openTickets = tickets.filter((t) => t.status === "OPEN").length;
+  const inProgressTickets = tickets.filter(
+    (t) => t.status === "IN_PROGRESS",
+  ).length;
+  const activeIncidents = incidents.length;
+  const unhealthyServices = services.filter(
+    (s) => s.status !== "OPERATIONAL",
+  ).length;
+
+  return (
+    <div className="flex min-h-screen flex-col">
+      <TopBar orgName={currentOrgName} self={self} />
+
+      <main className="mx-auto flex w-full max-w-350 flex-1 flex-col gap-4 px-6 py-5">
+        <StatRow
+          stats={[
+            { label: "Open tickets", value: openTickets },
+            { label: "In progress", value: inProgressTickets },
+            {
+              label: "Active incidents",
+              value: activeIncidents,
+              tone: "danger",
+            },
+            {
+              label: "Degraded / outage",
+              value: unhealthyServices,
+              tone: "warning",
+            },
+            { label: "Online now", value: onlineUserIds.size },
+          ]}
+        />
+
+        <div className="grid grid-cols-[2.2fr_1fr] gap-4 items-start">
+          <div className="flex flex-col gap-4 min-w-0">
+            <IncidentsPanel
+              incidents={incidents}
+              services={services}
+              resolveUser={resolveUser}
+            />
+            <ServiceHealthGrid services={services} />
+            <TicketBoard tickets={tickets} resolveUser={resolveUser} />
+          </div>
+
+          <div className="flex flex-col gap-4 min-w-0">
+            <PresenceRail users={users} onlineIds={onlineUserIds} />
+            <ActivityFeed activities={activities} resolveUser={resolveUser} />
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}
+</file>
+
+<file path="app/globals.css">
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-public-sans);
+  --font-mono: var(--font-jetbrains-mono);
+
+  /* Surfaces — dark ops console, warm-neutral rather than pure black */
+  --color-bg: #0a0b0d;
+  --color-panel: #131519;
+  --color-panel-raised: #191c21;
+  --color-line: rgba(237, 239, 242, 0.07);
+  --color-line-strong: rgba(237, 239, 242, 0.14);
+
+  /* Ink — text */
+  --color-ink: #edeff2;
+  --color-ink-dim: #9298a6;
+  --color-ink-faint: #5b6270;
+
+  /* Signal — Relay's single brand/live accent. Reserved for realtime
+     state (live dot, active nav, focus, links) and never used for
+     entity status, so it can't be confused with a semantic meaning. */
+  --color-signal: #3ee6cd;
+  --color-signal-dim: #123a34;
+
+  /* Status hues — each meaning gets exactly one color, used identically
+     across cards, chips, list rows, and the activity feed. */
+  --color-info: #5b8def;
+  --color-success: #33c481;
+  --color-warning: #f2a93b;
+  --color-danger: #ef5350;
+}
+
+body {
+  @apply font-sans bg-bg text-ink;
+}
+
+::selection {
+  background: var(--color-signal-dim);
+  color: var(--color-ink);
+}
+
+* {
+  scrollbar-color: var(--color-line-strong) transparent;
+}
+</file>
+
+<file path="app/layout.tsx">
+import type { Metadata } from "next";
+import { Public_Sans, JetBrains_Mono } from "next/font/google";
+import "./globals.css";
+
+const publicSans = Public_Sans({
+  variable: "--font-public-sans",
+  subsets: ["latin"],
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  variable: "--font-jetbrains-mono",
+  subsets: ["latin"],
+});
+
+export const metadata: Metadata = {
+  title: "Relay",
+  description:
+    "Real-time ops console for tickets, incidents, and service health.",
+};
+
+export default function RootLayout({ children }: LayoutProps<"/">) {
+  return (
+    <html
+      lang="en"
+      className={`${publicSans.variable} ${jetbrainsMono.variable} h-full antialiased`}
+    >
+      <body className="min-h-full flex flex-col">{children}</body>
+    </html>
+  );
+}
+</file>
+
+<file path="app/page.tsx">
+import { redirect } from "next/navigation";
+
+export default function RootPage() {
+  redirect("/dashboard");
+}
+</file>
+
+<file path="components/dashboard/ActivityFeed.tsx">
+import { ArrowRight, Cpu } from "@phosphor-icons/react/ssr";
+import { Avatar } from "./Avatar";
+import type { Activity, User } from "@/types";
+import { relativeTime } from "@/lib/style";
+
+function Transition({ from, to }: { from: unknown; to: unknown }) {
+  return (
+    <span className="inline-flex items-center gap-1 align-middle">
+      <span>{String(from ?? "?")}</span>
+      <ArrowRight size={11} weight="bold" className="text-ink-faint" />
+      <span>{String(to ?? "?")}</span>
+    </span>
+  );
+}
+
+function describe(activity: Activity) {
+  const m = activity.metadata ?? {};
+  switch (activity.action) {
+    case "TICKET_CREATED":
+      return <>opened &ldquo;{m.title ?? "a ticket"}&rdquo;</>;
+    case "TICKET_ASSIGNED":
+      return <>assigned this ticket to {m.assignee ?? "someone"}</>;
+    case "TICKET_STATUS_CHANGED":
+      return (
+        <>
+          moved a ticket <Transition from={m.from} to={m.to} />
+        </>
+      );
+    case "TICKET_PRIORITY_CHANGED":
+      return (
+        <>
+          changed ticket priority <Transition from={m.from} to={m.to} />
+        </>
+      );
+    case "SERVICE_STATUS_CHANGED":
+      return (
+        <>
+          status changed <Transition from={m.from} to={m.to} />
+        </>
+      );
+    case "INCIDENT_CREATED":
+      return <>opened incident &ldquo;{m.title ?? ""}&rdquo;</>;
+    case "INCIDENT_STATUS_CHANGED":
+      return (
+        <>
+          moved incident <Transition from={m.from} to={m.to} />
+        </>
+      );
+    case "INCIDENT_SEVERITY_CHANGED":
+      return (
+        <>
+          changed severity <Transition from={m.from} to={m.to} />
+        </>
+      );
+    case "INCIDENT_SERVICE_LINKED":
+      return <>linked a service to this incident</>;
+    case "INCIDENT_SERVICE_UNLINKED":
+      return <>unlinked a service from this incident</>;
+    case "INCIDENT_TICKET_LINKED":
+      return <>linked &ldquo;{m.ticketTitle ?? "a ticket"}&rdquo;</>;
+    case "INCIDENT_TICKET_UNLINKED":
+      return <>unlinked a ticket</>;
+    case "INCIDENT_RESOLVED":
+      return <>resolved &ldquo;{m.title ?? "an incident"}&rdquo;</>;
+    default:
+      return <>made a change</>;
+  }
+}
+
+interface ActivityFeedProps {
+  activities: Activity[];
+  resolveUser: (id: string | null) => User | null;
+}
+
+export function ActivityFeed({ activities, resolveUser }: ActivityFeedProps) {
+  const sorted = [...activities].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+
+  return (
+    <div className="rounded-lg border border-line bg-panel p-4">
+      <h2 className="text-sm font-medium text-ink">Activity</h2>
+
+      <ul className="mt-3 flex flex-col gap-3">
+        {sorted.map((activity) => {
+          const actor = resolveUser(activity.actorId);
+          return (
+            <li key={activity.id} className="flex items-start gap-2.5">
+              {actor ? (
+                <Avatar initials={actor.initials} title={actor.name} />
+              ) : (
+                <span
+                  className="flex size-6 shrink-0 items-center justify-center rounded-full bg-panel-raised text-ink-faint"
+                  title="Telemetry"
+                >
+                  <Cpu size={12} weight="bold" />
+                </span>
+              )}
+              <div className="min-w-0 text-xs leading-snug">
+                <span className="text-ink-dim">
+                  <span
+                    className={actor ? "text-ink" : "text-ink-faint font-mono"}
+                  >
+                    {actor ? actor.name : "telemetry"}
+                  </span>{" "}
+                  {describe(activity)}
+                </span>
+                <div className="mt-0.5 text-[11px] text-ink-faint">
+                  {relativeTime(activity.createdAt)}
+                </div>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+</file>
+
+<file path="components/dashboard/Avatar.tsx">
+interface AvatarProps {
+  initials: string;
+  online?: boolean;
+  size?: "sm" | "md";
+  title?: string;
+}
+
+export function Avatar({ initials, online, size = "sm", title }: AvatarProps) {
+  const dimensions = size === "sm" ? "size-6 text-[10px]" : "size-8 text-xs";
+
+  return (
+    <span className="relative inline-flex shrink-0" title={title}>
+      <span
+        className={`${dimensions} inline-flex items-center justify-center rounded-full bg-panel-raised text-ink-dim font-medium ring-1 ring-line-strong`}
+      >
+        {initials}
+      </span>
+      {online && (
+        <span className="absolute -bottom-0.5 -right-0.5 size-2 rounded-full bg-success ring-2 ring-panel" />
+      )}
+    </span>
+  );
+}
+</file>
+
+<file path="components/dashboard/IncidentsPanel.tsx">
+import { Avatar } from "./Avatar";
+import {
+  incidentSeverityMeta,
+  incidentStatusMeta,
+  type Incident,
+  type Service,
+  type User,
+} from "@/types";
+import {
+  relativeTime,
+  statusBorderLeft,
+  statusChipBg,
+  statusText,
+} from "@/lib/style";
+
+const severityOrder = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+
+interface IncidentsPanelProps {
+  incidents: Incident[];
+  services: Service[];
+  resolveUser: (id: string | null) => User | null;
+}
+
+export function IncidentsPanel({
+  incidents,
+  services,
+  resolveUser,
+}: IncidentsPanelProps) {
+  const sorted = [...incidents].sort(
+    (a, b) => severityOrder[a.severity] - severityOrder[b.severity],
+  );
+  const serviceById = Object.fromEntries(services.map((s) => [s.id, s]));
+
+  if (sorted.length === 0) {
+    return (
+      <div className="rounded-lg border border-line bg-panel p-5">
+        <div className="text-sm text-ink-dim">
+          No active incidents. Everything reporting normal.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-line bg-panel">
+      <div className="flex items-center justify-between border-b border-line px-4 py-3">
+        <h2 className="text-sm font-medium text-ink">Active incidents</h2>
+        <span className="text-xs text-ink-faint">Sorted by severity</span>
+      </div>
+
+      <ul>
+        {sorted.map((incident) => {
+          const sevMeta = incidentSeverityMeta[incident.severity];
+          const statusMeta = incidentStatusMeta[incident.status];
+          const responder = resolveUser(incident.responderId);
+          const affectedServices = incident.serviceIds
+            .map((id) => serviceById[id])
+            .filter((s): s is Service => Boolean(s));
+
+          return (
+            <li
+              key={incident.id}
+              className={`flex items-center gap-4 border-l-2 px-4 py-3 border-b border-line last:border-b-0 ${statusBorderLeft[sevMeta.color]}`}
+            >
+              <span
+                className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${statusChipBg[sevMeta.color]} ${statusText[sevMeta.color]}`}
+              >
+                {sevMeta.label}
+              </span>
+
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm text-ink">
+                  {incident.title}
+                </div>
+                <div className="mt-0.5 flex items-center gap-1.5 text-xs text-ink-faint">
+                  <span className={statusText[statusMeta.color]}>
+                    {statusMeta.label}
+                  </span>
+                  <span>·</span>
+                  <span>{relativeTime(incident.createdAt)}</span>
+                  {affectedServices.length > 0 && (
+                    <>
+                      <span>·</span>
+                      <span className="truncate">
+                        {affectedServices.map((s) => s.name).join(", ")}
+                      </span>
+                    </>
+                  )}
+                  {incident.ticketIds.length > 0 && (
+                    <>
+                      <span>·</span>
+                      <span>
+                        {incident.ticketIds.length}{" "}
+                        {incident.ticketIds.length === 1 ? "ticket" : "tickets"}
+                      </span>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {responder ? (
+                <Avatar
+                  initials={responder.initials}
+                  title={`${responder.name} responding`}
+                />
+              ) : (
+                <span className="shrink-0 text-xs text-ink-faint">
+                  Unassigned
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+</file>
+
+<file path="components/dashboard/LiveIndicator.tsx">
+interface LiveIndicatorProps {
+  connected?: boolean;
+}
+
+/** RT-02 / RT-03: the realtime connection state has to be visible, not
+ *  just implied by data updating. Connected is quiet; reconnecting is not. */
+export function LiveIndicator({ connected = true }: LiveIndicatorProps) {
+  if (!connected) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-warning/10 px-2.5 py-1 text-xs font-medium text-warning">
+        <span className="size-1.5 rounded-full bg-warning" />
+        Reconnecting
+      </span>
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-signal-dim px-2.5 py-1 text-xs font-medium text-signal">
+      <span className="relative flex size-1.5">
+        <span className="absolute inline-flex size-full animate-ping rounded-full bg-signal opacity-75" />
+        <span className="relative inline-flex size-1.5 rounded-full bg-signal" />
+      </span>
+      Live
+    </span>
+  );
+}
+</file>
+
+<file path="components/dashboard/PresenceRail.tsx">
+import { Avatar } from "./Avatar";
+import type { User } from "@/types";
+
+interface PresenceRailProps {
+  users: User[];
+  onlineIds: Set<string>;
+}
+
+export function PresenceRail({ users, onlineIds }: PresenceRailProps) {
+  const sorted = [...users].sort((a, b) => {
+    const aOnline = onlineIds.has(a.id) ? 0 : 1;
+    const bOnline = onlineIds.has(b.id) ? 0 : 1;
+    return aOnline - bOnline;
+  });
+
+  return (
+    <div className="rounded-lg border border-line bg-panel p-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-medium text-ink">Team</h2>
+        <span className="text-xs text-ink-faint">{onlineIds.size} online</span>
+      </div>
+
+      <ul className="mt-3 flex flex-col gap-2">
+        {sorted.map((user) => {
+          const online = onlineIds.has(user.id);
+          return (
+            <li key={user.id} className="flex items-center gap-2.5">
+              <Avatar initials={user.initials} online={online} />
+              <span
+                className={
+                  online ? "text-xs text-ink" : "text-xs text-ink-faint"
+                }
+              >
+                {user.name}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+</file>
+
+<file path="components/dashboard/ServiceHealthGrid.tsx">
+import { serviceStatusMeta, type Service } from "@/types";
+import {
+  formatErrorRate,
+  relativeTime,
+  statusDot,
+  statusText,
+} from "@/lib/style";
+
+function Sparkline({ values, warn }: { values: number[]; warn: boolean }) {
+  if (values.length < 2) {
+    return <span className="text-xs text-ink-faint">—</span>;
+  }
+
+  const w = 64;
+  const h = 20;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const points = values
+    .map((v, i) => {
+      const x = (i / (values.length - 1)) * w;
+      const y = h - ((v - min) / range) * h;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+
+  return (
+    <svg
+      width={w}
+      height={h}
+      viewBox={`0 0 ${w} ${h}`}
+      className="overflow-visible"
+    >
+      <polyline
+        points={points}
+        fill="none"
+        strokeWidth="1.5"
+        className={warn ? "stroke-warning" : "stroke-ink-faint"}
+      />
+    </svg>
+  );
+}
+
+export function ServiceHealthGrid({ services }: { services: Service[] }) {
+  return (
+    <div className="rounded-lg border border-line bg-panel">
+      <div className="flex items-center justify-between border-b border-line px-4 py-3">
+        <h2 className="text-sm font-medium text-ink">Service health</h2>
+        <span className="text-xs text-ink-faint">Trend is since page load</span>
+      </div>
+
+      <div className="grid grid-cols-3 gap-px bg-line">
+        {services.map((service) => {
+          const meta = serviceStatusMeta[service.status];
+          const warn = service.status !== "OPERATIONAL";
+
+          return (
+            <div key={service.id} className="bg-panel p-3.5">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-ink">{service.name}</span>
+                <span
+                  className={`size-1.5 rounded-full ${statusDot[meta.color]}`}
+                />
+              </div>
+              <div className={`mt-0.5 text-xs ${statusText[meta.color]}`}>
+                {meta.label}
+              </div>
+
+              <div className="mt-3 flex items-end justify-between">
+                <div className="font-mono text-xs text-ink-dim tabular-nums space-y-1">
+                  <div>
+                    {service.status === "OUTAGE"
+                      ? "—"
+                      : `${service.latencyMs}ms`}
+                  </div>
+                  <div className={service.errorRate > 1 ? "text-warning" : ""}>
+                    {formatErrorRate(service.errorRate)} err
+                  </div>
+                </div>
+                <Sparkline values={service.sessionLatencyTrend} warn={warn} />
+              </div>
+
+              <div className="mt-2 text-[11px] text-ink-faint">
+                Updated {relativeTime(service.updatedAt)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+</file>
+
+<file path="components/dashboard/StatRow.tsx">
+interface Stat {
+  label: string;
+  value: number;
+  tone?: "danger" | "warning";
+}
+
+export function StatRow({ stats }: { stats: Stat[] }) {
+  return (
+    <div className="grid grid-cols-5 gap-3">
+      {stats.map((stat) => {
+        const alert = stat.tone && stat.value > 0;
+        return (
+          <div
+            key={stat.label}
+            className={
+              alert
+                ? `rounded-lg border p-3.5 ${
+                    stat.tone === "danger"
+                      ? "border-danger/25 bg-danger/6"
+                      : "border-warning/25 bg-warning/6"
+                  }`
+                : "rounded-lg border border-line bg-panel p-3.5"
+            }
+          >
+            <div className="text-xs text-ink-dim">{stat.label}</div>
+            <div
+              className={`mt-1 font-mono text-2xl font-medium tabular-nums ${
+                alert
+                  ? stat.tone === "danger"
+                    ? "text-danger"
+                    : "text-warning"
+                  : "text-ink"
+              }`}
+            >
+              {stat.value}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+</file>
+
+<file path="components/dashboard/TicketBoard.tsx">
+import { Avatar } from "./Avatar";
+import {
+  ticketPriorityMeta,
+  ticketStatusMeta,
+  type Ticket,
+  type TicketStatus,
+  type User,
+} from "@/types";
+import { statusDot } from "@/lib/style";
+
+const columns: TicketStatus[] = ["OPEN", "IN_PROGRESS", "BLOCKED", "RESOLVED"];
+
+interface TicketBoardProps {
+  tickets: Ticket[];
+  resolveUser: (id: string | null) => User | null;
+}
+
+export function TicketBoard({ tickets, resolveUser }: TicketBoardProps) {
+  return (
+    <div className="rounded-lg border border-line bg-panel">
+      <div className="border-b border-line px-4 py-3">
+        <h2 className="text-sm font-medium text-ink">Work</h2>
+      </div>
+
+      <div className="grid grid-cols-4 gap-px bg-line">
+        {columns.map((status) => {
+          const items = tickets.filter((t) => t.status === status);
+          const meta = ticketStatusMeta[status];
+
+          return (
+            <div key={status} className="bg-panel">
+              <div className="flex items-center gap-1.5 px-3 py-2.5">
+                <span
+                  className={`size-1.5 rounded-full ${statusDot[meta.color]}`}
+                />
+                <span className="text-xs font-medium text-ink-dim">
+                  {meta.label}
+                </span>
+                <span className="text-xs text-ink-faint">{items.length}</span>
+              </div>
+
+              <ul>
+                {items.map((ticket) => {
+                  const priority = ticketPriorityMeta[ticket.priority];
+                  const assignee = resolveUser(ticket.assigneeId);
+                  return (
+                    <li
+                      key={ticket.id}
+                      className="flex items-start gap-2 px-3 py-2 border-t border-line"
+                    >
+                      <span
+                        className={`mt-1 size-1.5 shrink-0 rounded-full ${statusDot[priority.color]}`}
+                        title={`${priority.label} priority`}
+                      />
+                      <span className="min-w-0 flex-1 text-xs leading-snug text-ink-dim">
+                        {ticket.title}
+                      </span>
+                      {assignee ? (
+                        <Avatar
+                          initials={assignee.initials}
+                          title={assignee.name}
+                        />
+                      ) : (
+                        <span className="size-6 shrink-0 rounded-full border border-dashed border-line-strong" />
+                      )}
+                    </li>
+                  );
+                })}
+                {items.length === 0 && (
+                  <li className="px-3 py-2 text-xs text-ink-faint border-t border-line">
+                    Nothing here
+                  </li>
+                )}
+              </ul>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+</file>
+
+<file path="components/dashboard/TopBar.tsx">
+import Image from "next/image";
+import { Avatar } from "./Avatar";
+import { LiveIndicator } from "./LiveIndicator";
+import type { User } from "@/types";
+
+const navItems = [
+  { label: "Dashboard", active: true },
+  { label: "Tickets" },
+  { label: "Incidents" },
+  { label: "Services" },
+  { label: "Activity" },
+];
+
+export function TopBar({ orgName, self }: { orgName: string; self: User }) {
+  return (
+    <header className="flex h-14 shrink-0 items-center justify-between border-b border-line px-6">
+      <div className="flex items-center gap-6">
+        <div className="flex items-center gap-2">
+          <span className="flex items-center justify-center size-5">
+            <Image
+              src="/assets/logo.png"
+              alt="Logo"
+              width={20}
+              height={20}
+              priority
+              className="size-5"
+            />
+          </span>
+          <span className="text-sm font-medium text-ink">{orgName}</span>
+        </div>
+
+        <nav className="flex items-center gap-1">
+          {navItems.map((item) => (
+            <span
+              key={item.label}
+              className={
+                item.active
+                  ? "rounded-md px-3 py-1.5 text-sm font-medium text-ink bg-panel-raised"
+                  : "rounded-md px-3 py-1.5 text-sm text-ink-dim hover:text-ink transition-colors"
+              }
+            >
+              {item.label}
+            </span>
+          ))}
+        </nav>
+      </div>
+
+      <div className="flex items-center gap-4">
+        <LiveIndicator connected />
+        <Avatar initials={self.initials} online size="sm" title={self.name} />
+      </div>
+    </header>
+  );
+}
+</file>
+
+<file path="lib/mock-data.ts">
+import type { Activity, Incident, Service, Ticket, User } from "@/types";
+
+// A single org's worth of data — Relay is org-scoped throughout (README §5).
+const ORG_ID = "org_1";
+const now = Date.now();
+const minutesAgo = (m: number) => new Date(now - m * 60_000).toISOString();
+const hoursAgo = (h: number) => minutesAgo(h * 60);
+const daysAgo = (d: number) => hoursAgo(d * 24);
+
+export const users: User[] = [
+  {
+    id: "u_maya",
+    orgId: ORG_ID,
+    email: "maya@kestrel.dev",
+    name: "Maya Reyes",
+    role: "MANAGER",
+    initials: "MR",
+  },
+  {
+    id: "u_josh",
+    orgId: ORG_ID,
+    email: "josh@kestrel.dev",
+    name: "Josh Dietrich",
+    role: "MEMBER",
+    initials: "JD",
+  },
+  {
+    id: "u_sana",
+    orgId: ORG_ID,
+    email: "sana@kestrel.dev",
+    name: "Sana Kapoor",
+    role: "MEMBER",
+    initials: "SK",
+  },
+  {
+    id: "u_leo",
+    orgId: ORG_ID,
+    email: "leo@kestrel.dev",
+    name: "Leo Fontaine",
+    role: "MEMBER",
+    initials: "LF",
+  },
+  {
+    id: "u_priya",
+    orgId: ORG_ID,
+    email: "priya@kestrel.dev",
+    name: "Priya Nair",
+    role: "MEMBER",
+    initials: "PN",
+  },
+];
+
+const userById = Object.fromEntries(users.map((u) => [u.id, u]));
+
+export const services: Service[] = [
+  {
+    id: "svc_payments",
+    orgId: ORG_ID,
+    name: "Payments API",
+    description: "Card authorization and capture",
+    status: "OPERATIONAL",
+    latencyMs: 118,
+    errorRate: 0.12,
+    version: 14,
+    updatedAt: minutesAgo(2),
+    sessionLatencyTrend: [112, 115, 109, 121, 118],
+  },
+  {
+    id: "svc_checkout",
+    orgId: ORG_ID,
+    name: "Checkout",
+    description: "Cart, pricing, and order creation",
+    status: "DEGRADED",
+    latencyMs: 342,
+    errorRate: 4.86,
+    version: 27,
+    updatedAt: minutesAgo(1),
+    sessionLatencyTrend: [190, 205, 260, 310, 342],
+  },
+  {
+    id: "svc_auth",
+    orgId: ORG_ID,
+    name: "Auth",
+    description: "Session issuance and token refresh",
+    status: "OPERATIONAL",
+    latencyMs: 76,
+    errorRate: 0.04,
+    version: 9,
+    updatedAt: minutesAgo(4),
+    sessionLatencyTrend: [80, 78, 74, 77, 76],
+  },
+  {
+    id: "svc_search",
+    orgId: ORG_ID,
+    name: "Search",
+    description: "Catalog indexing and query",
+    status: "OPERATIONAL",
+    latencyMs: 203,
+    errorRate: 0.31,
+    version: 22,
+    updatedAt: minutesAgo(6),
+    sessionLatencyTrend: [198, 210, 205, 200, 203],
+  },
+  {
+    id: "svc_notify",
+    orgId: ORG_ID,
+    name: "Notifications",
+    description: "Email, SMS, and push dispatch",
+    status: "OUTAGE",
+    latencyMs: 0,
+    errorRate: 100,
+    version: 31,
+    updatedAt: minutesAgo(3),
+    sessionLatencyTrend: [220, 890, 0, 0, 0],
+  },
+  {
+    id: "svc_billing",
+    orgId: ORG_ID,
+    name: "Billing",
+    description: "Invoicing and subscription state",
+    status: "OPERATIONAL",
+    latencyMs: 145,
+    errorRate: 0.08,
+    version: 11,
+    updatedAt: minutesAgo(9),
+    sessionLatencyTrend: [150, 148, 144, 146, 145],
+  },
+];
+
+export const tickets: Ticket[] = [
+  {
+    id: "t_1",
+    orgId: ORG_ID,
+    title: "Checkout 500s on discount codes >10% off",
+    description: "",
+    status: "IN_PROGRESS",
+    priority: "URGENT",
+    assigneeId: "u_josh",
+    creatorId: "u_maya",
+    version: 4,
+    createdAt: hoursAgo(2),
+    updatedAt: minutesAgo(5),
+  },
+  {
+    id: "t_2",
+    orgId: ORG_ID,
+    title: "Notification worker stuck retrying dead queue",
+    description: "",
+    status: "IN_PROGRESS",
+    priority: "URGENT",
+    assigneeId: "u_sana",
+    creatorId: "u_sana",
+    version: 3,
+    createdAt: hoursAgo(1),
+    updatedAt: minutesAgo(2),
+  },
+  {
+    id: "t_3",
+    orgId: ORG_ID,
+    title: "Search returns stale prices for ~30s after update",
+    description: "",
+    status: "OPEN",
+    priority: "HIGH",
+    assigneeId: "u_leo",
+    creatorId: "u_priya",
+    version: 1,
+    createdAt: hoursAgo(5),
+    updatedAt: hoursAgo(5),
+  },
+  {
+    id: "t_4",
+    orgId: ORG_ID,
+    title: "Add pagination to billing invoice export",
+    description: "",
+    status: "OPEN",
+    priority: "LOW",
+    assigneeId: null,
+    creatorId: "u_maya",
+    version: 1,
+    createdAt: daysAgo(1),
+    updatedAt: daysAgo(1),
+  },
+  {
+    id: "t_5",
+    orgId: ORG_ID,
+    title: "Auth refresh token rotation off by one",
+    description: "",
+    status: "OPEN",
+    priority: "MEDIUM",
+    assigneeId: "u_priya",
+    creatorId: "u_leo",
+    version: 2,
+    createdAt: hoursAgo(8),
+    updatedAt: hoursAgo(3),
+  },
+  {
+    id: "t_6",
+    orgId: ORG_ID,
+    title: "Payments webhook signature check flaky in staging",
+    description: "",
+    status: "BLOCKED",
+    priority: "HIGH",
+    assigneeId: "u_josh",
+    creatorId: "u_josh",
+    version: 3,
+    createdAt: daysAgo(2),
+    updatedAt: hoursAgo(6),
+  },
+  {
+    id: "t_7",
+    orgId: ORG_ID,
+    title: "Checkout cart total rounding mismatch (JPY)",
+    description: "",
+    status: "BLOCKED",
+    priority: "MEDIUM",
+    assigneeId: "u_sana",
+    creatorId: "u_maya",
+    version: 2,
+    createdAt: daysAgo(1),
+    updatedAt: hoursAgo(10),
+  },
+  {
+    id: "t_8",
+    orgId: ORG_ID,
+    title: "Add dark-mode icon set to notification emails",
+    description: "",
+    status: "RESOLVED",
+    priority: "LOW",
+    assigneeId: "u_leo",
+    creatorId: "u_priya",
+    version: 5,
+    createdAt: daysAgo(3),
+    updatedAt: hoursAgo(12),
+  },
+  {
+    id: "t_9",
+    orgId: ORG_ID,
+    title: "Billing double-charged trial-to-paid conversions",
+    description: "",
+    status: "RESOLVED",
+    priority: "URGENT",
+    assigneeId: "u_maya",
+    creatorId: "u_sana",
+    version: 6,
+    createdAt: daysAgo(4),
+    updatedAt: daysAgo(1),
+  },
+  {
+    id: "t_10",
+    orgId: ORG_ID,
+    title: "Search facet counts ignore region filter",
+    description: "",
+    status: "OPEN",
+    priority: "MEDIUM",
+    assigneeId: "u_priya",
+    creatorId: "u_leo",
+    version: 1,
+    createdAt: hoursAgo(4),
+    updatedAt: hoursAgo(4),
+  },
+];
+
+export const incidents: Incident[] = [
+  {
+    id: "i_1",
+    orgId: ORG_ID,
+    title: "Notification delivery completely down",
+    description:
+      "All channels failing after queue backlog exceeded retry budget.",
+    status: "INVESTIGATING",
+    severity: "CRITICAL",
+    responderId: "u_sana",
+    createdAt: minutesAgo(38),
+    resolvedAt: null,
+    version: 5,
+    serviceIds: ["svc_notify"],
+    ticketIds: ["t_2"],
+  },
+  {
+    id: "i_2",
+    orgId: ORG_ID,
+    title: "Elevated errors on checkout with discount codes",
+    description: "Discount codes over 10% trigger a pricing-service 500.",
+    status: "IDENTIFIED",
+    severity: "HIGH",
+    responderId: "u_josh",
+    createdAt: hoursAgo(2),
+    resolvedAt: null,
+    version: 3,
+    serviceIds: ["svc_checkout"],
+    ticketIds: ["t_1"],
+  },
+  {
+    id: "i_3",
+    orgId: ORG_ID,
+    title: "Search latency creeping up since deploy",
+    description: "p95 latency up ~15% since the 14:20 index rebuild.",
+    status: "MONITORING",
+    severity: "LOW",
+    responderId: "u_leo",
+    createdAt: hoursAgo(5),
+    resolvedAt: null,
+    version: 2,
+    serviceIds: ["svc_search"],
+    ticketIds: [],
+  },
+];
+
+export const activities: Activity[] = [
+  {
+    id: "a_1",
+    orgId: ORG_ID,
+    actorId: null,
+    action: "SERVICE_STATUS_CHANGED",
+    targetType: "service",
+    targetId: "svc_notify",
+    metadata: { from: "DEGRADED", to: "OUTAGE" },
+    createdAt: minutesAgo(3),
+  },
+  {
+    id: "a_2",
+    orgId: ORG_ID,
+    actorId: "u_sana",
+    action: "INCIDENT_STATUS_CHANGED",
+    targetType: "incident",
+    targetId: "i_1",
+    metadata: { from: "IDENTIFIED", to: "INVESTIGATING" },
+    createdAt: minutesAgo(6),
+  },
+  {
+    id: "a_3",
+    orgId: ORG_ID,
+    actorId: "u_sana",
+    action: "TICKET_STATUS_CHANGED",
+    targetType: "ticket",
+    targetId: "t_2",
+    metadata: { from: "OPEN", to: "IN_PROGRESS" },
+    createdAt: minutesAgo(9),
+  },
+  {
+    id: "a_4",
+    orgId: ORG_ID,
+    actorId: null,
+    action: "SERVICE_STATUS_CHANGED",
+    targetType: "service",
+    targetId: "svc_checkout",
+    metadata: { from: "OPERATIONAL", to: "DEGRADED" },
+    createdAt: minutesAgo(14),
+  },
+  {
+    id: "a_5",
+    orgId: ORG_ID,
+    actorId: "u_josh",
+    action: "INCIDENT_TICKET_LINKED",
+    targetType: "incident",
+    targetId: "i_2",
+    metadata: { ticketTitle: "Checkout 500s on discount codes >10% off" },
+    createdAt: minutesAgo(17),
+  },
+  {
+    id: "a_6",
+    orgId: ORG_ID,
+    actorId: "u_josh",
+    action: "TICKET_ASSIGNED",
+    targetType: "ticket",
+    targetId: "t_1",
+    metadata: { assignee: "Josh Dietrich" },
+    createdAt: minutesAgo(18),
+  },
+  {
+    id: "a_7",
+    orgId: ORG_ID,
+    actorId: "u_maya",
+    action: "INCIDENT_CREATED",
+    targetType: "incident",
+    targetId: "i_2",
+    metadata: { title: "Elevated errors on checkout with discount codes" },
+    createdAt: hoursAgo(2),
+  },
+  {
+    id: "a_8",
+    orgId: ORG_ID,
+    actorId: "u_leo",
+    action: "INCIDENT_SEVERITY_CHANGED",
+    targetType: "incident",
+    targetId: "i_3",
+    metadata: { from: "MEDIUM", to: "LOW" },
+    createdAt: hoursAgo(3),
+  },
+  {
+    id: "a_9",
+    orgId: ORG_ID,
+    actorId: "u_priya",
+    action: "TICKET_CREATED",
+    targetType: "ticket",
+    targetId: "t_10",
+    metadata: { title: "Search facet counts ignore region filter" },
+    createdAt: hoursAgo(4),
+  },
+  {
+    id: "a_10",
+    orgId: ORG_ID,
+    actorId: "u_maya",
+    action: "INCIDENT_RESOLVED",
+    targetType: "incident",
+    targetId: "i_4",
+    metadata: { title: "Billing double-charge on trial conversion" },
+    createdAt: daysAgo(1),
+  },
+];
+
+// Presence is never persisted (README §14) — this stands in for what the
+// Realtime Presence channel would report at request time.
+export const onlineUserIds = new Set(["u_maya", "u_josh", "u_sana"]);
+
+export function resolveUser(id: string | null): User | null {
+  if (!id) return null;
+  return userById[id] ?? null;
+}
+
+export const currentOrgName = "Kestrel Commerce";
+</file>
+
+<file path="lib/prisma.ts">
+import { PrismaClient } from "./generated/prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
+
+const globalForPrisma = global as unknown as {
+  prisma: PrismaClient;
+};
+
+const adapter = new PrismaPg({
+  connectionString: process.env.DATABASE_URL,
+});
+
+export const prisma: PrismaClient =
+  globalForPrisma.prisma ||
+  new PrismaClient({
+    adapter,
+  });
+
+if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+</file>
+
+<file path="lib/style.ts">
+// Tailwind's scanner looks for literal class-name tokens in source text, so
+// `text-${color}` would silently fail to generate. These lookup tables keep
+// every combination spelled out once, here, instead of interpolated at each
+// call site.
+
+export type StatusColor =
+  | "info"
+  | "success"
+  | "warning"
+  | "danger"
+  | "ink-faint";
+
+export const statusText: Record<StatusColor, string> = {
+  info: "text-info",
+  success: "text-success",
+  warning: "text-warning",
+  danger: "text-danger",
+  "ink-faint": "text-ink-faint",
+};
+
+export const statusDot: Record<StatusColor, string> = {
+  info: "bg-info",
+  success: "bg-success",
+  warning: "bg-warning",
+  danger: "bg-danger",
+  "ink-faint": "bg-ink-faint",
+};
+
+export const statusChipBg: Record<StatusColor, string> = {
+  info: "bg-info/10",
+  success: "bg-success/10",
+  warning: "bg-warning/10",
+  danger: "bg-danger/10",
+  "ink-faint": "bg-ink-faint/10",
+};
+
+export const statusBorderLeft: Record<StatusColor, string> = {
+  info: "border-l-info",
+  success: "border-l-success",
+  warning: "border-l-warning",
+  danger: "border-l-danger",
+  "ink-faint": "border-l-ink-faint",
+};
+
+/** "3m ago", "2h ago", "Sep 4" — stable across server and client render. */
+export function relativeTime(iso: string, now: Date = new Date()): string {
+  const then = new Date(iso);
+  const diffMs = now.getTime() - then.getTime();
+  const diffSec = Math.round(diffMs / 1000);
+
+  if (diffSec < 5) return "just now";
+  if (diffSec < 60) return `${diffSec}s ago`;
+  const diffMin = Math.round(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.round(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDay = Math.round(diffHr / 24);
+  if (diffDay < 7) return `${diffDay}d ago`;
+
+  return then.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+export function formatErrorRate(rate: number): string {
+  return `${rate.toFixed(2)}%`;
+}
+
+export function initialsOf(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  const first = parts[0]?.[0] ?? "";
+  const last = parts.length > 1 ? (parts[parts.length - 1]?.[0] ?? "") : "";
+  return (first + last).toUpperCase();
+}
+</file>
+
+<file path="prisma/migrations/20260909021348_init/migration.sql">
+-- CreateEnum
+CREATE TYPE "role" AS ENUM ('MEMBER', 'MANAGER');
+
+-- CreateEnum
+CREATE TYPE "ticket_status" AS ENUM ('OPEN', 'IN_PROGRESS', 'RESOLVED', 'BLOCKED');
+
+-- CreateEnum
+CREATE TYPE "ticket_priority" AS ENUM ('LOW', 'MEDIUM', 'HIGH', 'URGENT');
+
+-- CreateEnum
+CREATE TYPE "service_status" AS ENUM ('OPERATIONAL', 'DEGRADED', 'OUTAGE');
+
+-- CreateEnum
+CREATE TYPE "incident_status" AS ENUM ('INVESTIGATING', 'IDENTIFIED', 'MONITORING', 'RESOLVED');
+
+-- CreateEnum
+CREATE TYPE "incident_severity" AS ENUM ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL');
+
+-- CreateEnum
+CREATE TYPE "activity_action" AS ENUM ('TICKET_CREATED', 'TICKET_ASSIGNED', 'TICKET_STATUS_CHANGED', 'TICKET_PRIORITY_CHANGED', 'SERVICE_STATUS_CHANGED', 'INCIDENT_CREATED', 'INCIDENT_STATUS_CHANGED', 'INCIDENT_SEVERITY_CHANGED', 'INCIDENT_SERVICE_LINKED', 'INCIDENT_SERVICE_UNLINKED', 'INCIDENT_TICKET_LINKED', 'INCIDENT_TICKET_UNLINKED', 'INCIDENT_RESOLVED');
+
+-- CreateTable
+CREATE TABLE "organizations" (
+    "id" UUID NOT NULL,
+    "name" TEXT NOT NULL,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "organizations_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "users" (
+    "id" UUID NOT NULL,
+    "org_id" UUID NOT NULL,
+    "email" TEXT NOT NULL,
+    "password_hash" TEXT NOT NULL,
+    "role" "role" NOT NULL DEFAULT 'MEMBER',
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "users_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "refresh_tokens" (
+    "id" UUID NOT NULL,
+    "user_id" UUID NOT NULL,
+    "token_hash" TEXT NOT NULL,
+    "expires_at" TIMESTAMP(3) NOT NULL,
+    "revoked_at" TIMESTAMP(3),
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "refresh_tokens_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "tickets" (
+    "id" UUID NOT NULL,
+    "org_id" UUID NOT NULL,
+    "title" TEXT NOT NULL,
+    "description" TEXT NOT NULL,
+    "status" "ticket_status" NOT NULL DEFAULT 'OPEN',
+    "priority" "ticket_priority" NOT NULL DEFAULT 'MEDIUM',
+    "assignee_id" UUID,
+    "creator_id" UUID NOT NULL,
+    "version" INTEGER NOT NULL DEFAULT 1,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "tickets_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "services" (
+    "id" UUID NOT NULL,
+    "org_id" UUID NOT NULL,
+    "name" TEXT NOT NULL,
+    "description" TEXT NOT NULL,
+    "status" "service_status" NOT NULL DEFAULT 'OPERATIONAL',
+    "latency_ms" INTEGER NOT NULL DEFAULT 0,
+    "error_rate" DECIMAL(5,2) NOT NULL DEFAULT 0,
+    "version" INTEGER NOT NULL DEFAULT 1,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "services_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "incidents" (
+    "id" UUID NOT NULL,
+    "org_id" UUID NOT NULL,
+    "title" TEXT NOT NULL,
+    "description" TEXT NOT NULL,
+    "status" "incident_status" NOT NULL DEFAULT 'INVESTIGATING',
+    "severity" "incident_severity" NOT NULL DEFAULT 'MEDIUM',
+    "responder_id" UUID,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "resolved_at" TIMESTAMP(3),
+    "version" INTEGER NOT NULL DEFAULT 1,
+
+    CONSTRAINT "incidents_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "incident_services" (
+    "incident_id" UUID NOT NULL,
+    "service_id" UUID NOT NULL,
+    "org_id" UUID NOT NULL,
+
+    CONSTRAINT "incident_services_pkey" PRIMARY KEY ("incident_id","service_id")
+);
+
+-- CreateTable
+CREATE TABLE "incident_tickets" (
+    "incident_id" UUID NOT NULL,
+    "ticket_id" UUID NOT NULL,
+    "org_id" UUID NOT NULL,
+    "is_active" BOOLEAN NOT NULL DEFAULT true,
+    "linked_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "unlinked_at" TIMESTAMP(3),
+
+    CONSTRAINT "incident_tickets_pkey" PRIMARY KEY ("incident_id","ticket_id")
+);
+
+-- CreateTable
+CREATE TABLE "activities" (
+    "id" UUID NOT NULL,
+    "org_id" UUID NOT NULL,
+    "actor_id" UUID,
+    "action" "activity_action" NOT NULL,
+    "target_type" TEXT NOT NULL,
+    "target_id" UUID NOT NULL,
+    "metadata" JSONB,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "activities_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateIndex
+CREATE INDEX "users_org_id_idx" ON "users"("org_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "users_org_id_email_key" ON "users"("org_id", "email");
+
+-- CreateIndex
+CREATE INDEX "refresh_tokens_user_id_idx" ON "refresh_tokens"("user_id");
+
+-- CreateIndex
+CREATE INDEX "tickets_org_id_idx" ON "tickets"("org_id");
+
+-- CreateIndex
+CREATE INDEX "tickets_org_id_status_idx" ON "tickets"("org_id", "status");
+
+-- CreateIndex
+CREATE INDEX "tickets_assignee_id_idx" ON "tickets"("assignee_id");
+
+-- CreateIndex
+CREATE INDEX "services_org_id_idx" ON "services"("org_id");
+
+-- CreateIndex
+CREATE INDEX "services_org_id_status_idx" ON "services"("org_id", "status");
+
+-- CreateIndex
+CREATE INDEX "incidents_org_id_idx" ON "incidents"("org_id");
+
+-- CreateIndex
+CREATE INDEX "incidents_org_id_status_idx" ON "incidents"("org_id", "status");
+
+-- CreateIndex
+CREATE INDEX "incident_services_service_id_idx" ON "incident_services"("service_id");
+
+-- CreateIndex
+CREATE INDEX "incident_services_org_id_idx" ON "incident_services"("org_id");
+
+-- CreateIndex
+CREATE INDEX "incident_tickets_ticket_id_idx" ON "incident_tickets"("ticket_id");
+
+-- CreateIndex
+CREATE INDEX "incident_tickets_org_id_idx" ON "incident_tickets"("org_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "one_active_incident_per_ticket" ON "incident_tickets"("ticket_id") WHERE ("is_active" = true);
+
+-- CreateIndex
+CREATE INDEX "activities_org_id_created_at_idx" ON "activities"("org_id", "created_at" DESC);
+
+-- AddForeignKey
+ALTER TABLE "users" ADD CONSTRAINT "users_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "refresh_tokens" ADD CONSTRAINT "refresh_tokens_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "tickets" ADD CONSTRAINT "tickets_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "tickets" ADD CONSTRAINT "tickets_assignee_id_fkey" FOREIGN KEY ("assignee_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "tickets" ADD CONSTRAINT "tickets_creator_id_fkey" FOREIGN KEY ("creator_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "services" ADD CONSTRAINT "services_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "incidents" ADD CONSTRAINT "incidents_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "incidents" ADD CONSTRAINT "incidents_responder_id_fkey" FOREIGN KEY ("responder_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "incident_services" ADD CONSTRAINT "incident_services_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "incident_services" ADD CONSTRAINT "incident_services_incident_id_fkey" FOREIGN KEY ("incident_id") REFERENCES "incidents"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "incident_services" ADD CONSTRAINT "incident_services_service_id_fkey" FOREIGN KEY ("service_id") REFERENCES "services"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "incident_tickets" ADD CONSTRAINT "incident_tickets_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "incident_tickets" ADD CONSTRAINT "incident_tickets_incident_id_fkey" FOREIGN KEY ("incident_id") REFERENCES "incidents"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "incident_tickets" ADD CONSTRAINT "incident_tickets_ticket_id_fkey" FOREIGN KEY ("ticket_id") REFERENCES "tickets"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "activities" ADD CONSTRAINT "activities_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "activities" ADD CONSTRAINT "activities_actor_id_fkey" FOREIGN KEY ("actor_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+</file>
+
+<file path="prisma/migrations/migration_lock.toml">
+# Please do not edit this file manually
+# It should be added in your version-control system (e.g., Git)
+provider = "postgresql"
+</file>
+
+<file path="prisma/schema.prisma">
+generator client {
+  provider        = "prisma-client"
+  output          = "../lib/generated/prisma"
+  previewFeatures = ["partialIndexes"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Role {
+  MEMBER
+  MANAGER
+
+  @@map("role")
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  BLOCKED
+
+  @@map("ticket_status")
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+
+  @@map("ticket_priority")
+}
+
+enum ServiceStatus {
+  OPERATIONAL
+  DEGRADED
+  OUTAGE
+
+  @@map("service_status")
+}
+
+enum IncidentStatus {
+  INVESTIGATING
+  IDENTIFIED
+  MONITORING
+  RESOLVED
+
+  @@map("incident_status")
+}
+
+enum IncidentSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+
+  @@map("incident_severity")
+}
+
+// README §13 — extend this list as new activity-producing actions are added.
+// Keeping it a native enum (rather than a free-text column) means an
+// unrecognized action can never silently get written to the activity feed.
+enum ActivityAction {
+  TICKET_CREATED
+  TICKET_ASSIGNED
+  TICKET_STATUS_CHANGED
+  TICKET_PRIORITY_CHANGED
+  SERVICE_STATUS_CHANGED
+  INCIDENT_CREATED
+  INCIDENT_STATUS_CHANGED
+  INCIDENT_SEVERITY_CHANGED
+  INCIDENT_SERVICE_LINKED
+  INCIDENT_SERVICE_UNLINKED
+  INCIDENT_TICKET_LINKED
+  INCIDENT_TICKET_UNLINKED
+  INCIDENT_RESOLVED
+
+  @@map("activity_action")
+}
+
+// ---------------------------------------------------------------------------
+// Tenancy & identity
+// ---------------------------------------------------------------------------
+
+model Organization {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  users              User[]
+  tickets            Ticket[]
+  services           Service[]
+  incidents          Incident[]
+  incidentServices   IncidentService[]
+  incidentTickets    IncidentTicket[]
+  activities         Activity[]
+
+  @@map("organizations")
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  orgId        String   @map("org_id") @db.Uuid
+  email        String
+  passwordHash String   @map("password_hash")
+  role         Role     @default(MEMBER)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+
+  createdTickets       Ticket[]        @relation("TicketCreator")
+  assignedTickets      Ticket[]        @relation("TicketAssignee")
+  respondingIncidents  Incident[]      @relation("IncidentResponder")
+  activities           Activity[]      @relation("ActivityActor")
+  refreshTokens        RefreshToken[]
+
+  // Email only needs to be unique within an org, not globally.
+  @@unique([orgId, email])
+  @@index([orgId])
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+// ---------------------------------------------------------------------------
+// Domain: Tickets
+// ---------------------------------------------------------------------------
+
+model Ticket {
+  id          String         @id @default(uuid()) @db.Uuid
+  orgId       String         @map("org_id") @db.Uuid
+  title       String
+  description String
+  status      TicketStatus   @default(OPEN)
+  priority    TicketPriority @default(MEDIUM)
+  assigneeId  String?        @map("assignee_id") @db.Uuid
+  creatorId   String         @map("creator_id") @db.Uuid
+  version     Int            @default(1)
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+
+  organization    Organization     @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  assignee        User?            @relation("TicketAssignee", fields: [assigneeId], references: [id], onDelete: Restrict)
+  creator         User             @relation("TicketCreator", fields: [creatorId], references: [id], onDelete: Restrict)
+  incidentTickets IncidentTicket[]
+
+  @@index([orgId])
+  @@index([orgId, status])
+  @@index([assigneeId])
+  @@map("tickets")
+}
+
+// ---------------------------------------------------------------------------
+// Domain: Services
+// ---------------------------------------------------------------------------
+
+model Service {
+  id          String        @id @default(uuid()) @db.Uuid
+  orgId       String        @map("org_id") @db.Uuid
+  name        String
+  description String
+  status      ServiceStatus @default(OPERATIONAL)
+  latencyMs   Int           @default(0) @map("latency_ms")
+  errorRate   Decimal       @default(0) @map("error_rate") @db.Decimal(5, 2)
+  version     Int           @default(1)
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  organization     Organization      @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  incidentServices IncidentService[]
+
+  @@index([orgId])
+  @@index([orgId, status])
+  @@map("services")
+}
+
+// ---------------------------------------------------------------------------
+// Domain: Incidents
+// ---------------------------------------------------------------------------
+
+model Incident {
+  id          String           @id @default(uuid()) @db.Uuid
+  orgId       String           @map("org_id") @db.Uuid
+  title       String
+  description String
+  status      IncidentStatus   @default(INVESTIGATING)
+  severity    IncidentSeverity @default(MEDIUM)
+  responderId String?          @map("responder_id") @db.Uuid
+  createdAt   DateTime         @default(now()) @map("created_at")
+  resolvedAt  DateTime?        @map("resolved_at")
+  version     Int              @default(1)
+
+  organization     Organization      @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  responder        User?             @relation("IncidentResponder", fields: [responderId], references: [id], onDelete: Restrict)
+  incidentServices IncidentService[]
+  incidentTickets  IncidentTicket[]
+
+  @@index([orgId])
+  @@index([orgId, status])
+  @@map("incidents")
+}
+
+// Many-to-many: an incident can affect many services, a service can be
+// affected by many incidents (over time / concurrently).
+model IncidentService {
+  incidentId String @map("incident_id") @db.Uuid
+  serviceId  String @map("service_id") @db.Uuid
+  orgId      String @map("org_id") @db.Uuid
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  incident     Incident     @relation(fields: [incidentId], references: [id], onDelete: Restrict)
+  service      Service      @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+
+  @@id([incidentId, serviceId])
+  @@index([serviceId])
+  @@index([orgId])
+  @@map("incident_services")
+}
+
+// Many-to-many over time: a ticket may be linked to many incidents across
+// its life, but at most ONE of those links may be active at a time.
+// That's a business invariant, not just a UI convention — enforced here
+// with a partial unique index rather than left to application logic alone.
+model IncidentTicket {
+  incidentId String    @map("incident_id") @db.Uuid
+  ticketId   String    @map("ticket_id") @db.Uuid
+  orgId      String    @map("org_id") @db.Uuid
+  isActive   Boolean   @default(true) @map("is_active")
+  linkedAt   DateTime  @default(now()) @map("linked_at")
+  unlinkedAt DateTime? @map("unlinked_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  incident     Incident     @relation(fields: [incidentId], references: [id], onDelete: Restrict)
+  ticket       Ticket       @relation(fields: [ticketId], references: [id], onDelete: Restrict)
+
+  @@id([incidentId, ticketId])
+  @@index([ticketId])
+  @@index([orgId])
+  // The actual enforcement of "one active incident per ticket" (§2 of the
+  // implementation plan). Requires the partialIndexes preview feature.
+  @@unique([ticketId], map: "one_active_incident_per_ticket", where: { isActive: true })
+  @@map("incident_tickets")
+}
+
+// ---------------------------------------------------------------------------
+// Activity feed
+// ---------------------------------------------------------------------------
+
+model Activity {
+  id         String         @id @default(uuid()) @db.Uuid
+  orgId      String         @map("org_id") @db.Uuid
+  actorId    String?        @map("actor_id") @db.Uuid // null for telemetry-worker-generated activity
+  action     ActivityAction
+  targetType String         @map("target_type")
+  targetId   String         @map("target_id") @db.Uuid
+  metadata   Json?
+  createdAt  DateTime       @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  actor        User?        @relation("ActivityActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([orgId, createdAt(sort: Desc)])
+  @@map("activities")
+}
+</file>
+
+<file path="types/index.ts">
+// Mirrors prisma/schema.prisma exactly. Kept as plain TS here (rather than
+// importing @prisma/client) because this dashboard currently runs on mock
+// data — see mock-data.ts. Once the real queries land (README §15 /
+// implementation plan milestone 9), these should be replaced by the
+// generated Prisma types and this file can shrink to just the *Meta maps.
+
+export type Role = "MEMBER" | "MANAGER";
+
+export type TicketStatus = "OPEN" | "IN_PROGRESS" | "RESOLVED" | "BLOCKED";
+export type TicketPriority = "LOW" | "MEDIUM" | "HIGH" | "URGENT";
+
+export type ServiceStatus = "OPERATIONAL" | "DEGRADED" | "OUTAGE";
+
+export type IncidentStatus =
+  | "INVESTIGATING"
+  | "IDENTIFIED"
+  | "MONITORING"
+  | "RESOLVED";
+export type IncidentSeverity = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+
+export type ActivityAction =
+  | "TICKET_CREATED"
+  | "TICKET_ASSIGNED"
+  | "TICKET_STATUS_CHANGED"
+  | "TICKET_PRIORITY_CHANGED"
+  | "SERVICE_STATUS_CHANGED"
+  | "INCIDENT_CREATED"
+  | "INCIDENT_STATUS_CHANGED"
+  | "INCIDENT_SEVERITY_CHANGED"
+  | "INCIDENT_SERVICE_LINKED"
+  | "INCIDENT_SERVICE_UNLINKED"
+  | "INCIDENT_TICKET_LINKED"
+  | "INCIDENT_TICKET_UNLINKED"
+  | "INCIDENT_RESOLVED";
+
+export interface User {
+  id: string;
+  orgId: string;
+  email: string;
+  name: string;
+  role: Role;
+  initials: string;
+}
+
+export interface Ticket {
+  id: string;
+  orgId: string;
+  title: string;
+  description: string;
+  status: TicketStatus;
+  priority: TicketPriority;
+  assigneeId: string | null;
+  creatorId: string;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Service {
+  id: string;
+  orgId: string;
+  name: string;
+  description: string;
+  status: ServiceStatus;
+  latencyMs: number;
+  errorRate: number;
+  version: number;
+  updatedAt: string;
+  /** Not a persisted column — buffered client-side from realtime updates
+   *  received since the page loaded. Empty on a fresh load. See dashboard
+   *  design note on service history. */
+  sessionLatencyTrend: number[];
+}
+
+export interface Incident {
+  id: string;
+  orgId: string;
+  title: string;
+  description: string;
+  status: IncidentStatus;
+  severity: IncidentSeverity;
+  responderId: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
+  version: number;
+  serviceIds: string[];
+  ticketIds: string[]; // active links only (IncidentTicket.isActive = true)
+}
+
+export interface Activity {
+  id: string;
+  orgId: string;
+  actorId: string | null; // null => telemetry-generated
+  action: ActivityAction;
+  targetType: "ticket" | "service" | "incident";
+  targetId: string;
+  metadata: Record<string, string | number> | null;
+  createdAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Status metadata — the single source of truth for color + label per status.
+// Every component (cards, chips, list rows, activity feed) reads from these
+// maps rather than deciding colors locally, so a status always looks the
+// same wherever it appears.
+// ---------------------------------------------------------------------------
+
+interface StatusMeta {
+  label: string;
+  color: "info" | "success" | "warning" | "danger" | "ink-faint";
+}
+
+export const ticketStatusMeta: Record<TicketStatus, StatusMeta> = {
+  OPEN: { label: "Open", color: "info" },
+  IN_PROGRESS: { label: "In progress", color: "warning" },
+  BLOCKED: { label: "Blocked", color: "danger" },
+  RESOLVED: { label: "Resolved", color: "success" },
+};
+
+export const ticketPriorityMeta: Record<TicketPriority, StatusMeta> = {
+  LOW: { label: "Low", color: "ink-faint" },
+  MEDIUM: { label: "Medium", color: "info" },
+  HIGH: { label: "High", color: "warning" },
+  URGENT: { label: "Urgent", color: "danger" },
+};
+
+export const serviceStatusMeta: Record<ServiceStatus, StatusMeta> = {
+  OPERATIONAL: { label: "Operational", color: "success" },
+  DEGRADED: { label: "Degraded", color: "warning" },
+  OUTAGE: { label: "Outage", color: "danger" },
+};
+
+export const incidentStatusMeta: Record<IncidentStatus, StatusMeta> = {
+  INVESTIGATING: { label: "Investigating", color: "danger" },
+  IDENTIFIED: { label: "Identified", color: "warning" },
+  MONITORING: { label: "Monitoring", color: "info" },
+  RESOLVED: { label: "Resolved", color: "success" },
+};
+
+export const incidentSeverityMeta: Record<IncidentSeverity, StatusMeta> = {
+  LOW: { label: "Low", color: "ink-faint" },
+  MEDIUM: { label: "Medium", color: "info" },
+  HIGH: { label: "High", color: "warning" },
+  CRITICAL: { label: "Critical", color: "danger" },
+};
+</file>
+
+<file path=".gitignore">
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+/lib/generated/prisma
+/.agents
+/.claude
+
+skills-lock.json
+</file>
+
+<file path="eslint.config.mjs">
+import { defineConfig, globalIgnores } from "eslint/config";
+import nextVitals from "eslint-config-next/core-web-vitals";
+import nextTs from "eslint-config-next/typescript";
+
+const eslintConfig = defineConfig([
+  ...nextVitals,
+  ...nextTs,
+  // Override default ignores of eslint-config-next.
+  globalIgnores([
+    // Default ignores of eslint-config-next:
+    ".next/**",
+    "out/**",
+    "build/**",
+    "next-env.d.ts",
+  ]),
+]);
+
+export default eslintConfig;
+</file>
+
+<file path="next.config.ts">
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+  /* config options here */
+};
+
+export default nextConfig;
+</file>
+
+<file path="package.json">
+{
+  "name": "relay",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "postinstall": "prisma skills sync || exit 0"
+  },
+  "dependencies": {
+    "@phosphor-icons/react": "^2.1.10",
+    "@prisma/adapter-pg": "^7.10.0",
+    "@prisma/client": "7.10.0",
+    "dotenv": "^17.4.2",
+    "next": "16.3.4",
+    "pg": "^8.23.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.4",
+    "prisma": "7.10.0",
+    "tailwindcss": "^4",
+    "tsx": "^4.23.13",
+    "typescript": "^5"
+  },
+  "packageManager": "yarn@4.12.0"
+}
+</file>
+
+<file path="postcss.config.mjs">
+const config = {
+  plugins: {
+    "@tailwindcss/postcss": {},
+  },
+};
+
+export default config;
+</file>
+
+<file path="prisma7.config.ts">
+import "dotenv/config";
+import { defineConfig } from "prisma/config";
+
+export default defineConfig({
+  schema: "prisma/schema.prisma",
+  migrations: {
+    path: "prisma/migrations",
+  },
+  datasource: {
+    url: process.env["DATABASE_URL"],
+  },
+});
+</file>
+
+<file path="README.md">
+This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+
+## Getting Started
+
+First, run the development server:
+
+```bash
+npm run dev
+# or
+yarn dev
+# or
+pnpm dev
+# or
+bun dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+
+You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+
+This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+
+## Learn More
+
+To learn more about Next.js, take a look at the following resources:
+
+- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
+- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+
+You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+
+## Deploy on Vercel
+
+The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+
+Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+</file>
+
+<file path="tsconfig.json">
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": ["./*"]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts",
+    "**/*.mts"
+  ],
+  "exclude": ["node_modules"]
+}
+</file>
+
+</files>

@@ -1,0 +1,281 @@
+generator client {
+  provider        = "prisma-client"
+  output          = "../lib/generated/prisma"
+  previewFeatures = ["partialIndexes"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Role {
+  MEMBER
+  MANAGER
+
+  @@map("role")
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  BLOCKED
+
+  @@map("ticket_status")
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+
+  @@map("ticket_priority")
+}
+
+enum ServiceStatus {
+  OPERATIONAL
+  DEGRADED
+  OUTAGE
+
+  @@map("service_status")
+}
+
+enum IncidentStatus {
+  INVESTIGATING
+  IDENTIFIED
+  MONITORING
+  RESOLVED
+
+  @@map("incident_status")
+}
+
+enum IncidentSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+
+  @@map("incident_severity")
+}
+
+// README §13 — extend this list as new activity-producing actions are added.
+// Keeping it a native enum (rather than a free-text column) means an
+// unrecognized action can never silently get written to the activity feed.
+enum ActivityAction {
+  TICKET_CREATED
+  TICKET_ASSIGNED
+  TICKET_STATUS_CHANGED
+  TICKET_PRIORITY_CHANGED
+  SERVICE_STATUS_CHANGED
+  INCIDENT_CREATED
+  INCIDENT_STATUS_CHANGED
+  INCIDENT_SEVERITY_CHANGED
+  INCIDENT_SERVICE_LINKED
+  INCIDENT_SERVICE_UNLINKED
+  INCIDENT_TICKET_LINKED
+  INCIDENT_TICKET_UNLINKED
+  INCIDENT_RESOLVED
+
+  @@map("activity_action")
+}
+
+// ---------------------------------------------------------------------------
+// Tenancy & identity
+// ---------------------------------------------------------------------------
+
+model Organization {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  users              User[]
+  tickets            Ticket[]
+  services           Service[]
+  incidents          Incident[]
+  incidentServices   IncidentService[]
+  incidentTickets    IncidentTicket[]
+  activities         Activity[]
+
+  @@map("organizations")
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  orgId        String   @map("org_id") @db.Uuid
+  email        String
+  passwordHash String   @map("password_hash")
+  role         Role     @default(MEMBER)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+
+  createdTickets       Ticket[]        @relation("TicketCreator")
+  assignedTickets      Ticket[]        @relation("TicketAssignee")
+  respondingIncidents  Incident[]      @relation("IncidentResponder")
+  activities           Activity[]      @relation("ActivityActor")
+  refreshTokens        RefreshToken[]
+
+  // Email only needs to be unique within an org, not globally.
+  @@unique([orgId, email])
+  @@index([orgId])
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+// ---------------------------------------------------------------------------
+// Domain: Tickets
+// ---------------------------------------------------------------------------
+
+model Ticket {
+  id          String         @id @default(uuid()) @db.Uuid
+  orgId       String         @map("org_id") @db.Uuid
+  title       String
+  description String
+  status      TicketStatus   @default(OPEN)
+  priority    TicketPriority @default(MEDIUM)
+  assigneeId  String?        @map("assignee_id") @db.Uuid
+  creatorId   String         @map("creator_id") @db.Uuid
+  version     Int            @default(1)
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+
+  organization    Organization     @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  assignee        User?            @relation("TicketAssignee", fields: [assigneeId], references: [id], onDelete: Restrict)
+  creator         User             @relation("TicketCreator", fields: [creatorId], references: [id], onDelete: Restrict)
+  incidentTickets IncidentTicket[]
+
+  @@index([orgId])
+  @@index([orgId, status])
+  @@index([assigneeId])
+  @@map("tickets")
+}
+
+// ---------------------------------------------------------------------------
+// Domain: Services
+// ---------------------------------------------------------------------------
+
+model Service {
+  id          String        @id @default(uuid()) @db.Uuid
+  orgId       String        @map("org_id") @db.Uuid
+  name        String
+  description String
+  status      ServiceStatus @default(OPERATIONAL)
+  latencyMs   Int           @default(0) @map("latency_ms")
+  errorRate   Decimal       @default(0) @map("error_rate") @db.Decimal(5, 2)
+  version     Int           @default(1)
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  organization     Organization      @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  incidentServices IncidentService[]
+
+  @@index([orgId])
+  @@index([orgId, status])
+  @@map("services")
+}
+
+// ---------------------------------------------------------------------------
+// Domain: Incidents
+// ---------------------------------------------------------------------------
+
+model Incident {
+  id          String           @id @default(uuid()) @db.Uuid
+  orgId       String           @map("org_id") @db.Uuid
+  title       String
+  description String
+  status      IncidentStatus   @default(INVESTIGATING)
+  severity    IncidentSeverity @default(MEDIUM)
+  responderId String?          @map("responder_id") @db.Uuid
+  createdAt   DateTime         @default(now()) @map("created_at")
+  resolvedAt  DateTime?        @map("resolved_at")
+  version     Int              @default(1)
+
+  organization     Organization      @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  responder        User?             @relation("IncidentResponder", fields: [responderId], references: [id], onDelete: Restrict)
+  incidentServices IncidentService[]
+  incidentTickets  IncidentTicket[]
+
+  @@index([orgId])
+  @@index([orgId, status])
+  @@map("incidents")
+}
+
+// Many-to-many: an incident can affect many services, a service can be
+// affected by many incidents (over time / concurrently).
+model IncidentService {
+  incidentId String @map("incident_id") @db.Uuid
+  serviceId  String @map("service_id") @db.Uuid
+  orgId      String @map("org_id") @db.Uuid
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  incident     Incident     @relation(fields: [incidentId], references: [id], onDelete: Restrict)
+  service      Service      @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+
+  @@id([incidentId, serviceId])
+  @@index([serviceId])
+  @@index([orgId])
+  @@map("incident_services")
+}
+
+// Many-to-many over time: a ticket may be linked to many incidents across
+// its life, but at most ONE of those links may be active at a time.
+// That's a business invariant, not just a UI convention — enforced here
+// with a partial unique index rather than left to application logic alone.
+model IncidentTicket {
+  incidentId String    @map("incident_id") @db.Uuid
+  ticketId   String    @map("ticket_id") @db.Uuid
+  orgId      String    @map("org_id") @db.Uuid
+  isActive   Boolean   @default(true) @map("is_active")
+  linkedAt   DateTime  @default(now()) @map("linked_at")
+  unlinkedAt DateTime? @map("unlinked_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  incident     Incident     @relation(fields: [incidentId], references: [id], onDelete: Restrict)
+  ticket       Ticket       @relation(fields: [ticketId], references: [id], onDelete: Restrict)
+
+  @@id([incidentId, ticketId])
+  @@index([ticketId])
+  @@index([orgId])
+  // The actual enforcement of "one active incident per ticket" (§2 of the
+  // implementation plan). Requires the partialIndexes preview feature.
+  @@unique([ticketId], map: "one_active_incident_per_ticket", where: { isActive: true })
+  @@map("incident_tickets")
+}
+
+// ---------------------------------------------------------------------------
+// Activity feed
+// ---------------------------------------------------------------------------
+
+model Activity {
+  id         String         @id @default(uuid()) @db.Uuid
+  orgId      String         @map("org_id") @db.Uuid
+  actorId    String?        @map("actor_id") @db.Uuid // null for telemetry-worker-generated activity
+  action     ActivityAction
+  targetType String         @map("target_type")
+  targetId   String         @map("target_id") @db.Uuid
+  metadata   Json?
+  createdAt  DateTime       @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  actor        User?        @relation("ActivityActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([orgId, createdAt(sort: Desc)])
+  @@map("activities")
+}

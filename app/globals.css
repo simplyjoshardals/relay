@@ -1,0 +1,44 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-public-sans);
+  --font-mono: var(--font-jetbrains-mono);
+
+  /* Surfaces — dark ops console, warm-neutral rather than pure black */
+  --color-bg: #0a0b0d;
+  --color-panel: #131519;
+  --color-panel-raised: #191c21;
+  --color-line: rgba(237, 239, 242, 0.07);
+  --color-line-strong: rgba(237, 239, 242, 0.14);
+
+  /* Ink — text */
+  --color-ink: #edeff2;
+  --color-ink-dim: #9298a6;
+  --color-ink-faint: #5b6270;
+
+  /* Signal — Relay's single brand/live accent. Reserved for realtime
+     state (live dot, active nav, focus, links) and never used for
+     entity status, so it can't be confused with a semantic meaning. */
+  --color-signal: #3ee6cd;
+  --color-signal-dim: #123a34;
+
+  /* Status hues — each meaning gets exactly one color, used identically
+     across cards, chips, list rows, and the activity feed. */
+  --color-info: #5b8def;
+  --color-success: #33c481;
+  --color-warning: #f2a93b;
+  --color-danger: #ef5350;
+}
+
+body {
+  @apply font-sans bg-bg text-ink;
+}
+
+::selection {
+  background: var(--color-signal-dim);
+  color: var(--color-ink);
+}
+
+* {
+  scrollbar-color: var(--color-line-strong) transparent;
+}
