@@ -47,7 +47,10 @@ export function ServiceHealthGrid({ services }: { services: Service[] }) {
               </div>
 
               <div className="mt-2 text-[11px] text-ink-faint">
-                Updated {relativeTime(service.updatedAt)}
+                {/* Server Component (no "use client") — this never
+                    hydrates/re-executes on the client, so a plain
+                    `new Date()` here is safe and doesn't need useNow(). */}
+                Updated {relativeTime(service.updatedAt, new Date())}
               </div>
             </div>
           );

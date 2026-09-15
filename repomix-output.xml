@@ -42,7 +42,13 @@ The content is organized as follows:
 <directory_structure>
 app/
   (dashboard)/
+    activity/
+      page.tsx
     dashboard/
+      page.tsx
+    incidents/
+      page.tsx
+    services/
       page.tsx
     tickets/
       page.tsx
@@ -52,6 +58,8 @@ app/
   layout.tsx
   page.tsx
 components/
+  activity/
+    ActivityView.tsx
   dashboard/
     ActivityFeed.tsx
     Avatar.tsx
@@ -61,7 +69,15 @@ components/
     ServiceHealthGrid.tsx
     StatRow.tsx
     TicketBoard.tsx
+  incidents/
+    IncidentsView.tsx
+  services/
+    ServicesView.tsx
   shared/
+    ActivityDescription.tsx
+    FilterPill.tsx
+    SearchInput.tsx
+    Sparkline.tsx
     TopBar.tsx
   tickets/
     TicketsView.tsx
@@ -101,6 +117,23 @@ tsconfig.json
 <files>
 This section contains the contents of the repository's files.
 
+<file path="app/(dashboard)/activity/page.tsx">
+"use client";
+
+import { ActivityView } from "@/components/activity/ActivityView";
+import { activities, resolveUser } from "@/lib/mock-data";
+
+// TODO(milestone 9): replace the mock-data import above with a real
+// org-scoped, cursor-paginated activity query once auth + the API routes
+// land (README §15 / implementation plan). ActivityView's "Load more"
+// button already models the paginated contract (AC-05 / §13) — swapping
+// its client-side slicing for `fetchNextPage()` shouldn't touch the JSX.
+
+export default function ActivityPage() {
+  return <ActivityView activities={activities} resolveUser={resolveUser} />;
+}
+</file>
+
 <file path="app/(dashboard)/dashboard/page.tsx">
 import { StatRow } from "@/components/dashboard/StatRow";
 import { IncidentsPanel } from "@/components/dashboard/IncidentsPanel";
@@ -128,7 +161,13 @@ export default function DashboardPage() {
   const inProgressTickets = tickets.filter(
     (t) => t.status === "IN_PROGRESS",
   ).length;
-  const activeIncidents = incidents.length;
+  // Resolved incidents now exist in the data (added for the standalone
+  // incidents page's history view), so this can no longer just be
+  // `incidents.length` — the dashboard only ever wants the ones still
+  // open. IncidentsPanel is built the same way: its "No active incidents"
+  // empty state assumes the caller already filtered, it doesn't re-check.
+  const activeIncidentsList = incidents.filter((i) => i.status !== "RESOLVED");
+  const activeIncidents = activeIncidentsList.length;
   const unhealthyServices = services.filter(
     (s) => s.status !== "OPERATIONAL",
   ).length;
@@ -159,7 +198,7 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[2.2fr_1fr] lg:items-start">
         <div className="flex flex-col gap-4 min-w-0">
           <IncidentsPanel
-            incidents={incidents}
+            incidents={activeIncidentsList}
             services={services}
             resolveUser={resolveUser}
           />
@@ -174,6 +213,45 @@ export default function DashboardPage() {
       </div>
     </>
   );
+}
+</file>
+
+<file path="app/(dashboard)/incidents/page.tsx">
+"use client";
+
+import { IncidentsView } from "@/components/incidents/IncidentsView";
+import { incidents, resolveUser, services } from "@/lib/mock-data";
+
+// TODO(milestone 9): replace the mock-data import above with a real
+// org-scoped incidents query once auth + the API routes land (README §15 /
+// implementation plan). IncidentsView already takes its data as props shaped
+// like the query result, so that swap shouldn't touch the JSX here.
+
+export default function IncidentsPage() {
+  return (
+    <IncidentsView
+      incidents={incidents}
+      services={services}
+      resolveUser={resolveUser}
+    />
+  );
+}
+</file>
+
+<file path="app/(dashboard)/services/page.tsx">
+"use client";
+
+import { ServicesView } from "@/components/services/ServicesView";
+import { incidents, services } from "@/lib/mock-data";
+
+// TODO(milestone 9): replace the mock-data import above with a real
+// org-scoped services query (plus the telemetry-driven realtime updates
+// from README §13) once auth + the API routes land. ServicesView already
+// takes its data as props shaped like the query result, so that swap
+// shouldn't touch the JSX here.
+
+export default function ServicesPage() {
+  return <ServicesView services={services} incidents={incidents} />;
 }
 </file>
 
@@ -217,6 +295,297 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
         {children}
       </main>
     </div>
+  );
+}
+</file>
+
+<file path="app/page.tsx">
+import { redirect } from "next/navigation";
+
+export default function RootPage() {
+  redirect("/dashboard");
+}
+</file>
+
+<file path="components/dashboard/LiveIndicator.tsx">
+interface LiveIndicatorProps {
+  connected?: boolean;
+}
+
+/** RT-02 / RT-03: the realtime connection state has to be visible, not
+ *  just implied by data updating. Connected is quiet; reconnecting is not. */
+export function LiveIndicator({ connected = true }: LiveIndicatorProps) {
+  if (!connected) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-warning/10 px-2.5 py-1 text-xs font-medium text-warning">
+        <span className="size-1.5 rounded-full bg-warning" />
+        Reconnecting
+      </span>
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-signal-dim px-2.5 py-1 text-xs font-medium text-signal">
+      <span className="relative flex size-1.5">
+        <span className="absolute inline-flex size-full animate-ping rounded-full bg-signal opacity-75" />
+        <span className="relative inline-flex size-1.5 rounded-full bg-signal" />
+      </span>
+      Live
+    </span>
+  );
+}
+</file>
+
+<file path="components/shared/ActivityDescription.tsx">
+import { ArrowRight } from "@phosphor-icons/react/ssr";
+import {
+  incidentSeverityMeta,
+  incidentStatusMeta,
+  serviceStatusMeta,
+  ticketPriorityMeta,
+  ticketStatusMeta,
+  type Activity,
+} from "@/types";
+
+// Activity metadata stores raw enum values (e.g. "IN_PROGRESS") as they're
+// persisted in the DB. Never show those directly — always translate through
+// the same label maps the rest of the dashboard uses, so activity reads like
+// something a person wrote ("In progress") rather than a code left showing.
+type LabelMap = Record<string, { label: string }>;
+
+function humanize(value: unknown, labels?: LabelMap): string {
+  if (value == null) return "?";
+  const key = String(value);
+  return labels?.[key]?.label ?? key;
+}
+
+function Transition({
+  from,
+  to,
+  labels,
+}: {
+  from: unknown;
+  to: unknown;
+  labels?: LabelMap;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1 align-middle">
+      <span>{humanize(from, labels)}</span>
+      <ArrowRight size={11} weight="bold" className="text-ink-faint" />
+      <span>{humanize(to, labels)}</span>
+    </span>
+  );
+}
+
+/** Rich, JSX description used in both the dashboard's compact feed and the
+ *  full activity page, so the same event always reads identically wherever
+ *  it shows up. */
+export function describeActivity(activity: Activity) {
+  const m = activity.metadata ?? {};
+  switch (activity.action) {
+    case "TICKET_CREATED":
+      return <>opened &ldquo;{m.title ?? "a ticket"}&rdquo;</>;
+    case "TICKET_ASSIGNED":
+      return <>assigned this ticket to {m.assignee ?? "someone"}</>;
+    case "TICKET_STATUS_CHANGED":
+      return (
+        <>
+          moved a ticket{" "}
+          <Transition from={m.from} to={m.to} labels={ticketStatusMeta} />
+        </>
+      );
+    case "TICKET_PRIORITY_CHANGED":
+      return (
+        <>
+          changed ticket priority{" "}
+          <Transition from={m.from} to={m.to} labels={ticketPriorityMeta} />
+        </>
+      );
+    case "SERVICE_STATUS_CHANGED":
+      return (
+        <>
+          status changed{" "}
+          <Transition from={m.from} to={m.to} labels={serviceStatusMeta} />
+        </>
+      );
+    case "INCIDENT_CREATED":
+      return <>opened incident &ldquo;{m.title ?? ""}&rdquo;</>;
+    case "INCIDENT_STATUS_CHANGED":
+      return (
+        <>
+          moved incident{" "}
+          <Transition from={m.from} to={m.to} labels={incidentStatusMeta} />
+        </>
+      );
+    case "INCIDENT_SEVERITY_CHANGED":
+      return (
+        <>
+          changed severity{" "}
+          <Transition from={m.from} to={m.to} labels={incidentSeverityMeta} />
+        </>
+      );
+    case "INCIDENT_SERVICE_LINKED":
+      return <>linked a service to this incident</>;
+    case "INCIDENT_SERVICE_UNLINKED":
+      return <>unlinked a service from this incident</>;
+    case "INCIDENT_TICKET_LINKED":
+      return <>linked &ldquo;{m.ticketTitle ?? "a ticket"}&rdquo;</>;
+    case "INCIDENT_TICKET_UNLINKED":
+      return <>unlinked a ticket</>;
+    case "INCIDENT_RESOLVED":
+      return <>resolved &ldquo;{m.title ?? "an incident"}&rdquo;</>;
+    default:
+      return <>made a change</>;
+  }
+}
+
+/** Plain-text render of the same event, for search matching and anywhere
+ *  JSX isn't appropriate — kept as a thin wrapper so the two never drift
+ *  in what counts as a match vs. what's displayed. */
+export function describeActivityText(activity: Activity): string {
+  const m = activity.metadata ?? {};
+  switch (activity.action) {
+    case "TICKET_CREATED":
+      return `opened "${m.title ?? "a ticket"}"`;
+    case "TICKET_ASSIGNED":
+      return `assigned this ticket to ${m.assignee ?? "someone"}`;
+    case "TICKET_STATUS_CHANGED":
+      return `moved a ticket ${humanize(m.from, ticketStatusMeta)} to ${humanize(m.to, ticketStatusMeta)}`;
+    case "TICKET_PRIORITY_CHANGED":
+      return `changed ticket priority ${humanize(m.from, ticketPriorityMeta)} to ${humanize(m.to, ticketPriorityMeta)}`;
+    case "SERVICE_STATUS_CHANGED":
+      return `status changed ${humanize(m.from, serviceStatusMeta)} to ${humanize(m.to, serviceStatusMeta)}`;
+    case "INCIDENT_CREATED":
+      return `opened incident "${m.title ?? ""}"`;
+    case "INCIDENT_STATUS_CHANGED":
+      return `moved incident ${humanize(m.from, incidentStatusMeta)} to ${humanize(m.to, incidentStatusMeta)}`;
+    case "INCIDENT_SEVERITY_CHANGED":
+      return `changed severity ${humanize(m.from, incidentSeverityMeta)} to ${humanize(m.to, incidentSeverityMeta)}`;
+    case "INCIDENT_SERVICE_LINKED":
+      return "linked a service to this incident";
+    case "INCIDENT_SERVICE_UNLINKED":
+      return "unlinked a service from this incident";
+    case "INCIDENT_TICKET_LINKED":
+      return `linked "${m.ticketTitle ?? "a ticket"}"`;
+    case "INCIDENT_TICKET_UNLINKED":
+      return "unlinked a ticket";
+    case "INCIDENT_RESOLVED":
+      return `resolved "${m.title ?? "an incident"}"`;
+    default:
+      return "made a change";
+  }
+}
+</file>
+
+<file path="components/shared/FilterPill.tsx">
+interface FilterPillProps {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  count: number;
+}
+
+/** The "All / Open / In progress / ..." style filter button used at the top
+ *  of every list page (tickets, incidents, services, activity). Pulled out
+ *  once it turned out four view components had each defined an identical
+ *  copy locally. */
+export function FilterPill({ active, onClick, label, count }: FilterPillProps) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        active
+          ? "rounded-md px-3 py-1.5 text-xs font-medium text-ink bg-panel-raised"
+          : "rounded-md px-3 py-1.5 text-xs text-ink-dim transition-colors hover:text-ink"
+      }
+    >
+      {label} <span className="text-ink-faint">{count}</span>
+    </button>
+  );
+}
+</file>
+
+<file path="components/shared/SearchInput.tsx">
+import { MagnifyingGlassIcon } from "@phosphor-icons/react";
+
+interface SearchInputProps {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+}
+
+/** The search box used at the top of every list page. Same reasoning as
+ *  FilterPill — four view components each had an identical copy. */
+export function SearchInput({
+  value,
+  onChange,
+  placeholder,
+}: SearchInputProps) {
+  return (
+    <div className="relative w-full sm:w-64">
+      <MagnifyingGlassIcon
+        size={14}
+        className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-faint"
+      />
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="w-full rounded-md border border-line bg-panel-raised py-1.5 pl-8 pr-3 text-sm text-ink placeholder:text-ink-faint focus:outline-none focus:ring-1 focus:ring-signal"
+      />
+    </div>
+  );
+}
+</file>
+
+<file path="components/shared/Sparkline.tsx">
+interface SparklineProps {
+  values: number[];
+  warn: boolean;
+  width?: number;
+  height?: number;
+}
+
+/** Minimal inline trend line for a metric buffered client-side since page
+ *  load (see Service.sessionLatencyTrend). Not a charting library — just
+ *  enough to show "is this getting worse" at a glance in a small card. */
+export function Sparkline({
+  values,
+  warn,
+  width = 64,
+  height = 20,
+}: SparklineProps) {
+  if (values.length < 2) {
+    return <span className="text-xs text-ink-faint">—</span>;
+  }
+
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const points = values
+    .map((v, i) => {
+      const x = (i / (values.length - 1)) * width;
+      const y = height - ((v - min) / range) * height;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+
+  return (
+    <svg
+      width={width}
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      className="overflow-visible"
+    >
+      <polyline
+        points={points}
+        fill="none"
+        strokeWidth="1.5"
+        className={warn ? "stroke-warning" : "stroke-ink-faint"}
+      />
+    </svg>
   );
 }
 </file>
@@ -353,665 +722,6 @@ export function TopBar({ orgName, self }: { orgName: string; self: User }) {
 }
 </file>
 
-<file path="components/tickets/TicketsView.tsx">
-"use client";
-
-import { useMemo, useState } from "react";
-import { MagnifyingGlassIcon } from "@phosphor-icons/react";
-import { Avatar } from "@/components/dashboard/Avatar";
-import {
-  ticketPriorityMeta,
-  ticketStatusMeta,
-  type Ticket,
-  type TicketStatus,
-  type User,
-} from "@/types";
-import { relativeTime, statusChipBg, statusDot, statusText } from "@/lib/style";
-
-const statusColumns: TicketStatus[] = [
-  "OPEN",
-  "IN_PROGRESS",
-  "BLOCKED",
-  "RESOLVED",
-];
-
-interface TicketsViewProps {
-  tickets: Ticket[];
-  resolveUser: (id: string | null) => User | null;
-}
-
-export function TicketsView({ tickets, resolveUser }: TicketsViewProps) {
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<TicketStatus | "ALL">("ALL");
-
-  // Search narrows the pool the status pills count against, so the counts
-  // stay meaningful while typing; the status pill then narrows further.
-  const searched = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    if (!query) return tickets;
-    return tickets.filter((t) => t.title.toLowerCase().includes(query));
-  }, [tickets, search]);
-
-  const filtered = useMemo(() => {
-    const byStatus =
-      statusFilter === "ALL"
-        ? searched
-        : searched.filter((t) => t.status === statusFilter);
-    // Most recently touched first — matches the "what's happening now"
-    // framing used everywhere else on the dashboard (README §15).
-    return [...byStatus].sort(
-      (a, b) =>
-        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-    );
-  }, [searched, statusFilter]);
-
-  return (
-    <div className="flex flex-col gap-4">
-      <div>
-        <h1 className="text-lg font-medium text-ink">Tickets</h1>
-        <p className="text-sm text-ink-dim">
-          {tickets.length} {tickets.length === 1 ? "ticket" : "tickets"}
-        </p>
-      </div>
-
-      <div className="rounded-lg border border-line bg-panel">
-        <div className="flex flex-col gap-3 border-b border-line px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-wrap items-center gap-1">
-            <FilterPill
-              active={statusFilter === "ALL"}
-              onClick={() => setStatusFilter("ALL")}
-              label="All"
-              count={searched.length}
-            />
-            {statusColumns.map((status) => (
-              <FilterPill
-                key={status}
-                active={statusFilter === status}
-                onClick={() => setStatusFilter(status)}
-                label={ticketStatusMeta[status].label}
-                count={searched.filter((t) => t.status === status).length}
-              />
-            ))}
-          </div>
-
-          <div className="relative w-full sm:w-64">
-            <MagnifyingGlassIcon
-              size={14}
-              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-faint"
-            />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search tickets"
-              className="w-full rounded-md border border-line bg-panel-raised py-1.5 pl-8 pr-3 text-sm text-ink placeholder:text-ink-faint focus:outline-none focus:ring-1 focus:ring-signal"
-            />
-          </div>
-        </div>
-
-        {filtered.length === 0 ? (
-          <div className="px-4 py-8 text-center text-sm text-ink-dim">
-            No tickets match your filters.
-          </div>
-        ) : (
-          <ul>
-            {filtered.map((ticket) => {
-              const statusMeta = ticketStatusMeta[ticket.status];
-              const priorityMeta = ticketPriorityMeta[ticket.priority];
-              const assignee = resolveUser(ticket.assigneeId);
-
-              return (
-                <li
-                  key={ticket.id}
-                  className="flex items-center gap-3 border-b border-line px-4 py-3 last:border-b-0 transition-colors hover:bg-panel-raised"
-                >
-                  <span
-                    className={`size-1.5 shrink-0 rounded-full ${statusDot[priorityMeta.color]}`}
-                    title={`${priorityMeta.label} priority`}
-                  />
-
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm text-ink">
-                      {ticket.title}
-                    </div>
-                    {/* Status + time collapse into the row on phone, where
-                        the dedicated columns to the right are hidden. */}
-                    <div className="mt-0.5 flex items-center gap-1.5 text-xs text-ink-faint sm:hidden">
-                      <span className={statusText[statusMeta.color]}>
-                        {statusMeta.label}
-                      </span>
-                      <span>·</span>
-                      <span>{relativeTime(ticket.updatedAt)}</span>
-                    </div>
-                  </div>
-
-                  <span
-                    className={`hidden shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium sm:inline-block ${statusChipBg[statusMeta.color]} ${statusText[statusMeta.color]}`}
-                  >
-                    {statusMeta.label}
-                  </span>
-
-                  <span className="hidden w-16 shrink-0 text-xs text-ink-faint md:inline-block">
-                    {relativeTime(ticket.updatedAt)}
-                  </span>
-
-                  {assignee ? (
-                    <Avatar
-                      initials={assignee.initials}
-                      seed={assignee.id}
-                      title={assignee.name}
-                    />
-                  ) : (
-                    <span className="size-6 shrink-0 rounded-full border border-dashed border-line-strong" />
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function FilterPill({
-  active,
-  onClick,
-  label,
-  count,
-}: {
-  active: boolean;
-  onClick: () => void;
-  label: string;
-  count: number;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={
-        active
-          ? "rounded-md px-3 py-1.5 text-xs font-medium text-ink bg-panel-raised"
-          : "rounded-md px-3 py-1.5 text-xs text-ink-dim transition-colors hover:text-ink"
-      }
-    >
-      {label} <span className="text-ink-faint">{count}</span>
-    </button>
-  );
-}
-</file>
-
-<file path="utils/paths.ts">
-export const PATHS = {
-  DASHBOARD: "/dashboard",
-  TICKETS: "/tickets",
-  INCIDENTS: "/incidents",
-  SERVICES: "/services",
-  ACTIVITY: "/activity",
-};
-</file>
-
-<file path="app/page.tsx">
-import { redirect } from "next/navigation";
-
-export default function RootPage() {
-  redirect("/dashboard");
-}
-</file>
-
-<file path="components/dashboard/LiveIndicator.tsx">
-interface LiveIndicatorProps {
-  connected?: boolean;
-}
-
-/** RT-02 / RT-03: the realtime connection state has to be visible, not
- *  just implied by data updating. Connected is quiet; reconnecting is not. */
-export function LiveIndicator({ connected = true }: LiveIndicatorProps) {
-  if (!connected) {
-    return (
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-warning/10 px-2.5 py-1 text-xs font-medium text-warning">
-        <span className="size-1.5 rounded-full bg-warning" />
-        Reconnecting
-      </span>
-    );
-  }
-
-  return (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-signal-dim px-2.5 py-1 text-xs font-medium text-signal">
-      <span className="relative flex size-1.5">
-        <span className="absolute inline-flex size-full animate-ping rounded-full bg-signal opacity-75" />
-        <span className="relative inline-flex size-1.5 rounded-full bg-signal" />
-      </span>
-      Live
-    </span>
-  );
-}
-</file>
-
-<file path="lib/mock-data.ts">
-import type { Activity, Incident, Service, Ticket, User } from "@/types";
-
-// A single org's worth of data — Relay is org-scoped throughout (README §5).
-const ORG_ID = "org_1";
-const now = Date.now();
-const minutesAgo = (m: number) => new Date(now - m * 60_000).toISOString();
-const hoursAgo = (h: number) => minutesAgo(h * 60);
-const daysAgo = (d: number) => hoursAgo(d * 24);
-
-export const users: User[] = [
-  {
-    id: "u_maya",
-    orgId: ORG_ID,
-    email: "maya@kestrel.dev",
-    name: "Maya Reyes",
-    role: "MANAGER",
-    initials: "MR",
-  },
-  {
-    id: "u_josh",
-    orgId: ORG_ID,
-    email: "josh@kestrel.dev",
-    name: "Josh Dietrich",
-    role: "MEMBER",
-    initials: "JD",
-  },
-  {
-    id: "u_sana",
-    orgId: ORG_ID,
-    email: "sana@kestrel.dev",
-    name: "Sana Kapoor",
-    role: "MEMBER",
-    initials: "SK",
-  },
-  {
-    id: "u_leo",
-    orgId: ORG_ID,
-    email: "leo@kestrel.dev",
-    name: "Leo Fontaine",
-    role: "MEMBER",
-    initials: "LF",
-  },
-  {
-    id: "u_priya",
-    orgId: ORG_ID,
-    email: "priya@kestrel.dev",
-    name: "Priya Nair",
-    role: "MEMBER",
-    initials: "PN",
-  },
-];
-
-const userById = Object.fromEntries(users.map((u) => [u.id, u]));
-
-export const services: Service[] = [
-  {
-    id: "svc_payments",
-    orgId: ORG_ID,
-    name: "Payments API",
-    description: "Card authorization and capture",
-    status: "OPERATIONAL",
-    latencyMs: 118,
-    errorRate: 0.12,
-    version: 14,
-    updatedAt: minutesAgo(2),
-    sessionLatencyTrend: [112, 115, 109, 121, 118],
-  },
-  {
-    id: "svc_checkout",
-    orgId: ORG_ID,
-    name: "Checkout",
-    description: "Cart, pricing, and order creation",
-    status: "DEGRADED",
-    latencyMs: 342,
-    errorRate: 4.86,
-    version: 27,
-    updatedAt: minutesAgo(1),
-    sessionLatencyTrend: [190, 205, 260, 310, 342],
-  },
-  {
-    id: "svc_auth",
-    orgId: ORG_ID,
-    name: "Auth",
-    description: "Session issuance and token refresh",
-    status: "OPERATIONAL",
-    latencyMs: 76,
-    errorRate: 0.04,
-    version: 9,
-    updatedAt: minutesAgo(4),
-    sessionLatencyTrend: [80, 78, 74, 77, 76],
-  },
-  {
-    id: "svc_search",
-    orgId: ORG_ID,
-    name: "Search",
-    description: "Catalog indexing and query",
-    status: "OPERATIONAL",
-    latencyMs: 203,
-    errorRate: 0.31,
-    version: 22,
-    updatedAt: minutesAgo(6),
-    sessionLatencyTrend: [198, 210, 205, 200, 203],
-  },
-  {
-    id: "svc_notify",
-    orgId: ORG_ID,
-    name: "Notifications",
-    description: "Email, SMS, and push dispatch",
-    status: "OUTAGE",
-    latencyMs: 0,
-    errorRate: 100,
-    version: 31,
-    updatedAt: minutesAgo(3),
-    sessionLatencyTrend: [220, 890, 0, 0, 0],
-  },
-  {
-    id: "svc_billing",
-    orgId: ORG_ID,
-    name: "Billing",
-    description: "Invoicing and subscription state",
-    status: "OPERATIONAL",
-    latencyMs: 145,
-    errorRate: 0.08,
-    version: 11,
-    updatedAt: minutesAgo(9),
-    sessionLatencyTrend: [150, 148, 144, 146, 145],
-  },
-];
-
-export const tickets: Ticket[] = [
-  {
-    id: "t_1",
-    orgId: ORG_ID,
-    title: "Checkout 500s on discount codes >10% off",
-    description: "",
-    status: "IN_PROGRESS",
-    priority: "URGENT",
-    assigneeId: "u_josh",
-    creatorId: "u_maya",
-    version: 4,
-    createdAt: hoursAgo(2),
-    updatedAt: minutesAgo(5),
-  },
-  {
-    id: "t_2",
-    orgId: ORG_ID,
-    title: "Notification worker stuck retrying dead queue",
-    description: "",
-    status: "IN_PROGRESS",
-    priority: "URGENT",
-    assigneeId: "u_sana",
-    creatorId: "u_sana",
-    version: 3,
-    createdAt: hoursAgo(1),
-    updatedAt: minutesAgo(2),
-  },
-  {
-    id: "t_3",
-    orgId: ORG_ID,
-    title: "Search returns stale prices for ~30s after update",
-    description: "",
-    status: "OPEN",
-    priority: "HIGH",
-    assigneeId: "u_leo",
-    creatorId: "u_priya",
-    version: 1,
-    createdAt: hoursAgo(5),
-    updatedAt: hoursAgo(5),
-  },
-  {
-    id: "t_4",
-    orgId: ORG_ID,
-    title: "Add pagination to billing invoice export",
-    description: "",
-    status: "OPEN",
-    priority: "LOW",
-    assigneeId: null,
-    creatorId: "u_maya",
-    version: 1,
-    createdAt: daysAgo(1),
-    updatedAt: daysAgo(1),
-  },
-  {
-    id: "t_5",
-    orgId: ORG_ID,
-    title: "Auth refresh token rotation off by one",
-    description: "",
-    status: "OPEN",
-    priority: "MEDIUM",
-    assigneeId: "u_priya",
-    creatorId: "u_leo",
-    version: 2,
-    createdAt: hoursAgo(8),
-    updatedAt: hoursAgo(3),
-  },
-  {
-    id: "t_6",
-    orgId: ORG_ID,
-    title: "Payments webhook signature check flaky in staging",
-    description: "",
-    status: "BLOCKED",
-    priority: "HIGH",
-    assigneeId: "u_josh",
-    creatorId: "u_josh",
-    version: 3,
-    createdAt: daysAgo(2),
-    updatedAt: hoursAgo(6),
-  },
-  {
-    id: "t_7",
-    orgId: ORG_ID,
-    title: "Checkout cart total rounding mismatch (JPY)",
-    description: "",
-    status: "BLOCKED",
-    priority: "MEDIUM",
-    assigneeId: "u_sana",
-    creatorId: "u_maya",
-    version: 2,
-    createdAt: daysAgo(1),
-    updatedAt: hoursAgo(10),
-  },
-  {
-    id: "t_8",
-    orgId: ORG_ID,
-    title: "Add dark-mode icon set to notification emails",
-    description: "",
-    status: "RESOLVED",
-    priority: "LOW",
-    assigneeId: "u_leo",
-    creatorId: "u_priya",
-    version: 5,
-    createdAt: daysAgo(3),
-    updatedAt: hoursAgo(12),
-  },
-  {
-    id: "t_9",
-    orgId: ORG_ID,
-    title: "Billing double-charged trial-to-paid conversions",
-    description: "",
-    status: "RESOLVED",
-    priority: "URGENT",
-    assigneeId: "u_maya",
-    creatorId: "u_sana",
-    version: 6,
-    createdAt: daysAgo(4),
-    updatedAt: daysAgo(1),
-  },
-  {
-    id: "t_10",
-    orgId: ORG_ID,
-    title: "Search facet counts ignore region filter",
-    description: "",
-    status: "OPEN",
-    priority: "MEDIUM",
-    assigneeId: "u_priya",
-    creatorId: "u_leo",
-    version: 1,
-    createdAt: hoursAgo(4),
-    updatedAt: hoursAgo(4),
-  },
-];
-
-export const incidents: Incident[] = [
-  {
-    id: "i_1",
-    orgId: ORG_ID,
-    title: "Notification delivery completely down",
-    description:
-      "All channels failing after queue backlog exceeded retry budget.",
-    status: "INVESTIGATING",
-    severity: "CRITICAL",
-    responderId: "u_sana",
-    createdAt: minutesAgo(38),
-    resolvedAt: null,
-    version: 5,
-    serviceIds: ["svc_notify"],
-    ticketIds: ["t_2"],
-  },
-  {
-    id: "i_2",
-    orgId: ORG_ID,
-    title: "Elevated errors on checkout with discount codes",
-    description: "Discount codes over 10% trigger a pricing-service 500.",
-    status: "IDENTIFIED",
-    severity: "HIGH",
-    responderId: "u_josh",
-    createdAt: hoursAgo(2),
-    resolvedAt: null,
-    version: 3,
-    serviceIds: ["svc_checkout"],
-    ticketIds: ["t_1"],
-  },
-  {
-    id: "i_3",
-    orgId: ORG_ID,
-    title: "Search latency creeping up since deploy",
-    description: "p95 latency up ~15% since the 14:20 index rebuild.",
-    status: "MONITORING",
-    severity: "LOW",
-    responderId: "u_leo",
-    createdAt: hoursAgo(5),
-    resolvedAt: null,
-    version: 2,
-    serviceIds: ["svc_search"],
-    ticketIds: [],
-  },
-];
-
-export const activities: Activity[] = [
-  {
-    id: "a_1",
-    orgId: ORG_ID,
-    actorId: null,
-    action: "SERVICE_STATUS_CHANGED",
-    targetType: "service",
-    targetId: "svc_notify",
-    metadata: { from: "DEGRADED", to: "OUTAGE" },
-    createdAt: minutesAgo(3),
-  },
-  {
-    id: "a_2",
-    orgId: ORG_ID,
-    actorId: "u_sana",
-    action: "INCIDENT_STATUS_CHANGED",
-    targetType: "incident",
-    targetId: "i_1",
-    metadata: { from: "IDENTIFIED", to: "INVESTIGATING" },
-    createdAt: minutesAgo(6),
-  },
-  {
-    id: "a_3",
-    orgId: ORG_ID,
-    actorId: "u_sana",
-    action: "TICKET_STATUS_CHANGED",
-    targetType: "ticket",
-    targetId: "t_2",
-    metadata: { from: "OPEN", to: "IN_PROGRESS" },
-    createdAt: minutesAgo(9),
-  },
-  {
-    id: "a_4",
-    orgId: ORG_ID,
-    actorId: null,
-    action: "SERVICE_STATUS_CHANGED",
-    targetType: "service",
-    targetId: "svc_checkout",
-    metadata: { from: "OPERATIONAL", to: "DEGRADED" },
-    createdAt: minutesAgo(14),
-  },
-  {
-    id: "a_5",
-    orgId: ORG_ID,
-    actorId: "u_josh",
-    action: "INCIDENT_TICKET_LINKED",
-    targetType: "incident",
-    targetId: "i_2",
-    metadata: { ticketTitle: "Checkout 500s on discount codes >10% off" },
-    createdAt: minutesAgo(17),
-  },
-  {
-    id: "a_6",
-    orgId: ORG_ID,
-    actorId: "u_josh",
-    action: "TICKET_ASSIGNED",
-    targetType: "ticket",
-    targetId: "t_1",
-    metadata: { assignee: "Josh Dietrich" },
-    createdAt: minutesAgo(18),
-  },
-  {
-    id: "a_7",
-    orgId: ORG_ID,
-    actorId: "u_maya",
-    action: "INCIDENT_CREATED",
-    targetType: "incident",
-    targetId: "i_2",
-    metadata: { title: "Elevated errors on checkout with discount codes" },
-    createdAt: hoursAgo(2),
-  },
-  {
-    id: "a_8",
-    orgId: ORG_ID,
-    actorId: "u_leo",
-    action: "INCIDENT_SEVERITY_CHANGED",
-    targetType: "incident",
-    targetId: "i_3",
-    metadata: { from: "MEDIUM", to: "LOW" },
-    createdAt: hoursAgo(3),
-  },
-  {
-    id: "a_9",
-    orgId: ORG_ID,
-    actorId: "u_priya",
-    action: "TICKET_CREATED",
-    targetType: "ticket",
-    targetId: "t_10",
-    metadata: { title: "Search facet counts ignore region filter" },
-    createdAt: hoursAgo(4),
-  },
-  {
-    id: "a_10",
-    orgId: ORG_ID,
-    actorId: "u_maya",
-    action: "INCIDENT_RESOLVED",
-    targetType: "incident",
-    targetId: "i_4",
-    metadata: { title: "Billing double-charge on trial conversion" },
-    createdAt: daysAgo(1),
-  },
-];
-
-// Presence is never persisted (README §14) — this stands in for what the
-// Realtime Presence channel would report at request time.
-export const onlineUserIds = new Set(["u_maya", "u_josh", "u_sana"]);
-
-export function resolveUser(id: string | null): User | null {
-  if (!id) return null;
-  return userById[id] ?? null;
-}
-
-export const currentOrgName = "Kestrel Commerce";
-</file>
-
 <file path="lib/prisma.ts">
 import { PrismaClient } from "./generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
@@ -1031,81 +741,6 @@ export const prisma: PrismaClient =
   });
 
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
-</file>
-
-<file path="lib/style.ts">
-// Tailwind's scanner looks for literal class-name tokens in source text, so
-// `text-${color}` would silently fail to generate. These lookup tables keep
-// every combination spelled out once, here, instead of interpolated at each
-// call site.
-
-export type StatusColor =
-  | "info"
-  | "success"
-  | "warning"
-  | "danger"
-  | "ink-faint";
-
-export const statusText: Record<StatusColor, string> = {
-  info: "text-info",
-  success: "text-success",
-  warning: "text-warning",
-  danger: "text-danger",
-  "ink-faint": "text-ink-faint",
-};
-
-export const statusDot: Record<StatusColor, string> = {
-  info: "bg-info",
-  success: "bg-success",
-  warning: "bg-warning",
-  danger: "bg-danger",
-  "ink-faint": "bg-ink-faint",
-};
-
-export const statusChipBg: Record<StatusColor, string> = {
-  info: "bg-info/10",
-  success: "bg-success/10",
-  warning: "bg-warning/10",
-  danger: "bg-danger/10",
-  "ink-faint": "bg-ink-faint/10",
-};
-
-export const statusBorderLeft: Record<StatusColor, string> = {
-  info: "border-l-info",
-  success: "border-l-success",
-  warning: "border-l-warning",
-  danger: "border-l-danger",
-  "ink-faint": "border-l-ink-faint",
-};
-
-/** "3m ago", "2h ago", "Sep 4" — stable across server and client render. */
-export function relativeTime(iso: string, now: Date = new Date()): string {
-  const then = new Date(iso);
-  const diffMs = now.getTime() - then.getTime();
-  const diffSec = Math.round(diffMs / 1000);
-
-  if (diffSec < 5) return "just now";
-  if (diffSec < 60) return `${diffSec}s ago`;
-  const diffMin = Math.round(diffSec / 60);
-  if (diffMin < 60) return `${diffMin}m ago`;
-  const diffHr = Math.round(diffMin / 60);
-  if (diffHr < 24) return `${diffHr}h ago`;
-  const diffDay = Math.round(diffHr / 24);
-  if (diffDay < 7) return `${diffDay}d ago`;
-
-  return then.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
-
-export function formatErrorRate(rate: number): string {
-  return `${rate.toFixed(2)}%`;
-}
-
-export function initialsOf(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  const first = parts[0]?.[0] ?? "";
-  const last = parts.length > 1 ? (parts[parts.length - 1]?.[0] ?? "") : "";
-  return (first + last).toUpperCase();
-}
 </file>
 
 <file path="prisma/migrations/20260909021348_init/migration.sql">
@@ -1787,6 +1422,16 @@ export const incidentSeverityMeta: Record<IncidentSeverity, StatusMeta> = {
 };
 </file>
 
+<file path="utils/paths.ts">
+export const PATHS = {
+  DASHBOARD: "/dashboard",
+  TICKETS: "/tickets",
+  INCIDENTS: "/incidents",
+  SERVICES: "/services",
+  ACTIVITY: "/activity",
+};
+</file>
+
 <file path=".gitignore">
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
@@ -2053,57 +1698,234 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
 }
 </file>
 
-<file path="components/dashboard/Avatar.tsx">
-interface AvatarProps {
-  initials: string;
-  /** Stable per-person value (e.g. user.id) used to generate a consistent
-   *  avatar image. Omit to always show the initials fallback — e.g. for
-   *  "no such person" states like an unassigned ticket. */
-  seed?: string;
-  online?: boolean;
-  size?: "sm" | "md";
-  title?: string;
+<file path="components/activity/ActivityView.tsx">
+"use client";
+
+import { useMemo, useState } from "react";
+import { Cpu } from "@phosphor-icons/react/ssr";
+import { Avatar } from "@/components/dashboard/Avatar";
+import {
+  describeActivity,
+  describeActivityText,
+} from "@/components/shared/ActivityDescription";
+import { FilterPill } from "@/components/shared/FilterPill";
+import { SearchInput } from "@/components/shared/SearchInput";
+import type { Activity, User } from "@/types";
+import { dayLabel, relativeTime } from "@/lib/style";
+
+const PAGE_SIZE = 5;
+
+const targetFilters: Activity["targetType"][] = [
+  "ticket",
+  "incident",
+  "service",
+];
+
+const targetFilterLabels: Record<Activity["targetType"], string> = {
+  ticket: "Tickets",
+  incident: "Incidents",
+  service: "Services",
+};
+
+interface ActivityViewProps {
+  activities: Activity[];
+  resolveUser: (id: string | null) => User | null;
 }
 
-/** Deterministic, seed-based generated avatar (DiceBear "glass" set) so the
- *  same person always gets the same image without storing or hosting real
- *  photos — there are no real photos for these mock/demo people to begin
- *  with. Swap this one line for a real `user.avatarUrl` when accounts have
- *  actual uploaded photos; the initials fallback stays either way. */
-function avatarUrlFor(seed: string) {
-  return `https://api.dicebear.com/10.x/critters/svg?seed=${encodeURIComponent(seed)}`;
-}
+export function ActivityView({ activities, resolveUser }: ActivityViewProps) {
+  const [search, setSearch] = useState("");
+  const [targetFilter, setTargetFilter] = useState<
+    Activity["targetType"] | "ALL"
+  >("ALL");
 
-export function Avatar({
-  initials,
-  seed,
-  online,
-  size = "sm",
-  title,
-}: AvatarProps) {
-  const dimensions = size === "sm" ? "size-6 text-[10px]" : "size-8 text-xs";
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+
+  const filterKey = `${search}|${targetFilter}`;
+
+  const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
+
+  if (filterKey !== prevFilterKey) {
+    setPrevFilterKey(filterKey);
+    setVisibleCount(PAGE_SIZE);
+  }
+
+  const sorted = useMemo(
+    () =>
+      [...activities].sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      ),
+    [activities],
+  );
+
+  const searched = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    if (!query) return sorted;
+
+    return sorted.filter((activity) => {
+      const actor = resolveUser(activity.actorId);
+
+      const actorName = actor ? actor.name.toLowerCase() : "telemetry";
+
+      return (
+        actorName.includes(query) ||
+        describeActivityText(activity).toLowerCase().includes(query)
+      );
+    });
+  }, [sorted, search, resolveUser]);
+
+  const filtered = useMemo(() => {
+    if (targetFilter === "ALL") return searched;
+
+    return searched.filter((a) => a.targetType === targetFilter);
+  }, [searched, targetFilter]);
+
+  const visible = filtered.slice(0, visibleCount);
+  const hasMore = visibleCount < filtered.length;
+
+  const groups = useMemo(() => {
+    const result: {
+      label: string;
+      items: Activity[];
+    }[] = [];
+
+    for (const activity of visible) {
+      const label = dayLabel(activity.createdAt);
+      const lastGroup = result[result.length - 1];
+
+      if (lastGroup && lastGroup.label === label) {
+        lastGroup.items.push(activity);
+      } else {
+        result.push({
+          label,
+          items: [activity],
+        });
+      }
+    }
+
+    return result;
+  }, [visible]);
 
   return (
-    <span className="relative inline-flex shrink-0" title={title}>
-      {seed ? (
-        // Plain <img>, not next/image: these are third-party SVGs generated
-        // per-render from an external API, not local/optimizable assets.
-        <img
-          src={avatarUrlFor(seed)}
-          alt={title ?? initials}
-          className={`${dimensions} rounded-full bg-panel-raised object-cover ring-1 ring-line-strong`}
-        />
-      ) : (
-        <span
-          className={`${dimensions} inline-flex items-center justify-center rounded-full bg-panel-raised text-ink-dim font-medium ring-1 ring-line-strong`}
-        >
-          {initials}
-        </span>
-      )}
-      {online && (
-        <span className="absolute -bottom-0.5 -right-0.5 size-2 rounded-full bg-success ring-2 ring-panel" />
-      )}
-    </span>
+    <div className="flex min-h-0 flex-1 flex-col gap-4">
+      <div className="shrink-0">
+        <h1 className="text-lg font-medium text-ink">Activity</h1>
+
+        <p className="text-sm text-ink-dim">
+          {activities.length} {activities.length === 1 ? "event" : "events"}{" "}
+          recorded
+        </p>
+      </div>
+
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-line bg-panel">
+        <div className="shrink-0 border-b border-line px-4 py-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap items-center gap-1">
+              <FilterPill
+                active={targetFilter === "ALL"}
+                onClick={() => setTargetFilter("ALL")}
+                label="All"
+                count={searched.length}
+              />
+
+              {targetFilters.map((type) => (
+                <FilterPill
+                  key={type}
+                  active={targetFilter === type}
+                  onClick={() => setTargetFilter(type)}
+                  label={targetFilterLabels[type]}
+                  count={searched.filter((a) => a.targetType === type).length}
+                />
+              ))}
+            </div>
+
+            <SearchInput
+              value={search}
+              onChange={setSearch}
+              placeholder="Search activity"
+            />
+          </div>
+        </div>
+
+        {filtered.length === 0 ? (
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-8 text-center text-sm text-ink-dim">
+            No activity matches your filters.
+          </div>
+        ) : (
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="flex flex-col">
+              {groups.map((group) => (
+                <div key={group.label}>
+                  <div className="border-b border-line bg-panel-raised/50 px-4 py-1.5 text-[11px] font-medium uppercase tracking-wide text-ink-faint">
+                    {group.label}
+                  </div>
+
+                  <ul>
+                    {group.items.map((activity) => {
+                      const actor = resolveUser(activity.actorId);
+
+                      return (
+                        <li
+                          key={activity.id}
+                          className="flex items-start gap-2.5 border-b border-line px-4 py-3 last:border-b-0"
+                        >
+                          {actor ? (
+                            <Avatar
+                              initials={actor.initials}
+                              seed={actor.id}
+                              title={actor.name}
+                            />
+                          ) : (
+                            <span
+                              className="flex size-6 shrink-0 items-center justify-center rounded-full bg-panel-raised text-ink-faint"
+                              title="Telemetry"
+                            >
+                              <Cpu size={12} weight="bold" />
+                            </span>
+                          )}
+
+                          <div className="min-w-0 flex-1 text-sm leading-snug">
+                            <span className="text-ink-dim">
+                              <span
+                                className={
+                                  actor
+                                    ? "text-ink"
+                                    : "text-ink-faint font-mono text-xs"
+                                }
+                              >
+                                {actor ? actor.name : "telemetry"}
+                              </span>{" "}
+                              {describeActivity(activity)}
+                            </span>
+                          </div>
+
+                          <span className="shrink-0 text-xs text-ink-faint">
+                            {relativeTime(activity.createdAt)}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {hasMore && (
+          <div className="shrink-0 border-t border-line px-4 py-3 text-center">
+            <button
+              type="button"
+              onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}
+              className="rounded-md px-3 py-1.5 text-xs font-medium text-ink-dim transition-colors hover:bg-panel-raised hover:text-ink"
+            >
+              Load more ({filtered.length - visibleCount} remaining)
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 </file>
@@ -2274,7 +2096,1369 @@ export function PresenceRail({ users, onlineIds }: PresenceRailProps) {
 }
 </file>
 
+<file path="components/dashboard/StatRow.tsx">
+interface Stat {
+  label: string;
+  value: number;
+  tone?: "danger" | "warning";
+}
+
+export function StatRow({ stats }: { stats: Stat[] }) {
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      {stats.map((stat) => {
+        const alert = stat.tone && stat.value > 0;
+        return (
+          <div
+            key={stat.label}
+            className={
+              alert
+                ? `rounded-lg border p-3.5 ${
+                    stat.tone === "danger"
+                      ? "border-danger/25 bg-danger/6"
+                      : "border-warning/25 bg-warning/6"
+                  }`
+                : "rounded-lg border border-line bg-panel p-3.5"
+            }
+          >
+            <div className="text-xs text-ink-dim">{stat.label}</div>
+            <div
+              className={`mt-1 font-mono text-2xl font-medium tabular-nums ${
+                alert
+                  ? stat.tone === "danger"
+                    ? "text-danger"
+                    : "text-warning"
+                  : "text-ink"
+              }`}
+            >
+              {stat.value}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+</file>
+
+<file path="components/incidents/IncidentsView.tsx">
+"use client";
+
+import { useMemo, useState } from "react";
+import { Avatar } from "@/components/dashboard/Avatar";
+import { FilterPill } from "@/components/shared/FilterPill";
+import { SearchInput } from "@/components/shared/SearchInput";
+import {
+  incidentSeverityMeta,
+  incidentStatusMeta,
+  type Incident,
+  type IncidentStatus,
+  type Service,
+  type User,
+} from "@/types";
+import {
+  formatDuration,
+  relativeTime,
+  statusBorderLeft,
+  statusChipBg,
+  statusText,
+} from "@/lib/style";
+
+const severityOrder = {
+  CRITICAL: 0,
+  HIGH: 1,
+  MEDIUM: 2,
+  LOW: 3,
+};
+
+const statusFilters: IncidentStatus[] = [
+  "INVESTIGATING",
+  "IDENTIFIED",
+  "MONITORING",
+  "RESOLVED",
+];
+
+interface IncidentsViewProps {
+  incidents: Incident[];
+  services: Service[];
+  resolveUser: (id: string | null) => User | null;
+}
+
+export function IncidentsView({
+  incidents,
+  services,
+  resolveUser,
+}: IncidentsViewProps) {
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<IncidentStatus | "ALL">(
+    "ALL",
+  );
+
+  const serviceById = useMemo(
+    () => Object.fromEntries(services.map((s) => [s.id, s])),
+    [services],
+  );
+
+  const searched = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    if (!query) return incidents;
+
+    return incidents.filter((i) => i.title.toLowerCase().includes(query));
+  }, [incidents, search]);
+
+  const filtered = useMemo(() => {
+    const byStatus =
+      statusFilter === "ALL"
+        ? searched
+        : searched.filter((i) => i.status === statusFilter);
+
+    return [...byStatus].sort((a, b) => {
+      const aResolved = a.status === "RESOLVED";
+      const bResolved = b.status === "RESOLVED";
+
+      if (aResolved !== bResolved) {
+        return aResolved ? 1 : -1;
+      }
+
+      if (!aResolved) {
+        const bySeverity =
+          severityOrder[a.severity] - severityOrder[b.severity];
+
+        if (bySeverity !== 0) return bySeverity;
+
+        return (
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+      }
+
+      return (
+        new Date(b.resolvedAt ?? b.createdAt).getTime() -
+        new Date(a.resolvedAt ?? a.createdAt).getTime()
+      );
+    });
+  }, [searched, statusFilter]);
+
+  const activeCount = incidents.filter((i) => i.status !== "RESOLVED").length;
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-4">
+      <div className="shrink-0">
+        <h1 className="text-lg font-medium text-ink">Incidents</h1>
+        <p className="text-sm text-ink-dim">
+          {activeCount} active · {incidents.length} total
+        </p>
+      </div>
+
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-line bg-panel">
+        <div className="shrink-0 border-b border-line px-4 py-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap items-center gap-1">
+              <FilterPill
+                active={statusFilter === "ALL"}
+                onClick={() => setStatusFilter("ALL")}
+                label="All"
+                count={searched.length}
+              />
+
+              {statusFilters.map((status) => (
+                <FilterPill
+                  key={status}
+                  active={statusFilter === status}
+                  onClick={() => setStatusFilter(status)}
+                  label={incidentStatusMeta[status].label}
+                  count={searched.filter((i) => i.status === status).length}
+                />
+              ))}
+            </div>
+
+            <SearchInput
+              value={search}
+              onChange={setSearch}
+              placeholder="Search incidents"
+            />
+          </div>
+        </div>
+
+        {filtered.length === 0 ? (
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-8 text-center text-sm text-ink-dim">
+            No incidents match your filters.
+          </div>
+        ) : (
+          <ul className="min-h-0 flex-1 overflow-y-auto">
+            {filtered.map((incident) => {
+              const sevMeta = incidentSeverityMeta[incident.severity];
+
+              const statusMeta = incidentStatusMeta[incident.status];
+
+              const responder = resolveUser(incident.responderId);
+
+              const resolved = incident.status === "RESOLVED";
+
+              const affectedServices = incident.serviceIds
+                .map((id) => serviceById[id])
+                .filter((s): s is Service => Boolean(s));
+
+              const duration = resolved
+                ? incident.resolvedAt
+                  ? formatDuration(incident.createdAt, incident.resolvedAt)
+                  : null
+                : formatDuration(incident.createdAt, new Date().toISOString());
+
+              return (
+                <li
+                  key={incident.id}
+                  className={`flex items-center gap-4 border-l-2 border-b border-line px-4 py-3 last:border-b-0 transition-colors hover:bg-panel-raised ${statusBorderLeft[sevMeta.color]}`}
+                >
+                  <span
+                    className={`hidden shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium sm:inline-block ${statusChipBg[sevMeta.color]} ${statusText[sevMeta.color]}`}
+                  >
+                    {sevMeta.label}
+                  </span>
+
+                  <span
+                    className={`size-1.5 shrink-0 rounded-full sm:hidden ${statusChipBg[sevMeta.color]} ${statusText[sevMeta.color]}`}
+                  />
+
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm text-ink">
+                      {incident.title}
+                    </div>
+
+                    <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-ink-faint">
+                      <span className={statusText[statusMeta.color]}>
+                        {statusMeta.label}
+                      </span>
+
+                      <span>·</span>
+
+                      <span>
+                        {resolved
+                          ? `Resolved ${relativeTime(
+                              incident.resolvedAt ?? incident.createdAt,
+                            )}`
+                          : `Opened ${relativeTime(incident.createdAt)}`}
+                      </span>
+
+                      {duration && (
+                        <>
+                          <span>·</span>
+                          <span>
+                            {resolved ? "took" : "open"} {duration}
+                          </span>
+                        </>
+                      )}
+
+                      {affectedServices.length > 0 && (
+                        <>
+                          <span className="hidden sm:inline">·</span>
+                          <span className="hidden truncate sm:inline">
+                            {affectedServices.map((s) => s.name).join(", ")}
+                          </span>
+                        </>
+                      )}
+
+                      {incident.ticketIds.length > 0 && (
+                        <>
+                          <span className="hidden sm:inline">·</span>
+                          <span className="hidden sm:inline">
+                            {incident.ticketIds.length}{" "}
+                            {incident.ticketIds.length === 1
+                              ? "ticket"
+                              : "tickets"}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {responder ? (
+                    <Avatar
+                      initials={responder.initials}
+                      seed={responder.id}
+                      title={`${responder.name} responding`}
+                    />
+                  ) : (
+                    <span className="shrink-0 text-xs text-ink-faint">
+                      Unassigned
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+</file>
+
+<file path="components/services/ServicesView.tsx">
+"use client";
+
+import { useMemo, useState } from "react";
+import { FilterPill } from "@/components/shared/FilterPill";
+import { SearchInput } from "@/components/shared/SearchInput";
+import { Sparkline } from "@/components/shared/Sparkline";
+import {
+  incidentSeverityMeta,
+  serviceStatusMeta,
+  type Incident,
+  type Service,
+  type ServiceStatus,
+} from "@/types";
+import {
+  formatErrorRate,
+  relativeTime,
+  statusChipBg,
+  statusDot,
+  statusText,
+} from "@/lib/style";
+
+const statusRank: Record<ServiceStatus, number> = {
+  OUTAGE: 0,
+  DEGRADED: 1,
+  OPERATIONAL: 2,
+};
+
+const statusFilters: ServiceStatus[] = ["OPERATIONAL", "DEGRADED", "OUTAGE"];
+
+interface ServicesViewProps {
+  services: Service[];
+  incidents: Incident[];
+}
+
+export function ServicesView({ services, incidents }: ServicesViewProps) {
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<ServiceStatus | "ALL">(
+    "ALL",
+  );
+
+  const activeIncidentsByService = useMemo(() => {
+    const map = new Map<string, Incident[]>();
+
+    for (const incident of incidents) {
+      if (incident.status === "RESOLVED") continue;
+
+      for (const serviceId of incident.serviceIds) {
+        const existing = map.get(serviceId) ?? [];
+
+        existing.push(incident);
+        map.set(serviceId, existing);
+      }
+    }
+
+    return map;
+  }, [incidents]);
+
+  const searched = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    if (!query) return services;
+
+    return services.filter(
+      (s) =>
+        s.name.toLowerCase().includes(query) ||
+        s.description.toLowerCase().includes(query),
+    );
+  }, [services, search]);
+
+  const filtered = useMemo(() => {
+    const byStatus =
+      statusFilter === "ALL"
+        ? searched
+        : searched.filter((s) => s.status === statusFilter);
+
+    return [...byStatus].sort((a, b) => {
+      const byStatusRank = statusRank[a.status] - statusRank[b.status];
+
+      if (byStatusRank !== 0) return byStatusRank;
+
+      return a.name.localeCompare(b.name);
+    });
+  }, [searched, statusFilter]);
+
+  const unhealthyCount = services.filter(
+    (s) => s.status !== "OPERATIONAL",
+  ).length;
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-4">
+      <div className="shrink-0">
+        <h1 className="text-lg font-medium text-ink">Services</h1>
+
+        <p className="text-sm text-ink-dim">
+          {services.length} monitored
+          {unhealthyCount > 0 && ` · ${unhealthyCount} degraded or down`}
+        </p>
+      </div>
+
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-line bg-panel">
+        <div className="shrink-0 border-b border-line px-4 py-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap items-center gap-1">
+              <FilterPill
+                active={statusFilter === "ALL"}
+                onClick={() => setStatusFilter("ALL")}
+                label="All"
+                count={searched.length}
+              />
+
+              {statusFilters.map((status) => (
+                <FilterPill
+                  key={status}
+                  active={statusFilter === status}
+                  onClick={() => setStatusFilter(status)}
+                  label={serviceStatusMeta[status].label}
+                  count={searched.filter((s) => s.status === status).length}
+                />
+              ))}
+            </div>
+
+            <SearchInput
+              value={search}
+              onChange={setSearch}
+              placeholder="Search services"
+            />
+          </div>
+        </div>
+
+        {filtered.length === 0 ? (
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-8 text-center text-sm text-ink-dim">
+            No services match your filters.
+          </div>
+        ) : (
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2 xl:grid-cols-3">
+              {filtered.map((service) => {
+                const meta = serviceStatusMeta[service.status];
+
+                const warn = service.status !== "OPERATIONAL";
+
+                const affectingIncidents =
+                  activeIncidentsByService.get(service.id) ?? [];
+
+                return (
+                  <div key={service.id} className="bg-panel p-4">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm text-ink">
+                          {service.name}
+                        </div>
+
+                        <div className="mt-0.5 truncate text-xs text-ink-faint">
+                          {service.description}
+                        </div>
+                      </div>
+
+                      <span
+                        className={`flex shrink-0 items-center gap-1.5 rounded px-1.5 py-0.5 text-[11px] font-medium ${statusChipBg[meta.color]} ${statusText[meta.color]}`}
+                      >
+                        <span
+                          className={`size-1.5 rounded-full ${statusDot[meta.color]}`}
+                        />
+
+                        {meta.label}
+                      </span>
+                    </div>
+
+                    <div className="mt-3 flex items-end justify-between">
+                      <div className="space-y-1 font-mono text-xs tabular-nums text-ink-dim">
+                        <div>
+                          {service.status === "OUTAGE"
+                            ? "—"
+                            : `${service.latencyMs}ms`}
+                        </div>
+
+                        <div
+                          className={
+                            service.errorRate > 1 ? "text-warning" : ""
+                          }
+                        >
+                          {formatErrorRate(service.errorRate)} err
+                        </div>
+                      </div>
+
+                      <Sparkline
+                        values={service.sessionLatencyTrend}
+                        warn={warn}
+                      />
+                    </div>
+
+                    <div className="mt-2 text-[11px] text-ink-faint">
+                      Updated {relativeTime(service.updatedAt)}
+                    </div>
+
+                    {affectingIncidents.length > 0 && (
+                      <ul className="mt-3 flex flex-col gap-1.5 border-t border-line pt-3">
+                        {affectingIncidents.map((incident) => {
+                          const sevMeta =
+                            incidentSeverityMeta[incident.severity];
+
+                          return (
+                            <li
+                              key={incident.id}
+                              className="flex items-center gap-2 text-xs"
+                            >
+                              <span
+                                className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${statusChipBg[sevMeta.color]} ${statusText[sevMeta.color]}`}
+                              >
+                                {sevMeta.label}
+                              </span>
+
+                              <span className="truncate text-ink-dim">
+                                {incident.title}
+                              </span>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+</file>
+
+<file path="components/tickets/TicketsView.tsx">
+"use client";
+
+import { useMemo, useState } from "react";
+import { Avatar } from "@/components/dashboard/Avatar";
+import { FilterPill } from "@/components/shared/FilterPill";
+import { SearchInput } from "@/components/shared/SearchInput";
+import {
+  ticketPriorityMeta,
+  ticketStatusMeta,
+  type Ticket,
+  type TicketStatus,
+  type User,
+} from "@/types";
+import { relativeTime, statusChipBg, statusDot, statusText } from "@/lib/style";
+
+const statusColumns: TicketStatus[] = [
+  "OPEN",
+  "IN_PROGRESS",
+  "BLOCKED",
+  "RESOLVED",
+];
+
+interface TicketsViewProps {
+  tickets: Ticket[];
+  resolveUser: (id: string | null) => User | null;
+}
+
+export function TicketsView({ tickets, resolveUser }: TicketsViewProps) {
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<TicketStatus | "ALL">("ALL");
+
+  const searched = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    if (!query) return tickets;
+
+    return tickets.filter((t) => t.title.toLowerCase().includes(query));
+  }, [tickets, search]);
+
+  const filtered = useMemo(() => {
+    const byStatus =
+      statusFilter === "ALL"
+        ? searched
+        : searched.filter((t) => t.status === statusFilter);
+
+    return [...byStatus].sort(
+      (a, b) =>
+        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+    );
+  }, [searched, statusFilter]);
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-4">
+      <div className="shrink-0">
+        <h1 className="text-lg font-medium text-ink">Tickets</h1>
+        <p className="text-sm text-ink-dim">
+          {tickets.length} {tickets.length === 1 ? "ticket" : "tickets"}
+        </p>
+      </div>
+
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-line bg-panel">
+        <div className="shrink-0 border-b border-line px-4 py-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap items-center gap-1">
+              <FilterPill
+                active={statusFilter === "ALL"}
+                onClick={() => setStatusFilter("ALL")}
+                label="All"
+                count={searched.length}
+              />
+
+              {statusColumns.map((status) => (
+                <FilterPill
+                  key={status}
+                  active={statusFilter === status}
+                  onClick={() => setStatusFilter(status)}
+                  label={ticketStatusMeta[status].label}
+                  count={searched.filter((t) => t.status === status).length}
+                />
+              ))}
+            </div>
+
+            <SearchInput
+              value={search}
+              onChange={setSearch}
+              placeholder="Search tickets"
+            />
+          </div>
+        </div>
+
+        {filtered.length === 0 ? (
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-8 text-center text-sm text-ink-dim">
+            No tickets match your filters.
+          </div>
+        ) : (
+          <ul className="min-h-0 flex-1 overflow-y-auto">
+            {filtered.map((ticket) => {
+              const statusMeta = ticketStatusMeta[ticket.status];
+              const priorityMeta = ticketPriorityMeta[ticket.priority];
+              const assignee = resolveUser(ticket.assigneeId);
+
+              return (
+                <li
+                  key={ticket.id}
+                  className="flex items-center gap-3 border-b border-line px-4 py-3 last:border-b-0 transition-colors hover:bg-panel-raised"
+                >
+                  <span
+                    className={`size-1.5 shrink-0 rounded-full ${statusDot[priorityMeta.color]}`}
+                    title={`${priorityMeta.label} priority`}
+                  />
+
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm text-ink">
+                      {ticket.title}
+                    </div>
+
+                    <div className="mt-0.5 flex items-center gap-1.5 text-xs text-ink-faint sm:hidden">
+                      <span className={statusText[statusMeta.color]}>
+                        {statusMeta.label}
+                      </span>
+                      <span>·</span>
+                      <span>{relativeTime(ticket.updatedAt)}</span>
+                    </div>
+                  </div>
+
+                  <span
+                    className={`hidden shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium sm:inline-block ${statusChipBg[statusMeta.color]} ${statusText[statusMeta.color]}`}
+                  >
+                    {statusMeta.label}
+                  </span>
+
+                  <span className="hidden w-16 shrink-0 text-xs text-ink-faint md:inline-block">
+                    {relativeTime(ticket.updatedAt)}
+                  </span>
+
+                  {assignee ? (
+                    <Avatar
+                      initials={assignee.initials}
+                      seed={assignee.id}
+                      title={assignee.name}
+                    />
+                  ) : (
+                    <span className="size-6 shrink-0 rounded-full border border-dashed border-line-strong" />
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+</file>
+
+<file path="lib/mock-data.ts">
+import type { Activity, Incident, Service, Ticket, User } from "@/types";
+
+// A single org's worth of data — Relay is org-scoped throughout (README §5).
+const ORG_ID = "org_1";
+const now = Date.now();
+const minutesAgo = (m: number) => new Date(now - m * 60_000).toISOString();
+const hoursAgo = (h: number) => minutesAgo(h * 60);
+const daysAgo = (d: number) => hoursAgo(d * 24);
+
+export const users: User[] = [
+  {
+    id: "u_maya",
+    orgId: ORG_ID,
+    email: "maya@kestrel.dev",
+    name: "Maya Reyes",
+    role: "MANAGER",
+    initials: "MR",
+  },
+  {
+    id: "u_josh",
+    orgId: ORG_ID,
+    email: "josh@kestrel.dev",
+    name: "Josh Dietrich",
+    role: "MEMBER",
+    initials: "JD",
+  },
+  {
+    id: "u_sana",
+    orgId: ORG_ID,
+    email: "sana@kestrel.dev",
+    name: "Sana Kapoor",
+    role: "MEMBER",
+    initials: "SK",
+  },
+  {
+    id: "u_leo",
+    orgId: ORG_ID,
+    email: "leo@kestrel.dev",
+    name: "Leo Fontaine",
+    role: "MEMBER",
+    initials: "LF",
+  },
+  {
+    id: "u_priya",
+    orgId: ORG_ID,
+    email: "priya@kestrel.dev",
+    name: "Priya Nair",
+    role: "MEMBER",
+    initials: "PN",
+  },
+];
+
+const userById = Object.fromEntries(users.map((u) => [u.id, u]));
+
+export const services: Service[] = [
+  {
+    id: "svc_payments",
+    orgId: ORG_ID,
+    name: "Payments API",
+    description: "Card authorization and capture",
+    status: "OPERATIONAL",
+    latencyMs: 118,
+    errorRate: 0.12,
+    version: 14,
+    updatedAt: minutesAgo(2),
+    sessionLatencyTrend: [112, 115, 109, 121, 118],
+  },
+  {
+    id: "svc_checkout",
+    orgId: ORG_ID,
+    name: "Checkout",
+    description: "Cart, pricing, and order creation",
+    status: "DEGRADED",
+    latencyMs: 342,
+    errorRate: 4.86,
+    version: 27,
+    updatedAt: minutesAgo(1),
+    sessionLatencyTrend: [190, 205, 260, 310, 342],
+  },
+  {
+    id: "svc_auth",
+    orgId: ORG_ID,
+    name: "Auth",
+    description: "Session issuance and token refresh",
+    status: "OPERATIONAL",
+    latencyMs: 76,
+    errorRate: 0.04,
+    version: 9,
+    updatedAt: minutesAgo(4),
+    sessionLatencyTrend: [80, 78, 74, 77, 76],
+  },
+  {
+    id: "svc_search",
+    orgId: ORG_ID,
+    name: "Search",
+    description: "Catalog indexing and query",
+    status: "OPERATIONAL",
+    latencyMs: 203,
+    errorRate: 0.31,
+    version: 22,
+    updatedAt: minutesAgo(6),
+    sessionLatencyTrend: [198, 210, 205, 200, 203],
+  },
+  {
+    id: "svc_notify",
+    orgId: ORG_ID,
+    name: "Notifications",
+    description: "Email, SMS, and push dispatch",
+    status: "OUTAGE",
+    latencyMs: 0,
+    errorRate: 100,
+    version: 31,
+    updatedAt: minutesAgo(3),
+    sessionLatencyTrend: [220, 890, 0, 0, 0],
+  },
+  {
+    id: "svc_billing",
+    orgId: ORG_ID,
+    name: "Billing",
+    description: "Invoicing and subscription state",
+    status: "OPERATIONAL",
+    latencyMs: 145,
+    errorRate: 0.08,
+    version: 11,
+    updatedAt: minutesAgo(9),
+    sessionLatencyTrend: [150, 148, 144, 146, 145],
+  },
+];
+
+export const tickets: Ticket[] = [
+  {
+    id: "t_1",
+    orgId: ORG_ID,
+    title: "Checkout 500s on discount codes >10% off",
+    description: "",
+    status: "IN_PROGRESS",
+    priority: "URGENT",
+    assigneeId: "u_josh",
+    creatorId: "u_maya",
+    version: 4,
+    createdAt: hoursAgo(2),
+    updatedAt: minutesAgo(5),
+  },
+  {
+    id: "t_2",
+    orgId: ORG_ID,
+    title: "Notification worker stuck retrying dead queue",
+    description: "",
+    status: "IN_PROGRESS",
+    priority: "URGENT",
+    assigneeId: "u_sana",
+    creatorId: "u_sana",
+    version: 3,
+    createdAt: hoursAgo(1),
+    updatedAt: minutesAgo(2),
+  },
+  {
+    id: "t_3",
+    orgId: ORG_ID,
+    title: "Search returns stale prices for ~30s after update",
+    description: "",
+    status: "OPEN",
+    priority: "HIGH",
+    assigneeId: "u_leo",
+    creatorId: "u_priya",
+    version: 1,
+    createdAt: hoursAgo(5),
+    updatedAt: hoursAgo(5),
+  },
+  {
+    id: "t_4",
+    orgId: ORG_ID,
+    title: "Add pagination to billing invoice export",
+    description: "",
+    status: "OPEN",
+    priority: "LOW",
+    assigneeId: null,
+    creatorId: "u_maya",
+    version: 1,
+    createdAt: daysAgo(1),
+    updatedAt: daysAgo(1),
+  },
+  {
+    id: "t_5",
+    orgId: ORG_ID,
+    title: "Auth refresh token rotation off by one",
+    description: "",
+    status: "OPEN",
+    priority: "MEDIUM",
+    assigneeId: "u_priya",
+    creatorId: "u_leo",
+    version: 2,
+    createdAt: hoursAgo(8),
+    updatedAt: hoursAgo(3),
+  },
+  {
+    id: "t_6",
+    orgId: ORG_ID,
+    title: "Payments webhook signature check flaky in staging",
+    description: "",
+    status: "BLOCKED",
+    priority: "HIGH",
+    assigneeId: "u_josh",
+    creatorId: "u_josh",
+    version: 3,
+    createdAt: daysAgo(2),
+    updatedAt: hoursAgo(6),
+  },
+  {
+    id: "t_7",
+    orgId: ORG_ID,
+    title: "Checkout cart total rounding mismatch (JPY)",
+    description: "",
+    status: "BLOCKED",
+    priority: "MEDIUM",
+    assigneeId: "u_sana",
+    creatorId: "u_maya",
+    version: 2,
+    createdAt: daysAgo(1),
+    updatedAt: hoursAgo(10),
+  },
+  {
+    id: "t_8",
+    orgId: ORG_ID,
+    title: "Add dark-mode icon set to notification emails",
+    description: "",
+    status: "RESOLVED",
+    priority: "LOW",
+    assigneeId: "u_leo",
+    creatorId: "u_priya",
+    version: 5,
+    createdAt: daysAgo(3),
+    updatedAt: hoursAgo(12),
+  },
+  {
+    id: "t_9",
+    orgId: ORG_ID,
+    title: "Billing double-charged trial-to-paid conversions",
+    description: "",
+    status: "RESOLVED",
+    priority: "URGENT",
+    assigneeId: "u_maya",
+    creatorId: "u_sana",
+    version: 6,
+    createdAt: daysAgo(4),
+    updatedAt: daysAgo(1),
+  },
+  {
+    id: "t_10",
+    orgId: ORG_ID,
+    title: "Search facet counts ignore region filter",
+    description: "",
+    status: "OPEN",
+    priority: "MEDIUM",
+    assigneeId: "u_priya",
+    creatorId: "u_leo",
+    version: 1,
+    createdAt: hoursAgo(4),
+    updatedAt: hoursAgo(4),
+  },
+];
+
+export const incidents: Incident[] = [
+  {
+    id: "i_1",
+    orgId: ORG_ID,
+    title: "Notification delivery completely down",
+    description:
+      "All channels failing after queue backlog exceeded retry budget.",
+    status: "INVESTIGATING",
+    severity: "CRITICAL",
+    responderId: "u_sana",
+    createdAt: minutesAgo(38),
+    resolvedAt: null,
+    version: 5,
+    serviceIds: ["svc_notify"],
+    ticketIds: ["t_2"],
+  },
+  {
+    id: "i_2",
+    orgId: ORG_ID,
+    title: "Elevated errors on checkout with discount codes",
+    description: "Discount codes over 10% trigger a pricing-service 500.",
+    status: "IDENTIFIED",
+    severity: "HIGH",
+    responderId: "u_josh",
+    createdAt: hoursAgo(2),
+    resolvedAt: null,
+    version: 3,
+    serviceIds: ["svc_checkout"],
+    ticketIds: ["t_1"],
+  },
+  {
+    id: "i_3",
+    orgId: ORG_ID,
+    title: "Search latency creeping up since deploy",
+    description: "p95 latency up ~15% since the 14:20 index rebuild.",
+    status: "MONITORING",
+    severity: "LOW",
+    responderId: "u_leo",
+    createdAt: hoursAgo(5),
+    resolvedAt: null,
+    version: 2,
+    serviceIds: ["svc_search"],
+    ticketIds: [],
+  },
+  // Resolved incidents give the incidents list something to show once the
+  // status filter moves off the active ones the dashboard panel surfaces
+  // (README §15 only shows *active* incidents there; the full list also
+  // needs to answer "is it getting better" for things already closed out).
+  {
+    id: "i_4",
+    orgId: ORG_ID,
+    title: "Billing double-charge on trial conversion",
+    description:
+      "A race between the trial-expiry job and the upgrade webhook double-captured card payments for same-day conversions.",
+    status: "RESOLVED",
+    severity: "HIGH",
+    responderId: "u_maya",
+    createdAt: daysAgo(2),
+    resolvedAt: daysAgo(1),
+    version: 6,
+    serviceIds: ["svc_billing"],
+    ticketIds: ["t_9"],
+  },
+  {
+    id: "i_5",
+    orgId: ORG_ID,
+    title: "Auth sessions intermittently rejected after deploy",
+    description:
+      "A clock-skew edge case in refresh-token validation rejected ~2% of otherwise-valid sessions for about 40 minutes.",
+    status: "RESOLVED",
+    severity: "MEDIUM",
+    responderId: "u_priya",
+    createdAt: daysAgo(3),
+    resolvedAt: daysAgo(3),
+    version: 4,
+    serviceIds: ["svc_auth"],
+    ticketIds: [],
+  },
+];
+
+export const activities: Activity[] = [
+  {
+    id: "a_1",
+    orgId: ORG_ID,
+    actorId: null,
+    action: "SERVICE_STATUS_CHANGED",
+    targetType: "service",
+    targetId: "svc_notify",
+    metadata: { from: "DEGRADED", to: "OUTAGE" },
+    createdAt: minutesAgo(3),
+  },
+  {
+    id: "a_2",
+    orgId: ORG_ID,
+    actorId: "u_sana",
+    action: "INCIDENT_STATUS_CHANGED",
+    targetType: "incident",
+    targetId: "i_1",
+    metadata: { from: "IDENTIFIED", to: "INVESTIGATING" },
+    createdAt: minutesAgo(6),
+  },
+  {
+    id: "a_3",
+    orgId: ORG_ID,
+    actorId: "u_sana",
+    action: "TICKET_STATUS_CHANGED",
+    targetType: "ticket",
+    targetId: "t_2",
+    metadata: { from: "OPEN", to: "IN_PROGRESS" },
+    createdAt: minutesAgo(9),
+  },
+  {
+    id: "a_4",
+    orgId: ORG_ID,
+    actorId: null,
+    action: "SERVICE_STATUS_CHANGED",
+    targetType: "service",
+    targetId: "svc_checkout",
+    metadata: { from: "OPERATIONAL", to: "DEGRADED" },
+    createdAt: minutesAgo(14),
+  },
+  {
+    id: "a_5",
+    orgId: ORG_ID,
+    actorId: "u_josh",
+    action: "INCIDENT_TICKET_LINKED",
+    targetType: "incident",
+    targetId: "i_2",
+    metadata: { ticketTitle: "Checkout 500s on discount codes >10% off" },
+    createdAt: minutesAgo(17),
+  },
+  {
+    id: "a_6",
+    orgId: ORG_ID,
+    actorId: "u_josh",
+    action: "TICKET_ASSIGNED",
+    targetType: "ticket",
+    targetId: "t_1",
+    metadata: { assignee: "Josh Dietrich" },
+    createdAt: minutesAgo(18),
+  },
+  {
+    id: "a_7",
+    orgId: ORG_ID,
+    actorId: "u_maya",
+    action: "INCIDENT_CREATED",
+    targetType: "incident",
+    targetId: "i_2",
+    metadata: { title: "Elevated errors on checkout with discount codes" },
+    createdAt: hoursAgo(2),
+  },
+  {
+    id: "a_8",
+    orgId: ORG_ID,
+    actorId: "u_leo",
+    action: "INCIDENT_SEVERITY_CHANGED",
+    targetType: "incident",
+    targetId: "i_3",
+    metadata: { from: "MEDIUM", to: "LOW" },
+    createdAt: hoursAgo(3),
+  },
+  {
+    id: "a_9",
+    orgId: ORG_ID,
+    actorId: "u_priya",
+    action: "TICKET_CREATED",
+    targetType: "ticket",
+    targetId: "t_10",
+    metadata: { title: "Search facet counts ignore region filter" },
+    createdAt: hoursAgo(4),
+  },
+  {
+    id: "a_10",
+    orgId: ORG_ID,
+    actorId: "u_maya",
+    action: "INCIDENT_RESOLVED",
+    targetType: "incident",
+    targetId: "i_4",
+    metadata: { title: "Billing double-charge on trial conversion" },
+    createdAt: daysAgo(1),
+  },
+];
+
+// Presence is never persisted (README §14) — this stands in for what the
+// Realtime Presence channel would report at request time.
+export const onlineUserIds = new Set(["u_maya", "u_josh", "u_sana"]);
+
+export function resolveUser(id: string | null): User | null {
+  if (!id) return null;
+  return userById[id] ?? null;
+}
+
+export const currentOrgName = "Kestrel Commerce";
+</file>
+
+<file path="lib/style.ts">
+// Tailwind's scanner looks for literal class-name tokens in source text, so
+// `text-${color}` would silently fail to generate. These lookup tables keep
+// every combination spelled out once, here, instead of interpolated at each
+// call site.
+
+export type StatusColor =
+  | "info"
+  | "success"
+  | "warning"
+  | "danger"
+  | "ink-faint";
+
+export const statusText: Record<StatusColor, string> = {
+  info: "text-info",
+  success: "text-success",
+  warning: "text-warning",
+  danger: "text-danger",
+  "ink-faint": "text-ink-faint",
+};
+
+export const statusDot: Record<StatusColor, string> = {
+  info: "bg-info",
+  success: "bg-success",
+  warning: "bg-warning",
+  danger: "bg-danger",
+  "ink-faint": "bg-ink-faint",
+};
+
+export const statusChipBg: Record<StatusColor, string> = {
+  info: "bg-info/10",
+  success: "bg-success/10",
+  warning: "bg-warning/10",
+  danger: "bg-danger/10",
+  "ink-faint": "bg-ink-faint/10",
+};
+
+export const statusBorderLeft: Record<StatusColor, string> = {
+  info: "border-l-info",
+  success: "border-l-success",
+  warning: "border-l-warning",
+  danger: "border-l-danger",
+  "ink-faint": "border-l-ink-faint",
+};
+
+/** "3m ago", "2h ago", "Sep 4" — stable across server and client render. */
+export function relativeTime(iso: string, now: Date = new Date()): string {
+  const then = new Date(iso);
+  const diffMs = now.getTime() - then.getTime();
+  const diffSec = Math.round(diffMs / 1000);
+
+  if (diffSec < 5) return "just now";
+  if (diffSec < 60) return `${diffSec}s ago`;
+  const diffMin = Math.round(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.round(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDay = Math.round(diffHr / 24);
+  if (diffDay < 7) return `${diffDay}d ago`;
+
+  return then.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+export function formatErrorRate(rate: number): string {
+  return `${rate.toFixed(2)}%`;
+}
+
+/** "42m", "3h 20m", "2d 4h" — elapsed time between two instants, used for
+ *  "how long has this been open" / "how long did this take to resolve"
+ *  framing (README §7: "Is it getting better?"). Coarser than relativeTime
+ *  since a duration doesn't need "ago" and rarely needs second-level
+ *  precision once it's the length of an incident rather than a timestamp. */
+export function formatDuration(startIso: string, endIso: string): string {
+  const ms = Math.max(
+    0,
+    new Date(endIso).getTime() - new Date(startIso).getTime(),
+  );
+  const totalMin = Math.round(ms / 60_000);
+
+  if (totalMin < 1) return "<1m";
+  if (totalMin < 60) return `${totalMin}m`;
+
+  const totalHr = Math.floor(totalMin / 60);
+  const remMin = totalMin % 60;
+  if (totalHr < 24) {
+    return remMin > 0 ? `${totalHr}h ${remMin}m` : `${totalHr}h`;
+  }
+
+  const days = Math.floor(totalHr / 24);
+  const remHr = totalHr % 24;
+  return remHr > 0 ? `${days}d ${remHr}h` : `${days}d`;
+}
+
+/** "Today" / "Yesterday" / "Sep 12, 2026" — the day-grouping header a long
+ *  activity history is read against, distinct from relativeTime's per-row
+ *  "3m ago" since a whole day section only needs to establish itself once. */
+export function dayLabel(iso: string, now: Date = new Date()): string {
+  const then = new Date(iso);
+  const startOfDay = (d: Date) =>
+    new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+
+  const diffDays = Math.round(
+    (startOfDay(now) - startOfDay(then)) / 86_400_000,
+  );
+
+  if (diffDays === 0) return "Today";
+  if (diffDays === 1) return "Yesterday";
+  return then.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: then.getFullYear() === now.getFullYear() ? undefined : "numeric",
+  });
+}
+
+export function initialsOf(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  const first = parts[0]?.[0] ?? "";
+  const last = parts.length > 1 ? (parts[parts.length - 1]?.[0] ?? "") : "";
+  return (first + last).toUpperCase();
+}
+</file>
+
+<file path="package.json">
+{
+  "name": "relay",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && next build",
+    "start": "next start",
+    "lint": "eslint",
+    "postinstall": "prisma skills sync || exit 0"
+  },
+  "dependencies": {
+    "@phosphor-icons/react": "^2.1.10",
+    "@prisma/adapter-pg": "^7.10.0",
+    "@prisma/client": "7.10.0",
+    "dotenv": "^17.4.2",
+    "next": "16.3.4",
+    "pg": "^8.23.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.4",
+    "prisma": "7.10.0",
+    "tailwindcss": "^4",
+    "tsx": "^4.23.13",
+    "typescript": "^5"
+  },
+  "packageManager": "yarn@4.12.0"
+}
+</file>
+
+<file path="components/dashboard/Avatar.tsx">
+interface AvatarProps {
+  initials: string;
+  /** Stable per-person value (e.g. user.id) used to generate a consistent
+   *  avatar image. Omit to always show the initials fallback — e.g. for
+   *  "no such person" states like an unassigned ticket. */
+  seed?: string;
+  online?: boolean;
+  size?: "sm" | "md";
+  title?: string;
+}
+
+/** Deterministic, seed-based generated avatar (DiceBear "glass" set) so the
+ *  same person always gets the same image without storing or hosting real
+ *  photos — there are no real photos for these mock/demo people to begin
+ *  with. Swap this one line for a real `user.avatarUrl` when accounts have
+ *  actual uploaded photos; the initials fallback stays either way. */
+function avatarUrlFor(seed: string) {
+  return `https://api.dicebear.com/10.x/critters/svg?seed=${encodeURIComponent(seed)}`;
+}
+
+export function Avatar({
+  initials,
+  seed,
+  online,
+  size = "sm",
+  title,
+}: AvatarProps) {
+  const dimensions = size === "sm" ? "size-6 text-[10px]" : "size-8 text-xs";
+
+  return (
+    <span className="relative inline-flex shrink-0" title={title}>
+      {seed ? (
+        // Plain <img>, not next/image: these are third-party SVGs generated
+        // per-render from an external API, not local/optimizable assets.
+        <img
+          src={avatarUrlFor(seed)}
+          alt={title ?? initials}
+          className={`${dimensions} rounded-full bg-panel-raised object-cover ring-1 ring-line-strong`}
+        />
+      ) : (
+        <span
+          className={`${dimensions} inline-flex items-center justify-center rounded-full bg-panel-raised text-ink-dim font-medium ring-1 ring-line-strong`}
+        >
+          {initials}
+        </span>
+      )}
+      {online && (
+        <span className="absolute -bottom-0.5 -right-0.5 size-2 rounded-full bg-success ring-2 ring-panel" />
+      )}
+    </span>
+  );
+}
+</file>
+
 <file path="components/dashboard/ServiceHealthGrid.tsx">
+import { Sparkline } from "@/components/shared/Sparkline";
 import { serviceStatusMeta, type Service } from "@/types";
 import {
   formatErrorRate,
@@ -2282,41 +3466,6 @@ import {
   statusDot,
   statusText,
 } from "@/lib/style";
-
-function Sparkline({ values, warn }: { values: number[]; warn: boolean }) {
-  if (values.length < 2) {
-    return <span className="text-xs text-ink-faint">—</span>;
-  }
-
-  const w = 64;
-  const h = 20;
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-  const points = values
-    .map((v, i) => {
-      const x = (i / (values.length - 1)) * w;
-      const y = h - ((v - min) / range) * h;
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
-
-  return (
-    <svg
-      width={w}
-      height={h}
-      viewBox={`0 0 ${w} ${h}`}
-      className="overflow-visible"
-    >
-      <polyline
-        points={points}
-        fill="none"
-        strokeWidth="1.5"
-        className={warn ? "stroke-warning" : "stroke-ink-faint"}
-      />
-    </svg>
-  );
-}
 
 export function ServiceHealthGrid({ services }: { services: Service[] }) {
   return (
@@ -2364,248 +3513,6 @@ export function ServiceHealthGrid({ services }: { services: Service[] }) {
           );
         })}
       </div>
-    </div>
-  );
-}
-</file>
-
-<file path="components/dashboard/StatRow.tsx">
-interface Stat {
-  label: string;
-  value: number;
-  tone?: "danger" | "warning";
-}
-
-export function StatRow({ stats }: { stats: Stat[] }) {
-  return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-      {stats.map((stat) => {
-        const alert = stat.tone && stat.value > 0;
-        return (
-          <div
-            key={stat.label}
-            className={
-              alert
-                ? `rounded-lg border p-3.5 ${
-                    stat.tone === "danger"
-                      ? "border-danger/25 bg-danger/6"
-                      : "border-warning/25 bg-warning/6"
-                  }`
-                : "rounded-lg border border-line bg-panel p-3.5"
-            }
-          >
-            <div className="text-xs text-ink-dim">{stat.label}</div>
-            <div
-              className={`mt-1 font-mono text-2xl font-medium tabular-nums ${
-                alert
-                  ? stat.tone === "danger"
-                    ? "text-danger"
-                    : "text-warning"
-                  : "text-ink"
-              }`}
-            >
-              {stat.value}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-</file>
-
-<file path="package.json">
-{
-  "name": "relay",
-  "version": "0.1.0",
-  "private": true,
-  "scripts": {
-    "dev": "next dev",
-    "build": "prisma generate && next build",
-    "start": "next start",
-    "lint": "eslint",
-    "postinstall": "prisma skills sync || exit 0"
-  },
-  "dependencies": {
-    "@phosphor-icons/react": "^2.1.10",
-    "@prisma/adapter-pg": "^7.10.0",
-    "@prisma/client": "7.10.0",
-    "dotenv": "^17.4.2",
-    "next": "16.3.4",
-    "pg": "^8.23.0",
-    "react": "19.2.8",
-    "react-dom": "19.2.8"
-  },
-  "devDependencies": {
-    "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
-    "@types/pg": "^8.23.1",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.3.4",
-    "prisma": "7.10.0",
-    "tailwindcss": "^4",
-    "tsx": "^4.23.13",
-    "typescript": "^5"
-  },
-  "packageManager": "yarn@4.12.0"
-}
-</file>
-
-<file path="components/dashboard/ActivityFeed.tsx">
-import { ArrowRight, Cpu } from "@phosphor-icons/react/ssr";
-import { Avatar } from "./Avatar";
-import {
-  incidentSeverityMeta,
-  incidentStatusMeta,
-  serviceStatusMeta,
-  ticketPriorityMeta,
-  ticketStatusMeta,
-  type Activity,
-  type User,
-} from "@/types";
-import { relativeTime } from "@/lib/style";
-
-// Activity metadata stores raw enum values (e.g. "IN_PROGRESS") as they're
-// persisted in the DB. Never show those directly — always translate through
-// the same label maps the rest of the dashboard uses, so the feed reads like
-// something a person wrote ("In progress") rather than a code left showing.
-type LabelMap = Record<string, { label: string }>;
-
-function humanize(value: unknown, labels?: LabelMap): string {
-  if (value == null) return "?";
-  const key = String(value);
-  return labels?.[key]?.label ?? key;
-}
-
-function Transition({
-  from,
-  to,
-  labels,
-}: {
-  from: unknown;
-  to: unknown;
-  labels?: LabelMap;
-}) {
-  return (
-    <span className="inline-flex items-center gap-1 align-middle">
-      <span>{humanize(from, labels)}</span>
-      <ArrowRight size={11} weight="bold" className="text-ink-faint" />
-      <span>{humanize(to, labels)}</span>
-    </span>
-  );
-}
-
-function describe(activity: Activity) {
-  const m = activity.metadata ?? {};
-  switch (activity.action) {
-    case "TICKET_CREATED":
-      return <>opened &ldquo;{m.title ?? "a ticket"}&rdquo;</>;
-    case "TICKET_ASSIGNED":
-      return <>assigned this ticket to {m.assignee ?? "someone"}</>;
-    case "TICKET_STATUS_CHANGED":
-      return (
-        <>
-          moved a ticket{" "}
-          <Transition from={m.from} to={m.to} labels={ticketStatusMeta} />
-        </>
-      );
-    case "TICKET_PRIORITY_CHANGED":
-      return (
-        <>
-          changed ticket priority{" "}
-          <Transition from={m.from} to={m.to} labels={ticketPriorityMeta} />
-        </>
-      );
-    case "SERVICE_STATUS_CHANGED":
-      return (
-        <>
-          status changed{" "}
-          <Transition from={m.from} to={m.to} labels={serviceStatusMeta} />
-        </>
-      );
-    case "INCIDENT_CREATED":
-      return <>opened incident &ldquo;{m.title ?? ""}&rdquo;</>;
-    case "INCIDENT_STATUS_CHANGED":
-      return (
-        <>
-          moved incident{" "}
-          <Transition from={m.from} to={m.to} labels={incidentStatusMeta} />
-        </>
-      );
-    case "INCIDENT_SEVERITY_CHANGED":
-      return (
-        <>
-          changed severity{" "}
-          <Transition from={m.from} to={m.to} labels={incidentSeverityMeta} />
-        </>
-      );
-    case "INCIDENT_SERVICE_LINKED":
-      return <>linked a service to this incident</>;
-    case "INCIDENT_SERVICE_UNLINKED":
-      return <>unlinked a service from this incident</>;
-    case "INCIDENT_TICKET_LINKED":
-      return <>linked &ldquo;{m.ticketTitle ?? "a ticket"}&rdquo;</>;
-    case "INCIDENT_TICKET_UNLINKED":
-      return <>unlinked a ticket</>;
-    case "INCIDENT_RESOLVED":
-      return <>resolved &ldquo;{m.title ?? "an incident"}&rdquo;</>;
-    default:
-      return <>made a change</>;
-  }
-}
-
-interface ActivityFeedProps {
-  activities: Activity[];
-  resolveUser: (id: string | null) => User | null;
-}
-
-export function ActivityFeed({ activities, resolveUser }: ActivityFeedProps) {
-  const sorted = [...activities].sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-  );
-
-  return (
-    <div className="rounded-lg border border-line bg-panel p-4">
-      <h2 className="text-sm font-medium text-ink">Activity</h2>
-
-      <ul className="mt-3 flex flex-col gap-3">
-        {sorted.map((activity) => {
-          const actor = resolveUser(activity.actorId);
-          return (
-            <li key={activity.id} className="flex items-start gap-2.5">
-              {actor ? (
-                <Avatar
-                  initials={actor.initials}
-                  seed={actor.id}
-                  title={actor.name}
-                />
-              ) : (
-                <span
-                  className="flex size-6 shrink-0 items-center justify-center rounded-full bg-panel-raised text-ink-faint"
-                  title="Telemetry"
-                >
-                  <Cpu size={12} weight="bold" />
-                </span>
-              )}
-              <div className="min-w-0 text-xs leading-snug">
-                <span className="text-ink-dim">
-                  <span
-                    className={actor ? "text-ink" : "text-ink-faint font-mono"}
-                  >
-                    {actor ? actor.name : "telemetry"}
-                  </span>{" "}
-                  {describe(activity)}
-                </span>
-                <div className="mt-0.5 text-[11px] text-ink-faint">
-                  {relativeTime(activity.createdAt)}
-                </div>
-              </div>
-            </li>
-          );
-        })}
-      </ul>
     </div>
   );
 }
@@ -2691,6 +3598,68 @@ export function TicketBoard({ tickets, resolveUser }: TicketBoardProps) {
           );
         })}
       </div>
+    </div>
+  );
+}
+</file>
+
+<file path="components/dashboard/ActivityFeed.tsx">
+import { CpuIcon } from "@phosphor-icons/react/ssr";
+import { Avatar } from "./Avatar";
+import { describeActivity } from "@/components/shared/ActivityDescription";
+import type { Activity, User } from "@/types";
+import { relativeTime } from "@/lib/style";
+
+interface ActivityFeedProps {
+  activities: Activity[];
+  resolveUser: (id: string | null) => User | null;
+}
+
+export function ActivityFeed({ activities, resolveUser }: ActivityFeedProps) {
+  const sorted = [...activities].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+
+  return (
+    <div className="rounded-lg border border-line bg-panel p-4">
+      <h2 className="text-sm font-medium text-ink">Activity</h2>
+
+      <ul className="mt-3 flex flex-col gap-3">
+        {sorted.map((activity) => {
+          const actor = resolveUser(activity.actorId);
+          return (
+            <li key={activity.id} className="flex items-start gap-2.5">
+              {actor ? (
+                <Avatar
+                  initials={actor.initials}
+                  seed={actor.id}
+                  title={actor.name}
+                />
+              ) : (
+                <span
+                  className="flex size-6 shrink-0 items-center justify-center rounded-full bg-panel-raised text-ink-faint"
+                  title="Telemetry"
+                >
+                  <CpuIcon size={12} weight="bold" />
+                </span>
+              )}
+              <div className="min-w-0 text-xs leading-snug">
+                <span className="text-ink-dim">
+                  <span
+                    className={actor ? "text-ink" : "text-ink-faint font-mono"}
+                  >
+                    {actor ? actor.name : "telemetry"}
+                  </span>{" "}
+                  {describeActivity(activity)}
+                </span>
+                <div className="mt-0.5 text-[11px] text-ink-faint">
+                  {relativeTime(activity.createdAt)}
+                </div>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

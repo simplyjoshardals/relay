@@ -19,11 +19,15 @@ import {
   statusChipBg,
   statusText,
 } from "@/lib/style";
+import { useNow } from "@/lib/use-now";
 
-const severityOrder = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+const severityOrder = {
+  CRITICAL: 0,
+  HIGH: 1,
+  MEDIUM: 2,
+  LOW: 3,
+};
 
-// Lifecycle order (README §6.1), not alphabetical — the filter row should
-// read like the path an incident actually takes.
 const statusFilters: IncidentStatus[] = [
   "INVESTIGATING",
   "IDENTIFIED",
@@ -42,6 +46,7 @@ export function IncidentsView({
   services,
   resolveUser,
 }: IncidentsViewProps) {
+  const now = useNow();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<IncidentStatus | "ALL">(
     "ALL",
@@ -52,11 +57,11 @@ export function IncidentsView({
     [services],
   );
 
-  // Search narrows the pool the status pills count against, so the counts
-  // stay meaningful while typing — same pattern as TicketsView.
   const searched = useMemo(() => {
     const query = search.trim().toLowerCase();
+
     if (!query) return incidents;
+
     return incidents.filter((i) => i.title.toLowerCase().includes(query));
   }, [incidents, search]);
 
@@ -66,20 +71,20 @@ export function IncidentsView({
         ? searched
         : searched.filter((i) => i.status === statusFilter);
 
-    // Unresolved incidents first (worst severity leading — that's the thing
-    // most in need of attention right now), resolved ones trail behind
-    // ordered by how recently they closed. Mirrors the dashboard panel's
-    // severity-first sort for the active set, then extends it to cover the
-    // full history the standalone page needs to show (README §15).
     return [...byStatus].sort((a, b) => {
       const aResolved = a.status === "RESOLVED";
       const bResolved = b.status === "RESOLVED";
-      if (aResolved !== bResolved) return aResolved ? 1 : -1;
+
+      if (aResolved !== bResolved) {
+        return aResolved ? 1 : -1;
+      }
 
       if (!aResolved) {
         const bySeverity =
           severityOrder[a.severity] - severityOrder[b.severity];
+
         if (bySeverity !== 0) return bySeverity;
+
         return (
           new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         );
@@ -95,52 +100,59 @@ export function IncidentsView({
   const activeCount = incidents.filter((i) => i.status !== "RESOLVED").length;
 
   return (
-    <div className="flex flex-col gap-4">
-      <div>
+    <div className="flex min-h-0 flex-1 flex-col gap-4">
+      <div className="shrink-0">
         <h1 className="text-lg font-medium text-ink">Incidents</h1>
         <p className="text-sm text-ink-dim">
           {activeCount} active · {incidents.length} total
         </p>
       </div>
 
-      <div className="rounded-lg border border-line bg-panel">
-        <div className="flex flex-col gap-3 border-b border-line px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-wrap items-center gap-1">
-            <FilterPill
-              active={statusFilter === "ALL"}
-              onClick={() => setStatusFilter("ALL")}
-              label="All"
-              count={searched.length}
-            />
-            {statusFilters.map((status) => (
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-line bg-panel">
+        <div className="shrink-0 border-b border-line px-4 py-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap items-center gap-1">
               <FilterPill
-                key={status}
-                active={statusFilter === status}
-                onClick={() => setStatusFilter(status)}
-                label={incidentStatusMeta[status].label}
-                count={searched.filter((i) => i.status === status).length}
+                active={statusFilter === "ALL"}
+                onClick={() => setStatusFilter("ALL")}
+                label="All"
+                count={searched.length}
               />
-            ))}
-          </div>
 
-          <SearchInput
-            value={search}
-            onChange={setSearch}
-            placeholder="Search incidents"
-          />
+              {statusFilters.map((status) => (
+                <FilterPill
+                  key={status}
+                  active={statusFilter === status}
+                  onClick={() => setStatusFilter(status)}
+                  label={incidentStatusMeta[status].label}
+                  count={searched.filter((i) => i.status === status).length}
+                />
+              ))}
+            </div>
+
+            <SearchInput
+              value={search}
+              onChange={setSearch}
+              placeholder="Search incidents"
+            />
+          </div>
         </div>
 
         {filtered.length === 0 ? (
-          <div className="px-4 py-8 text-center text-sm text-ink-dim">
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-8 text-center text-sm text-ink-dim">
             No incidents match your filters.
           </div>
         ) : (
-          <ul>
+          <ul className="min-h-0 flex-1 overflow-y-auto">
             {filtered.map((incident) => {
               const sevMeta = incidentSeverityMeta[incident.severity];
+
               const statusMeta = incidentStatusMeta[incident.status];
+
               const responder = resolveUser(incident.responderId);
+
               const resolved = incident.status === "RESOLVED";
+
               const affectedServices = incident.serviceIds
                 .map((id) => serviceById[id])
                 .filter((s): s is Service => Boolean(s));
@@ -149,38 +161,46 @@ export function IncidentsView({
                 ? incident.resolvedAt
                   ? formatDuration(incident.createdAt, incident.resolvedAt)
                   : null
-                : formatDuration(incident.createdAt, new Date().toISOString());
+                : now
+                  ? formatDuration(incident.createdAt, now.toISOString())
+                  : null;
 
               return (
                 <li
                   key={incident.id}
-                  className={`flex items-center gap-4 border-l-2 px-4 py-3 border-b border-line last:border-b-0 transition-colors hover:bg-panel-raised ${statusBorderLeft[sevMeta.color]}`}
+                  className={`flex items-center gap-4 border-l-2 border-b border-line px-4 py-3 last:border-b-0 transition-colors hover:bg-panel-raised ${statusBorderLeft[sevMeta.color]}`}
                 >
                   <span
                     className={`hidden shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium sm:inline-block ${statusChipBg[sevMeta.color]} ${statusText[sevMeta.color]}`}
-                    title={`${sevMeta.label} severity`}
                   >
                     {sevMeta.label}
                   </span>
+
                   <span
                     className={`size-1.5 shrink-0 rounded-full sm:hidden ${statusChipBg[sevMeta.color]} ${statusText[sevMeta.color]}`}
-                    title={`${sevMeta.label} severity`}
                   />
 
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm text-ink">
                       {incident.title}
                     </div>
+
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-ink-faint">
                       <span className={statusText[statusMeta.color]}>
                         {statusMeta.label}
                       </span>
+
                       <span>·</span>
+
                       <span>
                         {resolved
-                          ? `Resolved ${relativeTime(incident.resolvedAt ?? incident.createdAt)}`
-                          : `Opened ${relativeTime(incident.createdAt)}`}
+                          ? `Resolved ${relativeTime(
+                              incident.resolvedAt ?? incident.createdAt,
+                              now,
+                            )}`
+                          : `Opened ${relativeTime(incident.createdAt, now)}`}
                       </span>
+
                       {duration && (
                         <>
                           <span>·</span>
@@ -189,6 +209,7 @@ export function IncidentsView({
                           </span>
                         </>
                       )}
+
                       {affectedServices.length > 0 && (
                         <>
                           <span className="hidden sm:inline">·</span>
@@ -197,6 +218,7 @@ export function IncidentsView({
                           </span>
                         </>
                       )}
+
                       {incident.ticketIds.length > 0 && (
                         <>
                           <span className="hidden sm:inline">·</span>

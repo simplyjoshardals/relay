@@ -42,8 +42,18 @@ export const statusBorderLeft: Record<StatusColor, string> = {
   "ink-faint": "border-l-ink-faint",
 };
 
-/** "3m ago", "2h ago", "Sep 4" — stable across server and client render. */
-export function relativeTime(iso: string, now: Date = new Date()): string {
+/**
+ * "3m ago", "2h ago", "Sep 4".
+ *
+ * `now` is required and must come from `useNow()` (lib/use-now.ts), not
+ * from a bare `new Date()` at the call site — see that hook's comment
+ * for why. `now === null` means "not mounted on the client yet"; render
+ * a blank placeholder rather than guessing, so the server pass and the
+ * client's first paint stay identical.
+ */
+export function relativeTime(iso: string, now: Date | null): string {
+  if (now === null) return "";
+
   const then = new Date(iso);
   const diffMs = now.getTime() - then.getTime();
   const diffSec = Math.round(diffMs / 1000);
@@ -90,10 +100,17 @@ export function formatDuration(startIso: string, endIso: string): string {
   return remHr > 0 ? `${days}d ${remHr}h` : `${days}d`;
 }
 
-/** "Today" / "Yesterday" / "Sep 12, 2026" — the day-grouping header a long
- *  activity history is read against, distinct from relativeTime's per-row
- *  "3m ago" since a whole day section only needs to establish itself once. */
-export function dayLabel(iso: string, now: Date = new Date()): string {
+/**
+ * "Today" / "Yesterday" / "Sep 12, 2026" — the day-grouping header a long
+ * activity history is read against, distinct from relativeTime's per-row
+ * "3m ago" since a whole day section only needs to establish itself once.
+ *
+ * `now` is required and must come from `useNow()` (lib/use-now.ts) for
+ * the same hydration-safety reason documented on `relativeTime` above.
+ */
+export function dayLabel(iso: string, now: Date | null): string {
+  if (now === null) return "";
+
   const then = new Date(iso);
   const startOfDay = (d: Date) =>
     new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();

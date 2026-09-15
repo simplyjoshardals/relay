@@ -47,7 +47,10 @@ export function ActivityFeed({ activities, resolveUser }: ActivityFeedProps) {
                   {describeActivity(activity)}
                 </span>
                 <div className="mt-0.5 text-[11px] text-ink-faint">
-                  {relativeTime(activity.createdAt)}
+                  {/* Server Component (no "use client") — this never
+                      hydrates/re-executes on the client, so a plain
+                      `new Date()` here is safe and doesn't need useNow(). */}
+                  {relativeTime(activity.createdAt, new Date())}
                 </div>
               </div>
             </li>

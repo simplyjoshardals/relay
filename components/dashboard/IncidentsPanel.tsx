@@ -77,7 +77,10 @@ export function IncidentsPanel({
                     {statusMeta.label}
                   </span>
                   <span>·</span>
-                  <span>{relativeTime(incident.createdAt)}</span>
+                  {/* Server Component (no "use client") — this never
+                      hydrates/re-executes on the client, so a plain
+                      `new Date()` here is safe and doesn't need useNow(). */}
+                  <span>{relativeTime(incident.createdAt, new Date())}</span>
                   {affectedServices.length > 0 && (
                     <>
                       <span>·</span>

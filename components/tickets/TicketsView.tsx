@@ -12,6 +12,7 @@ import {
   type User,
 } from "@/types";
 import { relativeTime, statusChipBg, statusDot, statusText } from "@/lib/style";
+import { useNow } from "@/lib/use-now";
 
 const statusColumns: TicketStatus[] = [
   "OPEN",
@@ -26,14 +27,15 @@ interface TicketsViewProps {
 }
 
 export function TicketsView({ tickets, resolveUser }: TicketsViewProps) {
+  const now = useNow();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<TicketStatus | "ALL">("ALL");
 
-  // Search narrows the pool the status pills count against, so the counts
-  // stay meaningful while typing; the status pill then narrows further.
   const searched = useMemo(() => {
     const query = search.trim().toLowerCase();
+
     if (!query) return tickets;
+
     return tickets.filter((t) => t.title.toLowerCase().includes(query));
   }, [tickets, search]);
 
@@ -42,8 +44,7 @@ export function TicketsView({ tickets, resolveUser }: TicketsViewProps) {
       statusFilter === "ALL"
         ? searched
         : searched.filter((t) => t.status === statusFilter);
-    // Most recently touched first — matches the "what's happening now"
-    // framing used everywhere else on the dashboard (README §15).
+
     return [...byStatus].sort(
       (a, b) =>
         new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
@@ -51,47 +52,50 @@ export function TicketsView({ tickets, resolveUser }: TicketsViewProps) {
   }, [searched, statusFilter]);
 
   return (
-    <div className="flex flex-col gap-4">
-      <div>
+    <div className="flex min-h-0 flex-1 flex-col gap-4">
+      <div className="shrink-0">
         <h1 className="text-lg font-medium text-ink">Tickets</h1>
         <p className="text-sm text-ink-dim">
           {tickets.length} {tickets.length === 1 ? "ticket" : "tickets"}
         </p>
       </div>
 
-      <div className="rounded-lg border border-line bg-panel">
-        <div className="flex flex-col gap-3 border-b border-line px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-wrap items-center gap-1">
-            <FilterPill
-              active={statusFilter === "ALL"}
-              onClick={() => setStatusFilter("ALL")}
-              label="All"
-              count={searched.length}
-            />
-            {statusColumns.map((status) => (
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-line bg-panel">
+        <div className="shrink-0 border-b border-line px-4 py-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap items-center gap-1">
               <FilterPill
-                key={status}
-                active={statusFilter === status}
-                onClick={() => setStatusFilter(status)}
-                label={ticketStatusMeta[status].label}
-                count={searched.filter((t) => t.status === status).length}
+                active={statusFilter === "ALL"}
+                onClick={() => setStatusFilter("ALL")}
+                label="All"
+                count={searched.length}
               />
-            ))}
-          </div>
 
-          <SearchInput
-            value={search}
-            onChange={setSearch}
-            placeholder="Search tickets"
-          />
+              {statusColumns.map((status) => (
+                <FilterPill
+                  key={status}
+                  active={statusFilter === status}
+                  onClick={() => setStatusFilter(status)}
+                  label={ticketStatusMeta[status].label}
+                  count={searched.filter((t) => t.status === status).length}
+                />
+              ))}
+            </div>
+
+            <SearchInput
+              value={search}
+              onChange={setSearch}
+              placeholder="Search tickets"
+            />
+          </div>
         </div>
 
         {filtered.length === 0 ? (
-          <div className="px-4 py-8 text-center text-sm text-ink-dim">
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-8 text-center text-sm text-ink-dim">
             No tickets match your filters.
           </div>
         ) : (
-          <ul>
+          <ul className="min-h-0 flex-1 overflow-y-auto">
             {filtered.map((ticket) => {
               const statusMeta = ticketStatusMeta[ticket.status];
               const priorityMeta = ticketPriorityMeta[ticket.priority];
@@ -111,14 +115,13 @@ export function TicketsView({ tickets, resolveUser }: TicketsViewProps) {
                     <div className="truncate text-sm text-ink">
                       {ticket.title}
                     </div>
-                    {/* Status + time collapse into the row on phone, where
-                        the dedicated columns to the right are hidden. */}
+
                     <div className="mt-0.5 flex items-center gap-1.5 text-xs text-ink-faint sm:hidden">
                       <span className={statusText[statusMeta.color]}>
                         {statusMeta.label}
                       </span>
                       <span>·</span>
-                      <span>{relativeTime(ticket.updatedAt)}</span>
+                      <span>{relativeTime(ticket.updatedAt, now)}</span>
                     </div>
                   </div>
 
@@ -129,7 +132,7 @@ export function TicketsView({ tickets, resolveUser }: TicketsViewProps) {
                   </span>
 
                   <span className="hidden w-16 shrink-0 text-xs text-ink-faint md:inline-block">
-                    {relativeTime(ticket.updatedAt)}
+                    {relativeTime(ticket.updatedAt, now)}
                   </span>
 
                   {assignee ? (
