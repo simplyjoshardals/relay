@@ -22,7 +22,7 @@ export function TicketBoard({ tickets, resolveUser }: TicketBoardProps) {
         <h2 className="text-sm font-medium text-ink">Work</h2>
       </div>
 
-      <div className="grid grid-cols-4 gap-px bg-line">
+      <div className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2 lg:grid-cols-4">
         {columns.map((status) => {
           const items = tickets.filter((t) => t.status === status);
           const meta = ticketStatusMeta[status];

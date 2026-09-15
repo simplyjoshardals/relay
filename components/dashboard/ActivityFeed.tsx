@@ -1,14 +1,42 @@
 import { ArrowRight, Cpu } from "@phosphor-icons/react/ssr";
 import { Avatar } from "./Avatar";
-import type { Activity, User } from "@/types";
+import {
+  incidentSeverityMeta,
+  incidentStatusMeta,
+  serviceStatusMeta,
+  ticketPriorityMeta,
+  ticketStatusMeta,
+  type Activity,
+  type User,
+} from "@/types";
 import { relativeTime } from "@/lib/style";
 
-function Transition({ from, to }: { from: unknown; to: unknown }) {
+// Activity metadata stores raw enum values (e.g. "IN_PROGRESS") as they're
+// persisted in the DB. Never show those directly — always translate through
+// the same label maps the rest of the dashboard uses, so the feed reads like
+// something a person wrote ("In progress") rather than a code left showing.
+type LabelMap = Record<string, { label: string }>;
+
+function humanize(value: unknown, labels?: LabelMap): string {
+  if (value == null) return "?";
+  const key = String(value);
+  return labels?.[key]?.label ?? key;
+}
+
+function Transition({
+  from,
+  to,
+  labels,
+}: {
+  from: unknown;
+  to: unknown;
+  labels?: LabelMap;
+}) {
   return (
     <span className="inline-flex items-center gap-1 align-middle">
-      <span>{String(from ?? "?")}</span>
+      <span>{humanize(from, labels)}</span>
       <ArrowRight size={11} weight="bold" className="text-ink-faint" />
-      <span>{String(to ?? "?")}</span>
+      <span>{humanize(to, labels)}</span>
     </span>
   );
 }
@@ -23,19 +51,22 @@ function describe(activity: Activity) {
     case "TICKET_STATUS_CHANGED":
       return (
         <>
-          moved a ticket <Transition from={m.from} to={m.to} />
+          moved a ticket{" "}
+          <Transition from={m.from} to={m.to} labels={ticketStatusMeta} />
         </>
       );
     case "TICKET_PRIORITY_CHANGED":
       return (
         <>
-          changed ticket priority <Transition from={m.from} to={m.to} />
+          changed ticket priority{" "}
+          <Transition from={m.from} to={m.to} labels={ticketPriorityMeta} />
         </>
       );
     case "SERVICE_STATUS_CHANGED":
       return (
         <>
-          status changed <Transition from={m.from} to={m.to} />
+          status changed{" "}
+          <Transition from={m.from} to={m.to} labels={serviceStatusMeta} />
         </>
       );
     case "INCIDENT_CREATED":
@@ -43,13 +74,15 @@ function describe(activity: Activity) {
     case "INCIDENT_STATUS_CHANGED":
       return (
         <>
-          moved incident <Transition from={m.from} to={m.to} />
+          moved incident{" "}
+          <Transition from={m.from} to={m.to} labels={incidentStatusMeta} />
         </>
       );
     case "INCIDENT_SEVERITY_CHANGED":
       return (
         <>
-          changed severity <Transition from={m.from} to={m.to} />
+          changed severity{" "}
+          <Transition from={m.from} to={m.to} labels={incidentSeverityMeta} />
         </>
       );
     case "INCIDENT_SERVICE_LINKED":

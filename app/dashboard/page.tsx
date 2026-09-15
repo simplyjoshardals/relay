@@ -34,10 +34,11 @@ export default function DashboardPage() {
   ).length;
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex h-full flex-col">
       <TopBar orgName={currentOrgName} self={self} />
 
-      <main className="mx-auto flex w-full max-w-350 flex-1 flex-col gap-4 px-6 py-5">
+      {/* Only this content area scrolls — the TopBar above stays put. */}
+      <main className="mx-auto flex w-full max-w-350 flex-1 flex-col gap-4 overflow-y-auto px-3 py-4 sm:px-6 sm:py-5">
         <StatRow
           stats={[
             { label: "Open tickets", value: openTickets },
@@ -56,7 +57,10 @@ export default function DashboardPage() {
           ]}
         />
 
-        <div className="grid grid-cols-[2.2fr_1fr] gap-4 items-start">
+        {/* Side-by-side only once there's room for both columns to
+            breathe; below that, the rail just drops beneath the main
+            content instead of squeezing next to it. */}
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[2.2fr_1fr] lg:items-start">
           <div className="flex flex-col gap-4 min-w-0">
             <IncidentsPanel
               incidents={incidents}

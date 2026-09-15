@@ -129,10 +129,11 @@ export default function DashboardPage() {
   ).length;
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex h-full flex-col">
       <TopBar orgName={currentOrgName} self={self} />
 
-      <main className="mx-auto flex w-full max-w-350 flex-1 flex-col gap-4 px-6 py-5">
+      {/* Only this content area scrolls — the TopBar above stays put. */}
+      <main className="mx-auto flex w-full max-w-350 flex-1 flex-col gap-4 overflow-y-auto px-3 py-4 sm:px-6 sm:py-5">
         <StatRow
           stats={[
             { label: "Open tickets", value: openTickets },
@@ -151,7 +152,10 @@ export default function DashboardPage() {
           ]}
         />
 
-        <div className="grid grid-cols-[2.2fr_1fr] gap-4 items-start">
+        {/* Side-by-side only once there's room for both columns to
+            breathe; below that, the rail just drops beneath the main
+            content instead of squeezing next to it. */}
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[2.2fr_1fr] lg:items-start">
           <div className="flex flex-col gap-4 min-w-0">
             <IncidentsPanel
               incidents={incidents}
@@ -218,6 +222,10 @@ body {
 * {
   scrollbar-color: var(--color-line-strong) transparent;
 }
+
+button {
+  @apply cursor-pointer;
+}
 </file>
 
 <file path="app/layout.tsx">
@@ -247,7 +255,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${publicSans.variable} ${jetbrainsMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="h-full flex flex-col overflow-hidden">{children}</body>
     </html>
   );
 }
@@ -264,15 +272,43 @@ export default function RootPage() {
 <file path="components/dashboard/ActivityFeed.tsx">
 import { ArrowRight, Cpu } from "@phosphor-icons/react/ssr";
 import { Avatar } from "./Avatar";
-import type { Activity, User } from "@/types";
+import {
+  incidentSeverityMeta,
+  incidentStatusMeta,
+  serviceStatusMeta,
+  ticketPriorityMeta,
+  ticketStatusMeta,
+  type Activity,
+  type User,
+} from "@/types";
 import { relativeTime } from "@/lib/style";
 
-function Transition({ from, to }: { from: unknown; to: unknown }) {
+// Activity metadata stores raw enum values (e.g. "IN_PROGRESS") as they're
+// persisted in the DB. Never show those directly — always translate through
+// the same label maps the rest of the dashboard uses, so the feed reads like
+// something a person wrote ("In progress") rather than a code left showing.
+type LabelMap = Record<string, { label: string }>;
+
+function humanize(value: unknown, labels?: LabelMap): string {
+  if (value == null) return "?";
+  const key = String(value);
+  return labels?.[key]?.label ?? key;
+}
+
+function Transition({
+  from,
+  to,
+  labels,
+}: {
+  from: unknown;
+  to: unknown;
+  labels?: LabelMap;
+}) {
   return (
     <span className="inline-flex items-center gap-1 align-middle">
-      <span>{String(from ?? "?")}</span>
+      <span>{humanize(from, labels)}</span>
       <ArrowRight size={11} weight="bold" className="text-ink-faint" />
-      <span>{String(to ?? "?")}</span>
+      <span>{humanize(to, labels)}</span>
     </span>
   );
 }
@@ -287,19 +323,22 @@ function describe(activity: Activity) {
     case "TICKET_STATUS_CHANGED":
       return (
         <>
-          moved a ticket <Transition from={m.from} to={m.to} />
+          moved a ticket{" "}
+          <Transition from={m.from} to={m.to} labels={ticketStatusMeta} />
         </>
       );
     case "TICKET_PRIORITY_CHANGED":
       return (
         <>
-          changed ticket priority <Transition from={m.from} to={m.to} />
+          changed ticket priority{" "}
+          <Transition from={m.from} to={m.to} labels={ticketPriorityMeta} />
         </>
       );
     case "SERVICE_STATUS_CHANGED":
       return (
         <>
-          status changed <Transition from={m.from} to={m.to} />
+          status changed{" "}
+          <Transition from={m.from} to={m.to} labels={serviceStatusMeta} />
         </>
       );
     case "INCIDENT_CREATED":
@@ -307,13 +346,15 @@ function describe(activity: Activity) {
     case "INCIDENT_STATUS_CHANGED":
       return (
         <>
-          moved incident <Transition from={m.from} to={m.to} />
+          moved incident{" "}
+          <Transition from={m.from} to={m.to} labels={incidentStatusMeta} />
         </>
       );
     case "INCIDENT_SEVERITY_CHANGED":
       return (
         <>
-          changed severity <Transition from={m.from} to={m.to} />
+          changed severity{" "}
+          <Transition from={m.from} to={m.to} labels={incidentSeverityMeta} />
         </>
       );
     case "INCIDENT_SERVICE_LINKED":
@@ -654,7 +695,7 @@ export function ServiceHealthGrid({ services }: { services: Service[] }) {
         <span className="text-xs text-ink-faint">Trend is since page load</span>
       </div>
 
-      <div className="grid grid-cols-3 gap-px bg-line">
+      <div className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2 lg:grid-cols-3">
         {services.map((service) => {
           const meta = serviceStatusMeta[service.status];
           const warn = service.status !== "OPERATIONAL";
@@ -706,7 +747,7 @@ interface Stat {
 
 export function StatRow({ stats }: { stats: Stat[] }) {
   return (
-    <div className="grid grid-cols-5 gap-3">
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
       {stats.map((stat) => {
         const alert = stat.tone && stat.value > 0;
         return (
@@ -767,7 +808,7 @@ export function TicketBoard({ tickets, resolveUser }: TicketBoardProps) {
         <h2 className="text-sm font-medium text-ink">Work</h2>
       </div>
 
-      <div className="grid grid-cols-4 gap-px bg-line">
+      <div className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2 lg:grid-cols-4">
         {columns.map((status) => {
           const items = tickets.filter((t) => t.status === status);
           const meta = ticketStatusMeta[status];
@@ -827,7 +868,11 @@ export function TicketBoard({ tickets, resolveUser }: TicketBoardProps) {
 </file>
 
 <file path="components/dashboard/TopBar.tsx">
+"use client";
+
+import { useState } from "react";
 import Image from "next/image";
+import { ListIcon, XIcon } from "@phosphor-icons/react";
 import { Avatar } from "./Avatar";
 import { LiveIndicator } from "./LiveIndicator";
 import type { User } from "@/types";
@@ -841,10 +886,13 @@ const navItems = [
 ];
 
 export function TopBar({ orgName, self }: { orgName: string; self: User }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const activeLabel = navItems.find((item) => item.active)?.label ?? "Menu";
+
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between border-b border-line px-6">
-      <div className="flex items-center gap-6">
-        <div className="flex items-center gap-2">
+    <header className="relative flex h-14 shrink-0 items-center justify-between gap-3 border-b border-line px-3 sm:px-6">
+      <div className="flex min-w-0 items-center gap-3 sm:gap-6">
+        <div className="flex shrink-0 items-center gap-2">
           <span className="flex items-center justify-center size-5">
             <Image
               src="/assets/logo.png"
@@ -855,10 +903,13 @@ export function TopBar({ orgName, self }: { orgName: string; self: User }) {
               className="size-5"
             />
           </span>
-          <span className="text-sm font-medium text-ink">{orgName}</span>
+          <span className="hidden text-sm font-medium text-ink sm:inline">
+            {orgName}
+          </span>
         </div>
 
-        <nav className="flex items-center gap-1">
+        {/* Tablet and up: room for all five tabs side by side. */}
+        <nav className="hidden items-center gap-1 md:flex">
           {navItems.map((item) => (
             <span
               key={item.label}
@@ -872,12 +923,58 @@ export function TopBar({ orgName, self }: { orgName: string; self: User }) {
             </span>
           ))}
         </nav>
+
+        {/* Phone: one button naming the page you're on. Tap it to see the
+            other four — nothing to scroll to find, nothing squeezed. */}
+        <button
+          type="button"
+          onClick={() => setMenuOpen((open) => !open)}
+          aria-expanded={menuOpen}
+          aria-label="Open navigation menu"
+          className="flex items-center gap-1.5 rounded-md bg-panel-raised px-2.5 py-1.5 text-sm font-medium text-ink md:hidden"
+        >
+          {menuOpen ? (
+            <XIcon size={14} weight="bold" />
+          ) : (
+            <ListIcon size={14} weight="bold" />
+          )}
+          {activeLabel}
+        </button>
       </div>
 
-      <div className="flex items-center gap-4">
-        <LiveIndicator connected />
+      <div className="flex shrink-0 items-center gap-2 sm:gap-4">
+        <span className="hidden sm:block">
+          <LiveIndicator connected />
+        </span>
         <Avatar initials={self.initials} online size="sm" title={self.name} />
       </div>
+
+      {menuOpen && (
+        <>
+          {/* Invisible tap-outside-to-close catcher, not a page-darkening
+              overlay — this is a small menu, not a full mobile drawer. */}
+          <div
+            className="fixed inset-0 z-10 md:hidden"
+            onClick={() => setMenuOpen(false)}
+          />
+          <div className="absolute left-3 top-full z-20 mt-1.5 flex w-44 flex-col gap-0.5 rounded-lg border border-line bg-panel-raised p-1 shadow-lg md:hidden">
+            {navItems.map((item) => (
+              <button
+                key={item.label}
+                type="button"
+                onClick={() => setMenuOpen(false)}
+                className={
+                  item.active
+                    ? "rounded-md bg-panel px-3 py-2 text-left text-sm font-medium text-ink"
+                    : "rounded-md px-3 py-2 text-left text-sm text-ink-dim hover:text-ink"
+                }
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </header>
   );
 }
@@ -2042,8 +2139,14 @@ interface StatusMeta {
 }
 
 export const ticketStatusMeta: Record<TicketStatus, StatusMeta> = {
-  OPEN: { label: "Open", color: "info" },
-  IN_PROGRESS: { label: "In progress", color: "warning" },
+  // Grey/blue/red/green now follow the same rule everywhere on the
+  // dashboard: grey = not started, blue = normal active work, red = a
+  // real problem, green = done. Orange is reserved dashboard-wide for
+  // "needs attention" (see service DEGRADED, priority HIGH, incident
+  // IDENTIFIED) — a ticket just being worked on isn't a warning, so it
+  // no longer gets the warning color.
+  OPEN: { label: "Open", color: "ink-faint" },
+  IN_PROGRESS: { label: "In progress", color: "info" },
   BLOCKED: { label: "Blocked", color: "danger" },
   RESOLVED: { label: "Resolved", color: "success" },
 };
@@ -2157,45 +2260,6 @@ const nextConfig: NextConfig = {
 export default nextConfig;
 </file>
 
-<file path="package.json">
-{
-  "name": "relay",
-  "version": "0.1.0",
-  "private": true,
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint",
-    "postinstall": "prisma skills sync || exit 0"
-  },
-  "dependencies": {
-    "@phosphor-icons/react": "^2.1.10",
-    "@prisma/adapter-pg": "^7.10.0",
-    "@prisma/client": "7.10.0",
-    "dotenv": "^17.4.2",
-    "next": "16.3.4",
-    "pg": "^8.23.0",
-    "react": "19.2.8",
-    "react-dom": "19.2.8"
-  },
-  "devDependencies": {
-    "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
-    "@types/pg": "^8.23.1",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.3.4",
-    "prisma": "7.10.0",
-    "tailwindcss": "^4",
-    "tsx": "^4.23.13",
-    "typescript": "^5"
-  },
-  "packageManager": "yarn@4.12.0"
-}
-</file>
-
 <file path="postcss.config.mjs">
 const config = {
   plugins: {
@@ -2294,6 +2358,45 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
     "**/*.mts"
   ],
   "exclude": ["node_modules"]
+}
+</file>
+
+<file path="package.json">
+{
+  "name": "relay",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && next build",
+    "start": "next start",
+    "lint": "eslint",
+    "postinstall": "prisma skills sync || exit 0"
+  },
+  "dependencies": {
+    "@phosphor-icons/react": "^2.1.10",
+    "@prisma/adapter-pg": "^7.10.0",
+    "@prisma/client": "7.10.0",
+    "dotenv": "^17.4.2",
+    "next": "16.3.4",
+    "pg": "^8.23.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.4",
+    "prisma": "7.10.0",
+    "tailwindcss": "^4",
+    "tsx": "^4.23.13",
+    "typescript": "^5"
+  },
+  "packageManager": "yarn@4.12.0"
 }
 </file>
 

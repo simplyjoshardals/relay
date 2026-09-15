@@ -49,7 +49,7 @@ export function ServiceHealthGrid({ services }: { services: Service[] }) {
         <span className="text-xs text-ink-faint">Trend is since page load</span>
       </div>
 
-      <div className="grid grid-cols-3 gap-px bg-line">
+      <div className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2 lg:grid-cols-3">
         {services.map((service) => {
           const meta = serviceStatusMeta[service.status];
           const warn = service.status !== "OPERATIONAL";

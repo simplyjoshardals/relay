@@ -42,3 +42,7 @@ body {
 * {
   scrollbar-color: var(--color-line-strong) transparent;
 }
+
+button {
+  @apply cursor-pointer;
+}
