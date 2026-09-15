@@ -74,7 +74,13 @@ export function TopBar({ orgName, self }: { orgName: string; self: User }) {
 
       <div className="flex shrink-0 items-center gap-2 sm:gap-4">
         <LiveIndicator connected />
-        <Avatar initials={self.initials} online size="sm" title={self.name} />
+        <Avatar
+          initials={self.initials}
+          seed={self.id}
+          online
+          size="sm"
+          title={self.name}
+        />
       </div>
 
       {menuOpen && (

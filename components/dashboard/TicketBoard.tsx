@@ -58,6 +58,7 @@ export function TicketBoard({ tickets, resolveUser }: TicketBoardProps) {
                       {assignee ? (
                         <Avatar
                           initials={assignee.initials}
+                          seed={assignee.id}
                           title={assignee.name}
                         />
                       ) : (

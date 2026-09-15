@@ -101,6 +101,7 @@ export function IncidentsPanel({
               {responder ? (
                 <Avatar
                   initials={responder.initials}
+                  seed={responder.id}
                   title={`${responder.name} responding`}
                 />
               ) : (

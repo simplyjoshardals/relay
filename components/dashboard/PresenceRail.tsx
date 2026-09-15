@@ -25,7 +25,7 @@ export function PresenceRail({ users, onlineIds }: PresenceRailProps) {
           const online = onlineIds.has(user.id);
           return (
             <li key={user.id} className="flex items-center gap-2.5">
-              <Avatar initials={user.initials} online={online} />
+              <Avatar initials={user.initials} seed={user.id} online={online} />
               <span
                 className={
                   online ? "text-xs text-ink" : "text-xs text-ink-faint"

@@ -120,7 +120,11 @@ export function ActivityFeed({ activities, resolveUser }: ActivityFeedProps) {
           return (
             <li key={activity.id} className="flex items-start gap-2.5">
               {actor ? (
-                <Avatar initials={actor.initials} title={actor.name} />
+                <Avatar
+                  initials={actor.initials}
+                  seed={actor.id}
+                  title={actor.name}
+                />
               ) : (
                 <span
                   className="flex size-6 shrink-0 items-center justify-center rounded-full bg-panel-raised text-ink-faint"
