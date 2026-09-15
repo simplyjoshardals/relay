@@ -304,6 +304,40 @@ export const incidents: Incident[] = [
     serviceIds: ["svc_search"],
     ticketIds: [],
   },
+  // Resolved incidents give the incidents list something to show once the
+  // status filter moves off the active ones the dashboard panel surfaces
+  // (README §15 only shows *active* incidents there; the full list also
+  // needs to answer "is it getting better" for things already closed out).
+  {
+    id: "i_4",
+    orgId: ORG_ID,
+    title: "Billing double-charge on trial conversion",
+    description:
+      "A race between the trial-expiry job and the upgrade webhook double-captured card payments for same-day conversions.",
+    status: "RESOLVED",
+    severity: "HIGH",
+    responderId: "u_maya",
+    createdAt: daysAgo(2),
+    resolvedAt: daysAgo(1),
+    version: 6,
+    serviceIds: ["svc_billing"],
+    ticketIds: ["t_9"],
+  },
+  {
+    id: "i_5",
+    orgId: ORG_ID,
+    title: "Auth sessions intermittently rejected after deploy",
+    description:
+      "A clock-skew edge case in refresh-token validation rejected ~2% of otherwise-valid sessions for about 40 minutes.",
+    status: "RESOLVED",
+    severity: "MEDIUM",
+    responderId: "u_priya",
+    createdAt: daysAgo(3),
+    resolvedAt: daysAgo(3),
+    version: 4,
+    serviceIds: ["svc_auth"],
+    ticketIds: [],
+  },
 ];
 
 export const activities: Activity[] = [

@@ -1,3 +1,4 @@
+import { Sparkline } from "@/components/shared/Sparkline";
 import { serviceStatusMeta, type Service } from "@/types";
 import {
   formatErrorRate,
@@ -5,41 +6,6 @@ import {
   statusDot,
   statusText,
 } from "@/lib/style";
-
-function Sparkline({ values, warn }: { values: number[]; warn: boolean }) {
-  if (values.length < 2) {
-    return <span className="text-xs text-ink-faint">—</span>;
-  }
-
-  const w = 64;
-  const h = 20;
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-  const points = values
-    .map((v, i) => {
-      const x = (i / (values.length - 1)) * w;
-      const y = h - ((v - min) / range) * h;
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
-
-  return (
-    <svg
-      width={w}
-      height={h}
-      viewBox={`0 0 ${w} ${h}`}
-      className="overflow-visible"
-    >
-      <polyline
-        points={points}
-        fill="none"
-        strokeWidth="1.5"
-        className={warn ? "stroke-warning" : "stroke-ink-faint"}
-      />
-    </svg>
-  );
-}
 
 export function ServiceHealthGrid({ services }: { services: Service[] }) {
   return (

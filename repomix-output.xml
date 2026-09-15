@@ -41,8 +41,12 @@ The content is organized as follows:
 
 <directory_structure>
 app/
-  dashboard/
-    page.tsx
+  (dashboard)/
+    dashboard/
+      page.tsx
+    tickets/
+      page.tsx
+    layout.tsx
   favicon.ico
   globals.css
   layout.tsx
@@ -57,7 +61,10 @@ components/
     ServiceHealthGrid.tsx
     StatRow.tsx
     TicketBoard.tsx
+  shared/
     TopBar.tsx
+  tickets/
+    TicketsView.tsx
 lib/
   mock-data.ts
   prisma.ts
@@ -79,6 +86,8 @@ public/
     vercel.jpg
 types/
   index.ts
+utils/
+  paths.ts
 .gitignore
 eslint.config.mjs
 next.config.ts
@@ -92,8 +101,7 @@ tsconfig.json
 <files>
 This section contains the contents of the repository's files.
 
-<file path="app/dashboard/page.tsx">
-import { TopBar } from "@/components/dashboard/TopBar";
+<file path="app/(dashboard)/dashboard/page.tsx">
 import { StatRow } from "@/components/dashboard/StatRow";
 import { IncidentsPanel } from "@/components/dashboard/IncidentsPanel";
 import { ServiceHealthGrid } from "@/components/dashboard/ServiceHealthGrid";
@@ -102,7 +110,6 @@ import { PresenceRail } from "@/components/dashboard/PresenceRail";
 import { ActivityFeed } from "@/components/dashboard/ActivityFeed";
 import {
   activities,
-  currentOrgName,
   incidents,
   onlineUserIds,
   resolveUser,
@@ -117,8 +124,6 @@ import {
 // props shaped like the query result, so that swap shouldn't touch JSX.
 
 export default function DashboardPage() {
-  const self = users[0];
-
   const openTickets = tickets.filter((t) => t.status === "OPEN").length;
   const inProgressTickets = tickets.filter(
     (t) => t.status === "IN_PROGRESS",
@@ -129,136 +134,421 @@ export default function DashboardPage() {
   ).length;
 
   return (
+    <>
+      <StatRow
+        stats={[
+          { label: "Open tickets", value: openTickets },
+          { label: "In progress", value: inProgressTickets },
+          {
+            label: "Active incidents",
+            value: activeIncidents,
+            tone: "danger",
+          },
+          {
+            label: "Degraded / outage",
+            value: unhealthyServices,
+            tone: "warning",
+          },
+          { label: "Online now", value: onlineUserIds.size },
+        ]}
+      />
+
+      {/* Side-by-side only once there's room for both columns to
+          breathe; below that, the rail just drops beneath the main
+          content instead of squeezing next to it. */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[2.2fr_1fr] lg:items-start">
+        <div className="flex flex-col gap-4 min-w-0">
+          <IncidentsPanel
+            incidents={incidents}
+            services={services}
+            resolveUser={resolveUser}
+          />
+          <ServiceHealthGrid services={services} />
+          <TicketBoard tickets={tickets} resolveUser={resolveUser} />
+        </div>
+
+        <div className="flex flex-col gap-4 min-w-0">
+          <PresenceRail users={users} onlineIds={onlineUserIds} />
+          <ActivityFeed activities={activities} resolveUser={resolveUser} />
+        </div>
+      </div>
+    </>
+  );
+}
+</file>
+
+<file path="app/(dashboard)/tickets/page.tsx">
+"use client";
+
+import { TicketsView } from "@/components/tickets/TicketsView";
+import { resolveUser, tickets } from "@/lib/mock-data";
+
+// TODO(milestone 9): replace the mock-data import above with a real
+// org-scoped tickets query once auth + the API routes land (README §15 /
+// implementation plan). TicketsView already takes its data as props shaped
+// like the query result, so that swap shouldn't touch the JSX here.
+
+export default function TicketsPage() {
+  return <TicketsView tickets={tickets} resolveUser={resolveUser} />;
+}
+</file>
+
+<file path="app/(dashboard)/layout.tsx">
+import type { ReactNode } from "react";
+import { TopBar } from "@/components/shared/TopBar";
+import { currentOrgName, users } from "@/lib/mock-data";
+
+// TODO(milestone 9): self/org will come from the authenticated session
+// (README §16) once auth lands, rather than mock data — every route in
+// this group will then read the real signed-in user instead of `users[0]`.
+
+export default function DashboardLayout({ children }: { children: ReactNode }) {
+  const self = users[0];
+
+  return (
     <div className="flex h-full flex-col">
       <TopBar orgName={currentOrgName} self={self} />
 
-      {/* Only this content area scrolls — the TopBar above stays put. */}
+      {/* Only this content area scrolls — the TopBar above stays put.
+          Shared by every route in this group (dashboard, tickets,
+          incidents, services, activity) so each page only owns its own
+          content. */}
       <main className="mx-auto flex w-full max-w-350 flex-1 flex-col gap-4 overflow-y-auto px-3 py-4 sm:px-6 sm:py-5">
-        <StatRow
-          stats={[
-            { label: "Open tickets", value: openTickets },
-            { label: "In progress", value: inProgressTickets },
-            {
-              label: "Active incidents",
-              value: activeIncidents,
-              tone: "danger",
-            },
-            {
-              label: "Degraded / outage",
-              value: unhealthyServices,
-              tone: "warning",
-            },
-            { label: "Online now", value: onlineUserIds.size },
-          ]}
-        />
-
-        {/* Side-by-side only once there's room for both columns to
-            breathe; below that, the rail just drops beneath the main
-            content instead of squeezing next to it. */}
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[2.2fr_1fr] lg:items-start">
-          <div className="flex flex-col gap-4 min-w-0">
-            <IncidentsPanel
-              incidents={incidents}
-              services={services}
-              resolveUser={resolveUser}
-            />
-            <ServiceHealthGrid services={services} />
-            <TicketBoard tickets={tickets} resolveUser={resolveUser} />
-          </div>
-
-          <div className="flex flex-col gap-4 min-w-0">
-            <PresenceRail users={users} onlineIds={onlineUserIds} />
-            <ActivityFeed activities={activities} resolveUser={resolveUser} />
-          </div>
-        </div>
+        {children}
       </main>
     </div>
   );
 }
 </file>
 
-<file path="app/globals.css">
-@import "tailwindcss";
+<file path="components/shared/TopBar.tsx">
+"use client";
 
-@theme inline {
-  --font-sans: var(--font-public-sans);
-  --font-mono: var(--font-jetbrains-mono);
+import { useState } from "react";
+import Image from "next/image";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { ListIcon, XIcon } from "@phosphor-icons/react";
+import { Avatar } from "@/components/dashboard/Avatar";
+import { LiveIndicator } from "@/components/dashboard/LiveIndicator";
+import type { User } from "@/types";
+import { PATHS } from "@/utils/paths";
 
-  /* Surfaces — dark ops console, warm-neutral rather than pure black */
-  --color-bg: #0a0b0d;
-  --color-panel: #131519;
-  --color-panel-raised: #191c21;
-  --color-line: rgba(237, 239, 242, 0.07);
-  --color-line-strong: rgba(237, 239, 242, 0.14);
+const navItems = [
+  { label: "Dashboard", href: PATHS.DASHBOARD },
+  { label: "Tickets", href: PATHS.TICKETS },
+  { label: "Incidents", href: PATHS.INCIDENTS },
+  { label: "Services", href: PATHS.SERVICES },
+  { label: "Activity", href: PATHS.ACTIVITY },
+];
 
-  /* Ink — text */
-  --color-ink: #edeff2;
-  --color-ink-dim: #9298a6;
-  --color-ink-faint: #5b6270;
+export function TopBar({ orgName, self }: { orgName: string; self: User }) {
+  const pathname = usePathname();
+  const [menuOpen, setMenuOpen] = useState(false);
 
-  /* Signal — Relay's single brand/live accent. Reserved for realtime
-     state (live dot, active nav, focus, links) and never used for
-     entity status, so it can't be confused with a semantic meaning. */
-  --color-signal: #3ee6cd;
-  --color-signal-dim: #123a34;
+  const isActive = (href: string) =>
+    pathname === href || pathname.startsWith(`${href}/`);
+  const activeLabel =
+    navItems.find((item) => isActive(item.href))?.label ?? "Menu";
 
-  /* Status hues — each meaning gets exactly one color, used identically
-     across cards, chips, list rows, and the activity feed. */
-  --color-info: #5b8def;
-  --color-success: #33c481;
-  --color-warning: #f2a93b;
-  --color-danger: #ef5350;
-}
+  return (
+    <header className="relative flex h-14 shrink-0 items-center justify-between gap-3 border-b border-line px-3 sm:px-6">
+      <div className="flex min-w-0 items-center gap-3 sm:gap-6">
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="flex items-center justify-center size-5">
+            <Image
+              src="/assets/logo.png"
+              alt="Logo"
+              width={20}
+              height={20}
+              priority
+              className="size-5"
+            />
+          </span>
+          <span className="hidden text-sm font-medium text-ink sm:inline">
+            {orgName}
+          </span>
+        </div>
 
-body {
-  @apply font-sans bg-bg text-ink;
-}
+        {/* Tablet and up: room for all five tabs side by side. */}
+        <nav className="hidden items-center gap-1 md:flex">
+          {navItems.map((item) => {
+            const active = isActive(item.href);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={
+                  active
+                    ? "rounded-md px-3 py-1.5 text-sm font-medium text-ink bg-panel-raised"
+                    : "rounded-md px-3 py-1.5 text-sm text-ink-dim hover:text-ink transition-colors"
+                }
+              >
+                {item.label}
+              </Link>
+            );
+          })}
+        </nav>
 
-::selection {
-  background: var(--color-signal-dim);
-  color: var(--color-ink);
-}
+        {/* Phone: one button naming the page you're on. Tap it to see the
+            other four — nothing to scroll to find, nothing squeezed. */}
+        <button
+          type="button"
+          onClick={() => setMenuOpen((open) => !open)}
+          aria-expanded={menuOpen}
+          aria-label="Open navigation menu"
+          className="flex items-center gap-1.5 rounded-md bg-panel-raised px-2.5 py-1.5 text-sm font-medium text-ink md:hidden"
+        >
+          {menuOpen ? (
+            <XIcon size={14} weight="bold" />
+          ) : (
+            <ListIcon size={14} weight="bold" />
+          )}
+          {activeLabel}
+        </button>
+      </div>
 
-* {
-  scrollbar-color: var(--color-line-strong) transparent;
-}
+      <div className="flex shrink-0 items-center gap-2 sm:gap-4">
+        <LiveIndicator connected />
+        <Avatar
+          initials={self.initials}
+          seed={self.id}
+          online
+          size="sm"
+          title={self.name}
+        />
+      </div>
 
-button {
-  @apply cursor-pointer;
+      {menuOpen && (
+        <>
+          {/* Invisible tap-outside-to-close catcher, not a page-darkening
+              overlay — this is a small menu, not a full mobile drawer. */}
+          <div
+            className="fixed inset-0 z-10 md:hidden"
+            onClick={() => setMenuOpen(false)}
+          />
+          <div className="absolute left-3 top-full z-20 mt-1.5 flex w-44 flex-col gap-0.5 rounded-lg border border-line bg-panel-raised p-1 shadow-lg md:hidden">
+            {navItems.map((item) => {
+              const active = isActive(item.href);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={() => setMenuOpen(false)}
+                  className={
+                    active
+                      ? "rounded-md bg-panel px-3 py-2 text-left text-sm font-medium text-ink"
+                      : "rounded-md px-3 py-2 text-left text-sm text-ink-dim hover:text-ink"
+                  }
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </header>
+  );
 }
 </file>
 
-<file path="app/layout.tsx">
-import type { Metadata } from "next";
-import { Public_Sans, JetBrains_Mono } from "next/font/google";
-import "./globals.css";
+<file path="components/tickets/TicketsView.tsx">
+"use client";
 
-const publicSans = Public_Sans({
-  variable: "--font-public-sans",
-  subsets: ["latin"],
-});
+import { useMemo, useState } from "react";
+import { MagnifyingGlassIcon } from "@phosphor-icons/react";
+import { Avatar } from "@/components/dashboard/Avatar";
+import {
+  ticketPriorityMeta,
+  ticketStatusMeta,
+  type Ticket,
+  type TicketStatus,
+  type User,
+} from "@/types";
+import { relativeTime, statusChipBg, statusDot, statusText } from "@/lib/style";
 
-const jetbrainsMono = JetBrains_Mono({
-  variable: "--font-jetbrains-mono",
-  subsets: ["latin"],
-});
+const statusColumns: TicketStatus[] = [
+  "OPEN",
+  "IN_PROGRESS",
+  "BLOCKED",
+  "RESOLVED",
+];
 
-export const metadata: Metadata = {
-  title: "Relay",
-  description:
-    "Real-time ops console for tickets, incidents, and service health.",
-};
+interface TicketsViewProps {
+  tickets: Ticket[];
+  resolveUser: (id: string | null) => User | null;
+}
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export function TicketsView({ tickets, resolveUser }: TicketsViewProps) {
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<TicketStatus | "ALL">("ALL");
+
+  // Search narrows the pool the status pills count against, so the counts
+  // stay meaningful while typing; the status pill then narrows further.
+  const searched = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) return tickets;
+    return tickets.filter((t) => t.title.toLowerCase().includes(query));
+  }, [tickets, search]);
+
+  const filtered = useMemo(() => {
+    const byStatus =
+      statusFilter === "ALL"
+        ? searched
+        : searched.filter((t) => t.status === statusFilter);
+    // Most recently touched first — matches the "what's happening now"
+    // framing used everywhere else on the dashboard (README §15).
+    return [...byStatus].sort(
+      (a, b) =>
+        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+    );
+  }, [searched, statusFilter]);
+
   return (
-    <html
-      lang="en"
-      className={`${publicSans.variable} ${jetbrainsMono.variable} h-full antialiased`}
-    >
-      <body className="h-full flex flex-col overflow-hidden">{children}</body>
-    </html>
+    <div className="flex flex-col gap-4">
+      <div>
+        <h1 className="text-lg font-medium text-ink">Tickets</h1>
+        <p className="text-sm text-ink-dim">
+          {tickets.length} {tickets.length === 1 ? "ticket" : "tickets"}
+        </p>
+      </div>
+
+      <div className="rounded-lg border border-line bg-panel">
+        <div className="flex flex-col gap-3 border-b border-line px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-1">
+            <FilterPill
+              active={statusFilter === "ALL"}
+              onClick={() => setStatusFilter("ALL")}
+              label="All"
+              count={searched.length}
+            />
+            {statusColumns.map((status) => (
+              <FilterPill
+                key={status}
+                active={statusFilter === status}
+                onClick={() => setStatusFilter(status)}
+                label={ticketStatusMeta[status].label}
+                count={searched.filter((t) => t.status === status).length}
+              />
+            ))}
+          </div>
+
+          <div className="relative w-full sm:w-64">
+            <MagnifyingGlassIcon
+              size={14}
+              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-faint"
+            />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search tickets"
+              className="w-full rounded-md border border-line bg-panel-raised py-1.5 pl-8 pr-3 text-sm text-ink placeholder:text-ink-faint focus:outline-none focus:ring-1 focus:ring-signal"
+            />
+          </div>
+        </div>
+
+        {filtered.length === 0 ? (
+          <div className="px-4 py-8 text-center text-sm text-ink-dim">
+            No tickets match your filters.
+          </div>
+        ) : (
+          <ul>
+            {filtered.map((ticket) => {
+              const statusMeta = ticketStatusMeta[ticket.status];
+              const priorityMeta = ticketPriorityMeta[ticket.priority];
+              const assignee = resolveUser(ticket.assigneeId);
+
+              return (
+                <li
+                  key={ticket.id}
+                  className="flex items-center gap-3 border-b border-line px-4 py-3 last:border-b-0 transition-colors hover:bg-panel-raised"
+                >
+                  <span
+                    className={`size-1.5 shrink-0 rounded-full ${statusDot[priorityMeta.color]}`}
+                    title={`${priorityMeta.label} priority`}
+                  />
+
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm text-ink">
+                      {ticket.title}
+                    </div>
+                    {/* Status + time collapse into the row on phone, where
+                        the dedicated columns to the right are hidden. */}
+                    <div className="mt-0.5 flex items-center gap-1.5 text-xs text-ink-faint sm:hidden">
+                      <span className={statusText[statusMeta.color]}>
+                        {statusMeta.label}
+                      </span>
+                      <span>·</span>
+                      <span>{relativeTime(ticket.updatedAt)}</span>
+                    </div>
+                  </div>
+
+                  <span
+                    className={`hidden shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium sm:inline-block ${statusChipBg[statusMeta.color]} ${statusText[statusMeta.color]}`}
+                  >
+                    {statusMeta.label}
+                  </span>
+
+                  <span className="hidden w-16 shrink-0 text-xs text-ink-faint md:inline-block">
+                    {relativeTime(ticket.updatedAt)}
+                  </span>
+
+                  {assignee ? (
+                    <Avatar
+                      initials={assignee.initials}
+                      seed={assignee.id}
+                      title={assignee.name}
+                    />
+                  ) : (
+                    <span className="size-6 shrink-0 rounded-full border border-dashed border-line-strong" />
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </div>
   );
 }
+
+function FilterPill({
+  active,
+  onClick,
+  label,
+  count,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  count: number;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        active
+          ? "rounded-md px-3 py-1.5 text-xs font-medium text-ink bg-panel-raised"
+          : "rounded-md px-3 py-1.5 text-xs text-ink-dim transition-colors hover:text-ink"
+      }
+    >
+      {label} <span className="text-ink-faint">{count}</span>
+    </button>
+  );
+}
+</file>
+
+<file path="utils/paths.ts">
+export const PATHS = {
+  DASHBOARD: "/dashboard",
+  TICKETS: "/tickets",
+  INCIDENTS: "/incidents",
+  SERVICES: "/services",
+  ACTIVITY: "/activity",
+};
 </file>
 
 <file path="app/page.tsx">
@@ -266,306 +556,6 @@ import { redirect } from "next/navigation";
 
 export default function RootPage() {
   redirect("/dashboard");
-}
-</file>
-
-<file path="components/dashboard/ActivityFeed.tsx">
-import { ArrowRight, Cpu } from "@phosphor-icons/react/ssr";
-import { Avatar } from "./Avatar";
-import {
-  incidentSeverityMeta,
-  incidentStatusMeta,
-  serviceStatusMeta,
-  ticketPriorityMeta,
-  ticketStatusMeta,
-  type Activity,
-  type User,
-} from "@/types";
-import { relativeTime } from "@/lib/style";
-
-// Activity metadata stores raw enum values (e.g. "IN_PROGRESS") as they're
-// persisted in the DB. Never show those directly — always translate through
-// the same label maps the rest of the dashboard uses, so the feed reads like
-// something a person wrote ("In progress") rather than a code left showing.
-type LabelMap = Record<string, { label: string }>;
-
-function humanize(value: unknown, labels?: LabelMap): string {
-  if (value == null) return "?";
-  const key = String(value);
-  return labels?.[key]?.label ?? key;
-}
-
-function Transition({
-  from,
-  to,
-  labels,
-}: {
-  from: unknown;
-  to: unknown;
-  labels?: LabelMap;
-}) {
-  return (
-    <span className="inline-flex items-center gap-1 align-middle">
-      <span>{humanize(from, labels)}</span>
-      <ArrowRight size={11} weight="bold" className="text-ink-faint" />
-      <span>{humanize(to, labels)}</span>
-    </span>
-  );
-}
-
-function describe(activity: Activity) {
-  const m = activity.metadata ?? {};
-  switch (activity.action) {
-    case "TICKET_CREATED":
-      return <>opened &ldquo;{m.title ?? "a ticket"}&rdquo;</>;
-    case "TICKET_ASSIGNED":
-      return <>assigned this ticket to {m.assignee ?? "someone"}</>;
-    case "TICKET_STATUS_CHANGED":
-      return (
-        <>
-          moved a ticket{" "}
-          <Transition from={m.from} to={m.to} labels={ticketStatusMeta} />
-        </>
-      );
-    case "TICKET_PRIORITY_CHANGED":
-      return (
-        <>
-          changed ticket priority{" "}
-          <Transition from={m.from} to={m.to} labels={ticketPriorityMeta} />
-        </>
-      );
-    case "SERVICE_STATUS_CHANGED":
-      return (
-        <>
-          status changed{" "}
-          <Transition from={m.from} to={m.to} labels={serviceStatusMeta} />
-        </>
-      );
-    case "INCIDENT_CREATED":
-      return <>opened incident &ldquo;{m.title ?? ""}&rdquo;</>;
-    case "INCIDENT_STATUS_CHANGED":
-      return (
-        <>
-          moved incident{" "}
-          <Transition from={m.from} to={m.to} labels={incidentStatusMeta} />
-        </>
-      );
-    case "INCIDENT_SEVERITY_CHANGED":
-      return (
-        <>
-          changed severity{" "}
-          <Transition from={m.from} to={m.to} labels={incidentSeverityMeta} />
-        </>
-      );
-    case "INCIDENT_SERVICE_LINKED":
-      return <>linked a service to this incident</>;
-    case "INCIDENT_SERVICE_UNLINKED":
-      return <>unlinked a service from this incident</>;
-    case "INCIDENT_TICKET_LINKED":
-      return <>linked &ldquo;{m.ticketTitle ?? "a ticket"}&rdquo;</>;
-    case "INCIDENT_TICKET_UNLINKED":
-      return <>unlinked a ticket</>;
-    case "INCIDENT_RESOLVED":
-      return <>resolved &ldquo;{m.title ?? "an incident"}&rdquo;</>;
-    default:
-      return <>made a change</>;
-  }
-}
-
-interface ActivityFeedProps {
-  activities: Activity[];
-  resolveUser: (id: string | null) => User | null;
-}
-
-export function ActivityFeed({ activities, resolveUser }: ActivityFeedProps) {
-  const sorted = [...activities].sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-  );
-
-  return (
-    <div className="rounded-lg border border-line bg-panel p-4">
-      <h2 className="text-sm font-medium text-ink">Activity</h2>
-
-      <ul className="mt-3 flex flex-col gap-3">
-        {sorted.map((activity) => {
-          const actor = resolveUser(activity.actorId);
-          return (
-            <li key={activity.id} className="flex items-start gap-2.5">
-              {actor ? (
-                <Avatar initials={actor.initials} title={actor.name} />
-              ) : (
-                <span
-                  className="flex size-6 shrink-0 items-center justify-center rounded-full bg-panel-raised text-ink-faint"
-                  title="Telemetry"
-                >
-                  <Cpu size={12} weight="bold" />
-                </span>
-              )}
-              <div className="min-w-0 text-xs leading-snug">
-                <span className="text-ink-dim">
-                  <span
-                    className={actor ? "text-ink" : "text-ink-faint font-mono"}
-                  >
-                    {actor ? actor.name : "telemetry"}
-                  </span>{" "}
-                  {describe(activity)}
-                </span>
-                <div className="mt-0.5 text-[11px] text-ink-faint">
-                  {relativeTime(activity.createdAt)}
-                </div>
-              </div>
-            </li>
-          );
-        })}
-      </ul>
-    </div>
-  );
-}
-</file>
-
-<file path="components/dashboard/Avatar.tsx">
-interface AvatarProps {
-  initials: string;
-  online?: boolean;
-  size?: "sm" | "md";
-  title?: string;
-}
-
-export function Avatar({ initials, online, size = "sm", title }: AvatarProps) {
-  const dimensions = size === "sm" ? "size-6 text-[10px]" : "size-8 text-xs";
-
-  return (
-    <span className="relative inline-flex shrink-0" title={title}>
-      <span
-        className={`${dimensions} inline-flex items-center justify-center rounded-full bg-panel-raised text-ink-dim font-medium ring-1 ring-line-strong`}
-      >
-        {initials}
-      </span>
-      {online && (
-        <span className="absolute -bottom-0.5 -right-0.5 size-2 rounded-full bg-success ring-2 ring-panel" />
-      )}
-    </span>
-  );
-}
-</file>
-
-<file path="components/dashboard/IncidentsPanel.tsx">
-import { Avatar } from "./Avatar";
-import {
-  incidentSeverityMeta,
-  incidentStatusMeta,
-  type Incident,
-  type Service,
-  type User,
-} from "@/types";
-import {
-  relativeTime,
-  statusBorderLeft,
-  statusChipBg,
-  statusText,
-} from "@/lib/style";
-
-const severityOrder = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
-
-interface IncidentsPanelProps {
-  incidents: Incident[];
-  services: Service[];
-  resolveUser: (id: string | null) => User | null;
-}
-
-export function IncidentsPanel({
-  incidents,
-  services,
-  resolveUser,
-}: IncidentsPanelProps) {
-  const sorted = [...incidents].sort(
-    (a, b) => severityOrder[a.severity] - severityOrder[b.severity],
-  );
-  const serviceById = Object.fromEntries(services.map((s) => [s.id, s]));
-
-  if (sorted.length === 0) {
-    return (
-      <div className="rounded-lg border border-line bg-panel p-5">
-        <div className="text-sm text-ink-dim">
-          No active incidents. Everything reporting normal.
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="rounded-lg border border-line bg-panel">
-      <div className="flex items-center justify-between border-b border-line px-4 py-3">
-        <h2 className="text-sm font-medium text-ink">Active incidents</h2>
-        <span className="text-xs text-ink-faint">Sorted by severity</span>
-      </div>
-
-      <ul>
-        {sorted.map((incident) => {
-          const sevMeta = incidentSeverityMeta[incident.severity];
-          const statusMeta = incidentStatusMeta[incident.status];
-          const responder = resolveUser(incident.responderId);
-          const affectedServices = incident.serviceIds
-            .map((id) => serviceById[id])
-            .filter((s): s is Service => Boolean(s));
-
-          return (
-            <li
-              key={incident.id}
-              className={`flex items-center gap-4 border-l-2 px-4 py-3 border-b border-line last:border-b-0 ${statusBorderLeft[sevMeta.color]}`}
-            >
-              <span
-                className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${statusChipBg[sevMeta.color]} ${statusText[sevMeta.color]}`}
-              >
-                {sevMeta.label}
-              </span>
-
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm text-ink">
-                  {incident.title}
-                </div>
-                <div className="mt-0.5 flex items-center gap-1.5 text-xs text-ink-faint">
-                  <span className={statusText[statusMeta.color]}>
-                    {statusMeta.label}
-                  </span>
-                  <span>·</span>
-                  <span>{relativeTime(incident.createdAt)}</span>
-                  {affectedServices.length > 0 && (
-                    <>
-                      <span>·</span>
-                      <span className="truncate">
-                        {affectedServices.map((s) => s.name).join(", ")}
-                      </span>
-                    </>
-                  )}
-                  {incident.ticketIds.length > 0 && (
-                    <>
-                      <span>·</span>
-                      <span>
-                        {incident.ticketIds.length}{" "}
-                        {incident.ticketIds.length === 1 ? "ticket" : "tickets"}
-                      </span>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {responder ? (
-                <Avatar
-                  initials={responder.initials}
-                  title={`${responder.name} responding`}
-                />
-              ) : (
-                <span className="shrink-0 text-xs text-ink-faint">
-                  Unassigned
-                </span>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-    </div>
-  );
 }
 </file>
 
@@ -594,388 +584,6 @@ export function LiveIndicator({ connected = true }: LiveIndicatorProps) {
       </span>
       Live
     </span>
-  );
-}
-</file>
-
-<file path="components/dashboard/PresenceRail.tsx">
-import { Avatar } from "./Avatar";
-import type { User } from "@/types";
-
-interface PresenceRailProps {
-  users: User[];
-  onlineIds: Set<string>;
-}
-
-export function PresenceRail({ users, onlineIds }: PresenceRailProps) {
-  const sorted = [...users].sort((a, b) => {
-    const aOnline = onlineIds.has(a.id) ? 0 : 1;
-    const bOnline = onlineIds.has(b.id) ? 0 : 1;
-    return aOnline - bOnline;
-  });
-
-  return (
-    <div className="rounded-lg border border-line bg-panel p-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-medium text-ink">Team</h2>
-        <span className="text-xs text-ink-faint">{onlineIds.size} online</span>
-      </div>
-
-      <ul className="mt-3 flex flex-col gap-2">
-        {sorted.map((user) => {
-          const online = onlineIds.has(user.id);
-          return (
-            <li key={user.id} className="flex items-center gap-2.5">
-              <Avatar initials={user.initials} online={online} />
-              <span
-                className={
-                  online ? "text-xs text-ink" : "text-xs text-ink-faint"
-                }
-              >
-                {user.name}
-              </span>
-            </li>
-          );
-        })}
-      </ul>
-    </div>
-  );
-}
-</file>
-
-<file path="components/dashboard/ServiceHealthGrid.tsx">
-import { serviceStatusMeta, type Service } from "@/types";
-import {
-  formatErrorRate,
-  relativeTime,
-  statusDot,
-  statusText,
-} from "@/lib/style";
-
-function Sparkline({ values, warn }: { values: number[]; warn: boolean }) {
-  if (values.length < 2) {
-    return <span className="text-xs text-ink-faint">—</span>;
-  }
-
-  const w = 64;
-  const h = 20;
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-  const points = values
-    .map((v, i) => {
-      const x = (i / (values.length - 1)) * w;
-      const y = h - ((v - min) / range) * h;
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
-
-  return (
-    <svg
-      width={w}
-      height={h}
-      viewBox={`0 0 ${w} ${h}`}
-      className="overflow-visible"
-    >
-      <polyline
-        points={points}
-        fill="none"
-        strokeWidth="1.5"
-        className={warn ? "stroke-warning" : "stroke-ink-faint"}
-      />
-    </svg>
-  );
-}
-
-export function ServiceHealthGrid({ services }: { services: Service[] }) {
-  return (
-    <div className="rounded-lg border border-line bg-panel">
-      <div className="flex items-center justify-between border-b border-line px-4 py-3">
-        <h2 className="text-sm font-medium text-ink">Service health</h2>
-        <span className="text-xs text-ink-faint">Trend is since page load</span>
-      </div>
-
-      <div className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2 lg:grid-cols-3">
-        {services.map((service) => {
-          const meta = serviceStatusMeta[service.status];
-          const warn = service.status !== "OPERATIONAL";
-
-          return (
-            <div key={service.id} className="bg-panel p-3.5">
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-ink">{service.name}</span>
-                <span
-                  className={`size-1.5 rounded-full ${statusDot[meta.color]}`}
-                />
-              </div>
-              <div className={`mt-0.5 text-xs ${statusText[meta.color]}`}>
-                {meta.label}
-              </div>
-
-              <div className="mt-3 flex items-end justify-between">
-                <div className="font-mono text-xs text-ink-dim tabular-nums space-y-1">
-                  <div>
-                    {service.status === "OUTAGE"
-                      ? "—"
-                      : `${service.latencyMs}ms`}
-                  </div>
-                  <div className={service.errorRate > 1 ? "text-warning" : ""}>
-                    {formatErrorRate(service.errorRate)} err
-                  </div>
-                </div>
-                <Sparkline values={service.sessionLatencyTrend} warn={warn} />
-              </div>
-
-              <div className="mt-2 text-[11px] text-ink-faint">
-                Updated {relativeTime(service.updatedAt)}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-</file>
-
-<file path="components/dashboard/StatRow.tsx">
-interface Stat {
-  label: string;
-  value: number;
-  tone?: "danger" | "warning";
-}
-
-export function StatRow({ stats }: { stats: Stat[] }) {
-  return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-      {stats.map((stat) => {
-        const alert = stat.tone && stat.value > 0;
-        return (
-          <div
-            key={stat.label}
-            className={
-              alert
-                ? `rounded-lg border p-3.5 ${
-                    stat.tone === "danger"
-                      ? "border-danger/25 bg-danger/6"
-                      : "border-warning/25 bg-warning/6"
-                  }`
-                : "rounded-lg border border-line bg-panel p-3.5"
-            }
-          >
-            <div className="text-xs text-ink-dim">{stat.label}</div>
-            <div
-              className={`mt-1 font-mono text-2xl font-medium tabular-nums ${
-                alert
-                  ? stat.tone === "danger"
-                    ? "text-danger"
-                    : "text-warning"
-                  : "text-ink"
-              }`}
-            >
-              {stat.value}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-</file>
-
-<file path="components/dashboard/TicketBoard.tsx">
-import { Avatar } from "./Avatar";
-import {
-  ticketPriorityMeta,
-  ticketStatusMeta,
-  type Ticket,
-  type TicketStatus,
-  type User,
-} from "@/types";
-import { statusDot } from "@/lib/style";
-
-const columns: TicketStatus[] = ["OPEN", "IN_PROGRESS", "BLOCKED", "RESOLVED"];
-
-interface TicketBoardProps {
-  tickets: Ticket[];
-  resolveUser: (id: string | null) => User | null;
-}
-
-export function TicketBoard({ tickets, resolveUser }: TicketBoardProps) {
-  return (
-    <div className="rounded-lg border border-line bg-panel">
-      <div className="border-b border-line px-4 py-3">
-        <h2 className="text-sm font-medium text-ink">Work</h2>
-      </div>
-
-      <div className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2 lg:grid-cols-4">
-        {columns.map((status) => {
-          const items = tickets.filter((t) => t.status === status);
-          const meta = ticketStatusMeta[status];
-
-          return (
-            <div key={status} className="bg-panel">
-              <div className="flex items-center gap-1.5 px-3 py-2.5">
-                <span
-                  className={`size-1.5 rounded-full ${statusDot[meta.color]}`}
-                />
-                <span className="text-xs font-medium text-ink-dim">
-                  {meta.label}
-                </span>
-                <span className="text-xs text-ink-faint">{items.length}</span>
-              </div>
-
-              <ul>
-                {items.map((ticket) => {
-                  const priority = ticketPriorityMeta[ticket.priority];
-                  const assignee = resolveUser(ticket.assigneeId);
-                  return (
-                    <li
-                      key={ticket.id}
-                      className="flex items-start gap-2 px-3 py-2 border-t border-line"
-                    >
-                      <span
-                        className={`mt-1 size-1.5 shrink-0 rounded-full ${statusDot[priority.color]}`}
-                        title={`${priority.label} priority`}
-                      />
-                      <span className="min-w-0 flex-1 text-xs leading-snug text-ink-dim">
-                        {ticket.title}
-                      </span>
-                      {assignee ? (
-                        <Avatar
-                          initials={assignee.initials}
-                          title={assignee.name}
-                        />
-                      ) : (
-                        <span className="size-6 shrink-0 rounded-full border border-dashed border-line-strong" />
-                      )}
-                    </li>
-                  );
-                })}
-                {items.length === 0 && (
-                  <li className="px-3 py-2 text-xs text-ink-faint border-t border-line">
-                    Nothing here
-                  </li>
-                )}
-              </ul>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-</file>
-
-<file path="components/dashboard/TopBar.tsx">
-"use client";
-
-import { useState } from "react";
-import Image from "next/image";
-import { ListIcon, XIcon } from "@phosphor-icons/react";
-import { Avatar } from "./Avatar";
-import { LiveIndicator } from "./LiveIndicator";
-import type { User } from "@/types";
-
-const navItems = [
-  { label: "Dashboard", active: true },
-  { label: "Tickets" },
-  { label: "Incidents" },
-  { label: "Services" },
-  { label: "Activity" },
-];
-
-export function TopBar({ orgName, self }: { orgName: string; self: User }) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const activeLabel = navItems.find((item) => item.active)?.label ?? "Menu";
-
-  return (
-    <header className="relative flex h-14 shrink-0 items-center justify-between gap-3 border-b border-line px-3 sm:px-6">
-      <div className="flex min-w-0 items-center gap-3 sm:gap-6">
-        <div className="flex shrink-0 items-center gap-2">
-          <span className="flex items-center justify-center size-5">
-            <Image
-              src="/assets/logo.png"
-              alt="Logo"
-              width={20}
-              height={20}
-              priority
-              className="size-5"
-            />
-          </span>
-          <span className="hidden text-sm font-medium text-ink sm:inline">
-            {orgName}
-          </span>
-        </div>
-
-        {/* Tablet and up: room for all five tabs side by side. */}
-        <nav className="hidden items-center gap-1 md:flex">
-          {navItems.map((item) => (
-            <span
-              key={item.label}
-              className={
-                item.active
-                  ? "rounded-md px-3 py-1.5 text-sm font-medium text-ink bg-panel-raised"
-                  : "rounded-md px-3 py-1.5 text-sm text-ink-dim hover:text-ink transition-colors"
-              }
-            >
-              {item.label}
-            </span>
-          ))}
-        </nav>
-
-        {/* Phone: one button naming the page you're on. Tap it to see the
-            other four — nothing to scroll to find, nothing squeezed. */}
-        <button
-          type="button"
-          onClick={() => setMenuOpen((open) => !open)}
-          aria-expanded={menuOpen}
-          aria-label="Open navigation menu"
-          className="flex items-center gap-1.5 rounded-md bg-panel-raised px-2.5 py-1.5 text-sm font-medium text-ink md:hidden"
-        >
-          {menuOpen ? (
-            <XIcon size={14} weight="bold" />
-          ) : (
-            <ListIcon size={14} weight="bold" />
-          )}
-          {activeLabel}
-        </button>
-      </div>
-
-      <div className="flex shrink-0 items-center gap-2 sm:gap-4">
-        <span className="hidden sm:block">
-          <LiveIndicator connected />
-        </span>
-        <Avatar initials={self.initials} online size="sm" title={self.name} />
-      </div>
-
-      {menuOpen && (
-        <>
-          {/* Invisible tap-outside-to-close catcher, not a page-darkening
-              overlay — this is a small menu, not a full mobile drawer. */}
-          <div
-            className="fixed inset-0 z-10 md:hidden"
-            onClick={() => setMenuOpen(false)}
-          />
-          <div className="absolute left-3 top-full z-20 mt-1.5 flex w-44 flex-col gap-0.5 rounded-lg border border-line bg-panel-raised p-1 shadow-lg md:hidden">
-            {navItems.map((item) => (
-              <button
-                key={item.label}
-                type="button"
-                onClick={() => setMenuOpen(false)}
-                className={
-                  item.active
-                    ? "rounded-md bg-panel px-3 py-2 text-left text-sm font-medium text-ink"
-                    : "rounded-md px-3 py-2 text-left text-sm text-ink-dim hover:text-ink"
-                }
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-    </header>
   );
 }
 </file>
@@ -2361,6 +1969,451 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 }
 </file>
 
+<file path="app/globals.css">
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-public-sans);
+  --font-mono: var(--font-jetbrains-mono);
+
+  /* Surfaces — dark ops console, warm-neutral rather than pure black */
+  --color-bg: #0a0b0d;
+  --color-panel: #131519;
+  --color-panel-raised: #191c21;
+  --color-line: rgba(237, 239, 242, 0.07);
+  --color-line-strong: rgba(237, 239, 242, 0.14);
+
+  /* Ink — text */
+  --color-ink: #edeff2;
+  --color-ink-dim: #9298a6;
+  --color-ink-faint: #5b6270;
+
+  /* Signal — Relay's single brand/live accent. Reserved for realtime
+     state (live dot, active nav, focus, links) and never used for
+     entity status, so it can't be confused with a semantic meaning. */
+  --color-signal: #3ee6cd;
+  --color-signal-dim: #123a34;
+
+  /* Status hues — each meaning gets exactly one color, used identically
+     across cards, chips, list rows, and the activity feed. */
+  --color-info: #5b8def;
+  --color-success: #33c481;
+  --color-warning: #f2a93b;
+  --color-danger: #ef5350;
+}
+
+body {
+  @apply font-sans bg-bg text-ink;
+}
+
+::selection {
+  background: var(--color-signal-dim);
+  color: var(--color-ink);
+}
+
+* {
+  scrollbar-color: var(--color-line-strong) transparent;
+}
+
+button {
+  @apply cursor-pointer;
+}
+</file>
+
+<file path="app/layout.tsx">
+import type { Metadata } from "next";
+import { Public_Sans, JetBrains_Mono } from "next/font/google";
+import "./globals.css";
+
+const publicSans = Public_Sans({
+  variable: "--font-public-sans",
+  subsets: ["latin"],
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  variable: "--font-jetbrains-mono",
+  subsets: ["latin"],
+});
+
+export const metadata: Metadata = {
+  title: "Relay",
+  description:
+    "Real-time ops console for tickets, incidents, and service health.",
+};
+
+export default function RootLayout({ children }: LayoutProps<"/">) {
+  return (
+    <html
+      lang="en"
+      className={`${publicSans.variable} ${jetbrainsMono.variable} h-full antialiased`}
+    >
+      <body className="h-full flex flex-col overflow-hidden">{children}</body>
+    </html>
+  );
+}
+</file>
+
+<file path="components/dashboard/Avatar.tsx">
+interface AvatarProps {
+  initials: string;
+  /** Stable per-person value (e.g. user.id) used to generate a consistent
+   *  avatar image. Omit to always show the initials fallback — e.g. for
+   *  "no such person" states like an unassigned ticket. */
+  seed?: string;
+  online?: boolean;
+  size?: "sm" | "md";
+  title?: string;
+}
+
+/** Deterministic, seed-based generated avatar (DiceBear "glass" set) so the
+ *  same person always gets the same image without storing or hosting real
+ *  photos — there are no real photos for these mock/demo people to begin
+ *  with. Swap this one line for a real `user.avatarUrl` when accounts have
+ *  actual uploaded photos; the initials fallback stays either way. */
+function avatarUrlFor(seed: string) {
+  return `https://api.dicebear.com/10.x/critters/svg?seed=${encodeURIComponent(seed)}`;
+}
+
+export function Avatar({
+  initials,
+  seed,
+  online,
+  size = "sm",
+  title,
+}: AvatarProps) {
+  const dimensions = size === "sm" ? "size-6 text-[10px]" : "size-8 text-xs";
+
+  return (
+    <span className="relative inline-flex shrink-0" title={title}>
+      {seed ? (
+        // Plain <img>, not next/image: these are third-party SVGs generated
+        // per-render from an external API, not local/optimizable assets.
+        <img
+          src={avatarUrlFor(seed)}
+          alt={title ?? initials}
+          className={`${dimensions} rounded-full bg-panel-raised object-cover ring-1 ring-line-strong`}
+        />
+      ) : (
+        <span
+          className={`${dimensions} inline-flex items-center justify-center rounded-full bg-panel-raised text-ink-dim font-medium ring-1 ring-line-strong`}
+        >
+          {initials}
+        </span>
+      )}
+      {online && (
+        <span className="absolute -bottom-0.5 -right-0.5 size-2 rounded-full bg-success ring-2 ring-panel" />
+      )}
+    </span>
+  );
+}
+</file>
+
+<file path="components/dashboard/IncidentsPanel.tsx">
+import { Avatar } from "./Avatar";
+import {
+  incidentSeverityMeta,
+  incidentStatusMeta,
+  type Incident,
+  type Service,
+  type User,
+} from "@/types";
+import {
+  relativeTime,
+  statusBorderLeft,
+  statusChipBg,
+  statusText,
+} from "@/lib/style";
+
+const severityOrder = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+
+interface IncidentsPanelProps {
+  incidents: Incident[];
+  services: Service[];
+  resolveUser: (id: string | null) => User | null;
+}
+
+export function IncidentsPanel({
+  incidents,
+  services,
+  resolveUser,
+}: IncidentsPanelProps) {
+  const sorted = [...incidents].sort(
+    (a, b) => severityOrder[a.severity] - severityOrder[b.severity],
+  );
+  const serviceById = Object.fromEntries(services.map((s) => [s.id, s]));
+
+  if (sorted.length === 0) {
+    return (
+      <div className="rounded-lg border border-line bg-panel p-5">
+        <div className="text-sm text-ink-dim">
+          No active incidents. Everything reporting normal.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-line bg-panel">
+      <div className="flex items-center justify-between border-b border-line px-4 py-3">
+        <h2 className="text-sm font-medium text-ink">Active incidents</h2>
+        <span className="text-xs text-ink-faint">Sorted by severity</span>
+      </div>
+
+      <ul>
+        {sorted.map((incident) => {
+          const sevMeta = incidentSeverityMeta[incident.severity];
+          const statusMeta = incidentStatusMeta[incident.status];
+          const responder = resolveUser(incident.responderId);
+          const affectedServices = incident.serviceIds
+            .map((id) => serviceById[id])
+            .filter((s): s is Service => Boolean(s));
+
+          return (
+            <li
+              key={incident.id}
+              className={`flex items-center gap-4 border-l-2 px-4 py-3 border-b border-line last:border-b-0 ${statusBorderLeft[sevMeta.color]}`}
+            >
+              <span
+                className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${statusChipBg[sevMeta.color]} ${statusText[sevMeta.color]}`}
+              >
+                {sevMeta.label}
+              </span>
+
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm text-ink">
+                  {incident.title}
+                </div>
+                <div className="mt-0.5 flex items-center gap-1.5 text-xs text-ink-faint">
+                  <span className={statusText[statusMeta.color]}>
+                    {statusMeta.label}
+                  </span>
+                  <span>·</span>
+                  <span>{relativeTime(incident.createdAt)}</span>
+                  {affectedServices.length > 0 && (
+                    <>
+                      <span>·</span>
+                      <span className="truncate">
+                        {affectedServices.map((s) => s.name).join(", ")}
+                      </span>
+                    </>
+                  )}
+                  {incident.ticketIds.length > 0 && (
+                    <>
+                      <span>·</span>
+                      <span>
+                        {incident.ticketIds.length}{" "}
+                        {incident.ticketIds.length === 1 ? "ticket" : "tickets"}
+                      </span>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {responder ? (
+                <Avatar
+                  initials={responder.initials}
+                  seed={responder.id}
+                  title={`${responder.name} responding`}
+                />
+              ) : (
+                <span className="shrink-0 text-xs text-ink-faint">
+                  Unassigned
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+</file>
+
+<file path="components/dashboard/PresenceRail.tsx">
+import { Avatar } from "./Avatar";
+import type { User } from "@/types";
+
+interface PresenceRailProps {
+  users: User[];
+  onlineIds: Set<string>;
+}
+
+export function PresenceRail({ users, onlineIds }: PresenceRailProps) {
+  const sorted = [...users].sort((a, b) => {
+    const aOnline = onlineIds.has(a.id) ? 0 : 1;
+    const bOnline = onlineIds.has(b.id) ? 0 : 1;
+    return aOnline - bOnline;
+  });
+
+  return (
+    <div className="rounded-lg border border-line bg-panel p-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-medium text-ink">Team</h2>
+        <span className="text-xs text-ink-faint">{onlineIds.size} online</span>
+      </div>
+
+      <ul className="mt-3 flex flex-col gap-2">
+        {sorted.map((user) => {
+          const online = onlineIds.has(user.id);
+          return (
+            <li key={user.id} className="flex items-center gap-2.5">
+              <Avatar initials={user.initials} seed={user.id} online={online} />
+              <span
+                className={
+                  online ? "text-xs text-ink" : "text-xs text-ink-faint"
+                }
+              >
+                {user.name}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+</file>
+
+<file path="components/dashboard/ServiceHealthGrid.tsx">
+import { serviceStatusMeta, type Service } from "@/types";
+import {
+  formatErrorRate,
+  relativeTime,
+  statusDot,
+  statusText,
+} from "@/lib/style";
+
+function Sparkline({ values, warn }: { values: number[]; warn: boolean }) {
+  if (values.length < 2) {
+    return <span className="text-xs text-ink-faint">—</span>;
+  }
+
+  const w = 64;
+  const h = 20;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const points = values
+    .map((v, i) => {
+      const x = (i / (values.length - 1)) * w;
+      const y = h - ((v - min) / range) * h;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+
+  return (
+    <svg
+      width={w}
+      height={h}
+      viewBox={`0 0 ${w} ${h}`}
+      className="overflow-visible"
+    >
+      <polyline
+        points={points}
+        fill="none"
+        strokeWidth="1.5"
+        className={warn ? "stroke-warning" : "stroke-ink-faint"}
+      />
+    </svg>
+  );
+}
+
+export function ServiceHealthGrid({ services }: { services: Service[] }) {
+  return (
+    <div className="rounded-lg border border-line bg-panel">
+      <div className="flex items-center justify-between border-b border-line px-4 py-3">
+        <h2 className="text-sm font-medium text-ink">Service health</h2>
+        <span className="text-xs text-ink-faint">Trend is since page load</span>
+      </div>
+
+      <div className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2 lg:grid-cols-3">
+        {services.map((service) => {
+          const meta = serviceStatusMeta[service.status];
+          const warn = service.status !== "OPERATIONAL";
+
+          return (
+            <div key={service.id} className="bg-panel p-3.5">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-ink">{service.name}</span>
+                <span
+                  className={`size-1.5 rounded-full ${statusDot[meta.color]}`}
+                />
+              </div>
+              <div className={`mt-0.5 text-xs ${statusText[meta.color]}`}>
+                {meta.label}
+              </div>
+
+              <div className="mt-3 flex items-end justify-between">
+                <div className="font-mono text-xs text-ink-dim tabular-nums space-y-1">
+                  <div>
+                    {service.status === "OUTAGE"
+                      ? "—"
+                      : `${service.latencyMs}ms`}
+                  </div>
+                  <div className={service.errorRate > 1 ? "text-warning" : ""}>
+                    {formatErrorRate(service.errorRate)} err
+                  </div>
+                </div>
+                <Sparkline values={service.sessionLatencyTrend} warn={warn} />
+              </div>
+
+              <div className="mt-2 text-[11px] text-ink-faint">
+                Updated {relativeTime(service.updatedAt)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+</file>
+
+<file path="components/dashboard/StatRow.tsx">
+interface Stat {
+  label: string;
+  value: number;
+  tone?: "danger" | "warning";
+}
+
+export function StatRow({ stats }: { stats: Stat[] }) {
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      {stats.map((stat) => {
+        const alert = stat.tone && stat.value > 0;
+        return (
+          <div
+            key={stat.label}
+            className={
+              alert
+                ? `rounded-lg border p-3.5 ${
+                    stat.tone === "danger"
+                      ? "border-danger/25 bg-danger/6"
+                      : "border-warning/25 bg-warning/6"
+                  }`
+                : "rounded-lg border border-line bg-panel p-3.5"
+            }
+          >
+            <div className="text-xs text-ink-dim">{stat.label}</div>
+            <div
+              className={`mt-1 font-mono text-2xl font-medium tabular-nums ${
+                alert
+                  ? stat.tone === "danger"
+                    ? "text-danger"
+                    : "text-warning"
+                  : "text-ink"
+              }`}
+            >
+              {stat.value}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+</file>
+
 <file path="package.json">
 {
   "name": "relay",
@@ -2397,6 +2450,249 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
     "typescript": "^5"
   },
   "packageManager": "yarn@4.12.0"
+}
+</file>
+
+<file path="components/dashboard/ActivityFeed.tsx">
+import { ArrowRight, Cpu } from "@phosphor-icons/react/ssr";
+import { Avatar } from "./Avatar";
+import {
+  incidentSeverityMeta,
+  incidentStatusMeta,
+  serviceStatusMeta,
+  ticketPriorityMeta,
+  ticketStatusMeta,
+  type Activity,
+  type User,
+} from "@/types";
+import { relativeTime } from "@/lib/style";
+
+// Activity metadata stores raw enum values (e.g. "IN_PROGRESS") as they're
+// persisted in the DB. Never show those directly — always translate through
+// the same label maps the rest of the dashboard uses, so the feed reads like
+// something a person wrote ("In progress") rather than a code left showing.
+type LabelMap = Record<string, { label: string }>;
+
+function humanize(value: unknown, labels?: LabelMap): string {
+  if (value == null) return "?";
+  const key = String(value);
+  return labels?.[key]?.label ?? key;
+}
+
+function Transition({
+  from,
+  to,
+  labels,
+}: {
+  from: unknown;
+  to: unknown;
+  labels?: LabelMap;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1 align-middle">
+      <span>{humanize(from, labels)}</span>
+      <ArrowRight size={11} weight="bold" className="text-ink-faint" />
+      <span>{humanize(to, labels)}</span>
+    </span>
+  );
+}
+
+function describe(activity: Activity) {
+  const m = activity.metadata ?? {};
+  switch (activity.action) {
+    case "TICKET_CREATED":
+      return <>opened &ldquo;{m.title ?? "a ticket"}&rdquo;</>;
+    case "TICKET_ASSIGNED":
+      return <>assigned this ticket to {m.assignee ?? "someone"}</>;
+    case "TICKET_STATUS_CHANGED":
+      return (
+        <>
+          moved a ticket{" "}
+          <Transition from={m.from} to={m.to} labels={ticketStatusMeta} />
+        </>
+      );
+    case "TICKET_PRIORITY_CHANGED":
+      return (
+        <>
+          changed ticket priority{" "}
+          <Transition from={m.from} to={m.to} labels={ticketPriorityMeta} />
+        </>
+      );
+    case "SERVICE_STATUS_CHANGED":
+      return (
+        <>
+          status changed{" "}
+          <Transition from={m.from} to={m.to} labels={serviceStatusMeta} />
+        </>
+      );
+    case "INCIDENT_CREATED":
+      return <>opened incident &ldquo;{m.title ?? ""}&rdquo;</>;
+    case "INCIDENT_STATUS_CHANGED":
+      return (
+        <>
+          moved incident{" "}
+          <Transition from={m.from} to={m.to} labels={incidentStatusMeta} />
+        </>
+      );
+    case "INCIDENT_SEVERITY_CHANGED":
+      return (
+        <>
+          changed severity{" "}
+          <Transition from={m.from} to={m.to} labels={incidentSeverityMeta} />
+        </>
+      );
+    case "INCIDENT_SERVICE_LINKED":
+      return <>linked a service to this incident</>;
+    case "INCIDENT_SERVICE_UNLINKED":
+      return <>unlinked a service from this incident</>;
+    case "INCIDENT_TICKET_LINKED":
+      return <>linked &ldquo;{m.ticketTitle ?? "a ticket"}&rdquo;</>;
+    case "INCIDENT_TICKET_UNLINKED":
+      return <>unlinked a ticket</>;
+    case "INCIDENT_RESOLVED":
+      return <>resolved &ldquo;{m.title ?? "an incident"}&rdquo;</>;
+    default:
+      return <>made a change</>;
+  }
+}
+
+interface ActivityFeedProps {
+  activities: Activity[];
+  resolveUser: (id: string | null) => User | null;
+}
+
+export function ActivityFeed({ activities, resolveUser }: ActivityFeedProps) {
+  const sorted = [...activities].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+
+  return (
+    <div className="rounded-lg border border-line bg-panel p-4">
+      <h2 className="text-sm font-medium text-ink">Activity</h2>
+
+      <ul className="mt-3 flex flex-col gap-3">
+        {sorted.map((activity) => {
+          const actor = resolveUser(activity.actorId);
+          return (
+            <li key={activity.id} className="flex items-start gap-2.5">
+              {actor ? (
+                <Avatar
+                  initials={actor.initials}
+                  seed={actor.id}
+                  title={actor.name}
+                />
+              ) : (
+                <span
+                  className="flex size-6 shrink-0 items-center justify-center rounded-full bg-panel-raised text-ink-faint"
+                  title="Telemetry"
+                >
+                  <Cpu size={12} weight="bold" />
+                </span>
+              )}
+              <div className="min-w-0 text-xs leading-snug">
+                <span className="text-ink-dim">
+                  <span
+                    className={actor ? "text-ink" : "text-ink-faint font-mono"}
+                  >
+                    {actor ? actor.name : "telemetry"}
+                  </span>{" "}
+                  {describe(activity)}
+                </span>
+                <div className="mt-0.5 text-[11px] text-ink-faint">
+                  {relativeTime(activity.createdAt)}
+                </div>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+</file>
+
+<file path="components/dashboard/TicketBoard.tsx">
+import { Avatar } from "./Avatar";
+import {
+  ticketPriorityMeta,
+  ticketStatusMeta,
+  type Ticket,
+  type TicketStatus,
+  type User,
+} from "@/types";
+import { statusDot } from "@/lib/style";
+
+const columns: TicketStatus[] = ["OPEN", "IN_PROGRESS", "BLOCKED", "RESOLVED"];
+
+interface TicketBoardProps {
+  tickets: Ticket[];
+  resolveUser: (id: string | null) => User | null;
+}
+
+export function TicketBoard({ tickets, resolveUser }: TicketBoardProps) {
+  return (
+    <div className="rounded-lg border border-line bg-panel">
+      <div className="border-b border-line px-4 py-3">
+        <h2 className="text-sm font-medium text-ink">Work</h2>
+      </div>
+
+      <div className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2 lg:grid-cols-4">
+        {columns.map((status) => {
+          const items = tickets.filter((t) => t.status === status);
+          const meta = ticketStatusMeta[status];
+
+          return (
+            <div key={status} className="bg-panel">
+              <div className="flex items-center gap-1.5 px-3 py-2.5">
+                <span
+                  className={`size-1.5 rounded-full ${statusDot[meta.color]}`}
+                />
+                <span className="text-xs font-medium text-ink-dim">
+                  {meta.label}
+                </span>
+                <span className="text-xs text-ink-faint">{items.length}</span>
+              </div>
+
+              <ul>
+                {items.map((ticket) => {
+                  const priority = ticketPriorityMeta[ticket.priority];
+                  const assignee = resolveUser(ticket.assigneeId);
+                  return (
+                    <li
+                      key={ticket.id}
+                      className="flex items-start gap-2 px-3 py-2 border-t border-line"
+                    >
+                      <span
+                        className={`mt-1 size-1.5 shrink-0 rounded-full ${statusDot[priority.color]}`}
+                        title={`${priority.label} priority`}
+                      />
+                      <span className="min-w-0 flex-1 text-xs leading-snug text-ink-dim">
+                        {ticket.title}
+                      </span>
+                      {assignee ? (
+                        <Avatar
+                          initials={assignee.initials}
+                          seed={assignee.id}
+                          title={assignee.name}
+                        />
+                      ) : (
+                        <span className="size-6 shrink-0 rounded-full border border-dashed border-line-strong" />
+                      )}
+                    </li>
+                  );
+                })}
+                {items.length === 0 && (
+                  <li className="px-3 py-2 text-xs text-ink-faint border-t border-line">
+                    Nothing here
+                  </li>
+                )}
+              </ul>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 </file>
 

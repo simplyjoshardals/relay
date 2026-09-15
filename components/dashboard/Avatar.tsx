@@ -15,7 +15,7 @@ interface AvatarProps {
  *  with. Swap this one line for a real `user.avatarUrl` when accounts have
  *  actual uploaded photos; the initials fallback stays either way. */
 function avatarUrlFor(seed: string) {
-  return `https://api.dicebear.com/10.x/dylan/svg?seed=${encodeURIComponent(seed)}`;
+  return `https://api.dicebear.com/10.x/critters/svg?seed=${encodeURIComponent(seed)}`;
 }
 
 export function Avatar({

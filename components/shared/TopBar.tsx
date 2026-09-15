@@ -2,22 +2,30 @@
 
 import { useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { ListIcon, XIcon } from "@phosphor-icons/react";
-import { Avatar } from "./Avatar";
-import { LiveIndicator } from "./LiveIndicator";
+import { Avatar } from "@/components/dashboard/Avatar";
+import { LiveIndicator } from "@/components/dashboard/LiveIndicator";
 import type { User } from "@/types";
+import { PATHS } from "@/utils/paths";
 
 const navItems = [
-  { label: "Dashboard", active: true },
-  { label: "Tickets" },
-  { label: "Incidents" },
-  { label: "Services" },
-  { label: "Activity" },
+  { label: "Dashboard", href: PATHS.DASHBOARD },
+  { label: "Tickets", href: PATHS.TICKETS },
+  { label: "Incidents", href: PATHS.INCIDENTS },
+  { label: "Services", href: PATHS.SERVICES },
+  { label: "Activity", href: PATHS.ACTIVITY },
 ];
 
 export function TopBar({ orgName, self }: { orgName: string; self: User }) {
+  const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
-  const activeLabel = navItems.find((item) => item.active)?.label ?? "Menu";
+
+  const isActive = (href: string) =>
+    pathname === href || pathname.startsWith(`${href}/`);
+  const activeLabel =
+    navItems.find((item) => isActive(item.href))?.label ?? "Menu";
 
   return (
     <header className="relative flex h-14 shrink-0 items-center justify-between gap-3 border-b border-line px-3 sm:px-6">
@@ -40,18 +48,22 @@ export function TopBar({ orgName, self }: { orgName: string; self: User }) {
 
         {/* Tablet and up: room for all five tabs side by side. */}
         <nav className="hidden items-center gap-1 md:flex">
-          {navItems.map((item) => (
-            <span
-              key={item.label}
-              className={
-                item.active
-                  ? "rounded-md px-3 py-1.5 text-sm font-medium text-ink bg-panel-raised"
-                  : "rounded-md px-3 py-1.5 text-sm text-ink-dim hover:text-ink transition-colors"
-              }
-            >
-              {item.label}
-            </span>
-          ))}
+          {navItems.map((item) => {
+            const active = isActive(item.href);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={
+                  active
+                    ? "rounded-md px-3 py-1.5 text-sm font-medium text-ink bg-panel-raised"
+                    : "rounded-md px-3 py-1.5 text-sm text-ink-dim hover:text-ink transition-colors"
+                }
+              >
+                {item.label}
+              </Link>
+            );
+          })}
         </nav>
 
         {/* Phone: one button naming the page you're on. Tap it to see the
@@ -92,20 +104,23 @@ export function TopBar({ orgName, self }: { orgName: string; self: User }) {
             onClick={() => setMenuOpen(false)}
           />
           <div className="absolute left-3 top-full z-20 mt-1.5 flex w-44 flex-col gap-0.5 rounded-lg border border-line bg-panel-raised p-1 shadow-lg md:hidden">
-            {navItems.map((item) => (
-              <button
-                key={item.label}
-                type="button"
-                onClick={() => setMenuOpen(false)}
-                className={
-                  item.active
-                    ? "rounded-md bg-panel px-3 py-2 text-left text-sm font-medium text-ink"
-                    : "rounded-md px-3 py-2 text-left text-sm text-ink-dim hover:text-ink"
-                }
-              >
-                {item.label}
-              </button>
-            ))}
+            {navItems.map((item) => {
+              const active = isActive(item.href);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={() => setMenuOpen(false)}
+                  className={
+                    active
+                      ? "rounded-md bg-panel px-3 py-2 text-left text-sm font-medium text-ink"
+                      : "rounded-md px-3 py-2 text-left text-sm text-ink-dim hover:text-ink"
+                  }
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
           </div>
         </>
       )}
