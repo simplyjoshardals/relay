@@ -1,8 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { MagnifyingGlassIcon } from "@phosphor-icons/react";
 import { Avatar } from "@/components/dashboard/Avatar";
+import { FilterPill } from "@/components/shared/FilterPill";
+import { SearchInput } from "@/components/shared/SearchInput";
 import {
   ticketPriorityMeta,
   ticketStatusMeta,
@@ -78,19 +79,11 @@ export function TicketsView({ tickets, resolveUser }: TicketsViewProps) {
             ))}
           </div>
 
-          <div className="relative w-full sm:w-64">
-            <MagnifyingGlassIcon
-              size={14}
-              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-faint"
-            />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search tickets"
-              className="w-full rounded-md border border-line bg-panel-raised py-1.5 pl-8 pr-3 text-sm text-ink placeholder:text-ink-faint focus:outline-none focus:ring-1 focus:ring-signal"
-            />
-          </div>
+          <SearchInput
+            value={search}
+            onChange={setSearch}
+            placeholder="Search tickets"
+          />
         </div>
 
         {filtered.length === 0 ? (
@@ -155,31 +148,5 @@ export function TicketsView({ tickets, resolveUser }: TicketsViewProps) {
         )}
       </div>
     </div>
-  );
-}
-
-function FilterPill({
-  active,
-  onClick,
-  label,
-  count,
-}: {
-  active: boolean;
-  onClick: () => void;
-  label: string;
-  count: number;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={
-        active
-          ? "rounded-md px-3 py-1.5 text-xs font-medium text-ink bg-panel-raised"
-          : "rounded-md px-3 py-1.5 text-xs text-ink-dim transition-colors hover:text-ink"
-      }
-    >
-      {label} <span className="text-ink-faint">{count}</span>
-    </button>
   );
 }
