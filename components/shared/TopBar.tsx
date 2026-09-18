@@ -7,10 +7,12 @@ import { usePathname } from "next/navigation";
 import { ListIcon, XIcon } from "@phosphor-icons/react";
 import { Avatar } from "@/components/dashboard/Avatar";
 import { LiveIndicator } from "@/components/dashboard/LiveIndicator";
+import { DevRoleSwitcher } from "@/components/shared/DevRoleSwitcher";
 import type { User } from "@/types";
+import { canManageTeam } from "@/lib/permissions";
 import { PATHS } from "@/utils/paths";
 
-const navItems = [
+const baseNavItems = [
   { label: "Dashboard", href: PATHS.DASHBOARD },
   { label: "Tickets", href: PATHS.TICKETS },
   { label: "Incidents", href: PATHS.INCIDENTS },
@@ -21,6 +23,15 @@ const navItems = [
 export function TopBar({ orgName, self }: { orgName: string; self: User }) {
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
+
+  // Team is the one nav-level permission boundary (README §3 / MVP RBAC
+  // — see ROADMAP_ROLES.md): Manager-only, hidden entirely for Member
+  // rather than shown disabled. The /team page itself also redirects a
+  // Member who visits it directly, so hiding the link is a UX nicety,
+  // not the actual enforcement.
+  const navItems = canManageTeam(self.role)
+    ? [...baseNavItems, { label: "Team", href: PATHS.TEAM }]
+    : baseNavItems;
 
   const isActive = (href: string) =>
     pathname === href || pathname.startsWith(`${href}/`);
@@ -86,6 +97,7 @@ export function TopBar({ orgName, self }: { orgName: string; self: User }) {
 
       <div className="flex shrink-0 items-center gap-2 sm:gap-4">
         <LiveIndicator connected />
+        <DevRoleSwitcher role={self.role} />
         <Avatar
           initials={self.initials}
           seed={self.id}

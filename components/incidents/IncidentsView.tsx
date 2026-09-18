@@ -1,15 +1,18 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { PlusIcon } from "@phosphor-icons/react";
 import { Avatar } from "@/components/dashboard/Avatar";
 import { FilterPill } from "@/components/shared/FilterPill";
 import { SearchInput } from "@/components/shared/SearchInput";
+import { IncidentModal } from "@/components/incidents/IncidentModal";
 import {
   incidentSeverityMeta,
   incidentStatusMeta,
   type Incident,
   type IncidentStatus,
   type Service,
+  type Ticket,
   type User,
 } from "@/types";
 import {
@@ -38,19 +41,43 @@ const statusFilters: IncidentStatus[] = [
 interface IncidentsViewProps {
   incidents: Incident[];
   services: Service[];
-  resolveUser: (id: string | null) => User | null;
+  tickets: Ticket[];
+  users: User[];
+  self: User;
 }
+
+type ModalState =
+  | { mode: "create" }
+  | { mode: "edit"; incident: Incident }
+  | null;
 
 export function IncidentsView({
   incidents,
   services,
-  resolveUser,
+  tickets,
+  users,
+  self,
 }: IncidentsViewProps) {
   const now = useNow();
+
+  // Built locally from `users` rather than taken as a `resolveUser`
+  // function prop — see the same comment in TicketsView for why (this
+  // page is a Server Component, and functions can't cross that boundary
+  // to a Client Component).
+  const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
+  const resolveUser = (id: string | null): User | null =>
+    id ? (userById.get(id) ?? null) : null;
+
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<IncidentStatus | "ALL">(
     "ALL",
   );
+  const [modalState, setModalState] = useState<ModalState>(null);
+
+  // Local-only, optimistic state — same reasoning as TicketsView: no
+  // backend yet (README §15 / ROADMAP_ROLES.md Phase 2), so mutations
+  // live here and reset on reload.
+  const [incidentList, setIncidentList] = useState(incidents);
 
   const serviceById = useMemo(
     () => Object.fromEntries(services.map((s) => [s.id, s])),
@@ -60,10 +87,10 @@ export function IncidentsView({
   const searched = useMemo(() => {
     const query = search.trim().toLowerCase();
 
-    if (!query) return incidents;
+    if (!query) return incidentList;
 
-    return incidents.filter((i) => i.title.toLowerCase().includes(query));
-  }, [incidents, search]);
+    return incidentList.filter((i) => i.title.toLowerCase().includes(query));
+  }, [incidentList, search]);
 
   const filtered = useMemo(() => {
     const byStatus =
@@ -97,15 +124,45 @@ export function IncidentsView({
     });
   }, [searched, statusFilter]);
 
-  const activeCount = incidents.filter((i) => i.status !== "RESOLVED").length;
+  const activeCount = incidentList.filter(
+    (i) => i.status !== "RESOLVED",
+  ).length;
+
+  const upsertIncident = (saved: Incident) => {
+    setIncidentList((prev) => {
+      const exists = prev.some((i) => i.id === saved.id);
+      return exists
+        ? prev.map((i) => (i.id === saved.id ? saved : i))
+        : [saved, ...prev];
+    });
+  };
+
+  const respond = (incident: Incident) => {
+    upsertIncident({
+      ...incident,
+      responderId: self.id,
+      version: incident.version + 1,
+    });
+  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
-      <div className="shrink-0">
-        <h1 className="text-lg font-medium text-ink">Incidents</h1>
-        <p className="text-sm text-ink-dim">
-          {activeCount} active · {incidents.length} total
-        </p>
+      <div className="flex shrink-0 items-center justify-between gap-3">
+        <div>
+          <h1 className="text-lg font-medium text-ink">Incidents</h1>
+          <p className="text-sm text-ink-dim">
+            {activeCount} active · {incidentList.length} total
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setModalState({ mode: "create" })}
+          className="flex shrink-0 items-center gap-1.5 rounded-md bg-ink px-3 py-1.5 text-sm font-medium text-bg transition-opacity hover:opacity-90"
+        >
+          <PlusIcon size={14} weight="bold" />
+          New incident
+        </button>
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-line bg-panel">
@@ -168,7 +225,16 @@ export function IncidentsView({
               return (
                 <li
                   key={incident.id}
-                  className={`flex items-center gap-4 border-l-2 border-b border-line px-4 py-3 last:border-b-0 transition-colors hover:bg-panel-raised ${statusBorderLeft[sevMeta.color]}`}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setModalState({ mode: "edit", incident })}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setModalState({ mode: "edit", incident });
+                    }
+                  }}
+                  className={`flex cursor-pointer items-center gap-4 border-l-2 border-b border-line px-4 py-3 last:border-b-0 transition-colors hover:bg-panel-raised ${statusBorderLeft[sevMeta.color]}`}
                 >
                   <span
                     className={`hidden shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium sm:inline-block ${statusChipBg[sevMeta.color]} ${statusText[sevMeta.color]}`}
@@ -239,10 +305,21 @@ export function IncidentsView({
                       seed={responder.id}
                       title={`${responder.name} responding`}
                     />
-                  ) : (
+                  ) : resolved ? (
                     <span className="shrink-0 text-xs text-ink-faint">
                       Unassigned
                     </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        respond(incident);
+                      }}
+                      className="shrink-0 rounded-full border border-dashed border-line-strong px-2 py-0.5 text-[11px] text-ink-faint transition-colors hover:border-signal hover:text-ink"
+                    >
+                      Respond
+                    </button>
                   )}
                 </li>
               );
@@ -250,6 +327,18 @@ export function IncidentsView({
           </ul>
         )}
       </div>
+
+      {modalState && (
+        <IncidentModal
+          incident={modalState.mode === "edit" ? modalState.incident : null}
+          services={services}
+          tickets={tickets}
+          users={users}
+          self={self}
+          onClose={() => setModalState(null)}
+          onSave={upsertIncident}
+        />
+      )}
     </div>
   );
 }

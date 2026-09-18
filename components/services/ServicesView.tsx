@@ -1,15 +1,19 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { PlusIcon } from "@phosphor-icons/react";
 import { FilterPill } from "@/components/shared/FilterPill";
 import { SearchInput } from "@/components/shared/SearchInput";
 import { Sparkline } from "@/components/shared/Sparkline";
+import { ServiceModal } from "@/components/services/ServiceModal";
+import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import {
   incidentSeverityMeta,
   serviceStatusMeta,
   type Incident,
   type Service,
   type ServiceStatus,
+  type User,
 } from "@/types";
 import {
   formatErrorRate,
@@ -19,6 +23,7 @@ import {
   statusText,
 } from "@/lib/style";
 import { useNow } from "@/lib/use-now";
+import { canManageServices } from "@/lib/permissions";
 
 const statusRank: Record<ServiceStatus, number> = {
   OUTAGE: 0,
@@ -31,14 +36,28 @@ const statusFilters: ServiceStatus[] = ["OPERATIONAL", "DEGRADED", "OUTAGE"];
 interface ServicesViewProps {
   services: Service[];
   incidents: Incident[];
+  self: User;
 }
 
-export function ServicesView({ services, incidents }: ServicesViewProps) {
+type ModalState =
+  | { mode: "create" }
+  | { mode: "edit"; service: Service }
+  | { mode: "confirm-remove"; service: Service }
+  | null;
+
+export function ServicesView({ services, incidents, self }: ServicesViewProps) {
   const now = useNow();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<ServiceStatus | "ALL">(
     "ALL",
   );
+  const [modalState, setModalState] = useState<ModalState>(null);
+
+  // Local-only, optimistic state — same reasoning as Tickets/Incidents:
+  // no backend yet, so mutations live here and reset on reload.
+  const [serviceList, setServiceList] = useState(services);
+
+  const canManage = canManageServices(self.role);
 
   const activeIncidentsByService = useMemo(() => {
     const map = new Map<string, Incident[]>();
@@ -60,14 +79,14 @@ export function ServicesView({ services, incidents }: ServicesViewProps) {
   const searched = useMemo(() => {
     const query = search.trim().toLowerCase();
 
-    if (!query) return services;
+    if (!query) return serviceList;
 
-    return services.filter(
+    return serviceList.filter(
       (s) =>
         s.name.toLowerCase().includes(query) ||
         s.description.toLowerCase().includes(query),
     );
-  }, [services, search]);
+  }, [serviceList, search]);
 
   const filtered = useMemo(() => {
     const byStatus =
@@ -84,19 +103,45 @@ export function ServicesView({ services, incidents }: ServicesViewProps) {
     });
   }, [searched, statusFilter]);
 
-  const unhealthyCount = services.filter(
+  const unhealthyCount = serviceList.filter(
     (s) => s.status !== "OPERATIONAL",
   ).length;
 
+  const upsertService = (saved: Service) => {
+    setServiceList((prev) => {
+      const exists = prev.some((s) => s.id === saved.id);
+      return exists
+        ? prev.map((s) => (s.id === saved.id ? saved : s))
+        : [saved, ...prev];
+    });
+  };
+
+  const removeService = (service: Service) => {
+    setServiceList((prev) => prev.filter((s) => s.id !== service.id));
+  };
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
-      <div className="shrink-0">
-        <h1 className="text-lg font-medium text-ink">Services</h1>
+      <div className="flex shrink-0 items-center justify-between gap-3">
+        <div>
+          <h1 className="text-lg font-medium text-ink">Services</h1>
 
-        <p className="text-sm text-ink-dim">
-          {services.length} monitored
-          {unhealthyCount > 0 && ` · ${unhealthyCount} degraded or down`}
-        </p>
+          <p className="text-sm text-ink-dim">
+            {serviceList.length} monitored
+            {unhealthyCount > 0 && ` · ${unhealthyCount} degraded or down`}
+          </p>
+        </div>
+
+        {canManage && (
+          <button
+            type="button"
+            onClick={() => setModalState({ mode: "create" })}
+            className="flex shrink-0 items-center gap-1.5 rounded-md bg-ink px-3 py-1.5 text-sm font-medium text-bg transition-opacity hover:opacity-90"
+          >
+            <PlusIcon size={14} weight="bold" />
+            New service
+          </button>
+        )}
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-line bg-panel">
@@ -145,7 +190,27 @@ export function ServicesView({ services, incidents }: ServicesViewProps) {
                   activeIncidentsByService.get(service.id) ?? [];
 
                 return (
-                  <div key={service.id} className="bg-panel p-4">
+                  <div
+                    key={service.id}
+                    role={canManage ? "button" : undefined}
+                    tabIndex={canManage ? 0 : undefined}
+                    onClick={
+                      canManage
+                        ? () => setModalState({ mode: "edit", service })
+                        : undefined
+                    }
+                    onKeyDown={
+                      canManage
+                        ? (e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              setModalState({ mode: "edit", service });
+                            }
+                          }
+                        : undefined
+                    }
+                    className={`bg-panel p-4 transition-colors ${canManage ? "cursor-pointer hover:bg-panel-raised" : ""}`}
+                  >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="truncate text-sm text-ink">
@@ -227,6 +292,32 @@ export function ServicesView({ services, incidents }: ServicesViewProps) {
           </div>
         )}
       </div>
+
+      {canManage &&
+        (modalState?.mode === "create" || modalState?.mode === "edit") && (
+          <ServiceModal
+            service={modalState.mode === "edit" ? modalState.service : null}
+            self={self}
+            onClose={() => setModalState(null)}
+            onSave={upsertService}
+            onRequestRemove={(service) =>
+              setModalState({ mode: "confirm-remove", service })
+            }
+          />
+        )}
+
+      {canManage && modalState?.mode === "confirm-remove" && (
+        <ConfirmDialog
+          title="Remove service?"
+          message={`This removes "${modalState.service.name}" from the catalog. There's no soft-delete yet, so this can't be undone.`}
+          confirmLabel="Remove service"
+          onConfirm={() => {
+            removeService(modalState.service);
+            setModalState(null);
+          }}
+          onCancel={() => setModalState(null)}
+        />
+      )}
     </div>
   );
 }

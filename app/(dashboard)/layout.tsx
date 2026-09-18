@@ -1,13 +1,18 @@
 import type { ReactNode } from "react";
 import { TopBar } from "@/components/shared/TopBar";
-import { currentOrgName, users } from "@/lib/mock-data";
+import { currentOrgName } from "@/lib/mock-data";
+import { getDevSelf } from "@/lib/dev-self";
 
 // TODO(milestone 9): self/org will come from the authenticated session
-// (README §16) once auth lands, rather than mock data — every route in
-// this group will then read the real signed-in user instead of `users[0]`.
+// (README §16) once auth lands, rather than the dev role-switch cookie —
+// getDevSelf() (lib/dev-self.ts) is the one place that'll need to change.
 
-export default function DashboardLayout({ children }: { children: ReactNode }) {
-  const self = users[0];
+export default async function DashboardLayout({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  const self = await getDevSelf();
 
   return (
     <div className="flex h-full flex-col">

@@ -4,4 +4,5 @@ export const PATHS = {
   INCIDENTS: "/incidents",
   SERVICES: "/services",
   ACTIVITY: "/activity",
+  TEAM: "/team",
 };

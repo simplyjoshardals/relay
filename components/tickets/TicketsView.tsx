@@ -1,9 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { PlusIcon } from "@phosphor-icons/react";
 import { Avatar } from "@/components/dashboard/Avatar";
 import { FilterPill } from "@/components/shared/FilterPill";
 import { SearchInput } from "@/components/shared/SearchInput";
+import { TicketModal } from "@/components/tickets/TicketModal";
 import {
   ticketPriorityMeta,
   ticketStatusMeta,
@@ -23,21 +25,41 @@ const statusColumns: TicketStatus[] = [
 
 interface TicketsViewProps {
   tickets: Ticket[];
-  resolveUser: (id: string | null) => User | null;
+  users: User[];
+  self: User;
 }
 
-export function TicketsView({ tickets, resolveUser }: TicketsViewProps) {
+type ModalState = { mode: "create" } | { mode: "edit"; ticket: Ticket } | null;
+
+export function TicketsView({ tickets, users, self }: TicketsViewProps) {
   const now = useNow();
+
+  // Built locally from `users` rather than taken as a `resolveUser`
+  // function prop: this component's parent page is a Server Component
+  // (it needs to read the dev-self cookie), and a plain function can't
+  // be passed across the server/client boundary — only serializable data
+  // like `users` can. Same reasoning applies to IncidentsView.
+  const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
+  const resolveUser = (id: string | null): User | null =>
+    id ? (userById.get(id) ?? null) : null;
+
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<TicketStatus | "ALL">("ALL");
+  const [modalState, setModalState] = useState<ModalState>(null);
+
+  // Local-only, optimistic state — there's no backend yet (README §15 /
+  // ROADMAP_ROLES.md Phase 2), so mutations live here and reset on
+  // reload. The `tickets` prop still seeds the initial list from
+  // mock-data so a hard navigation looks the same as before.
+  const [ticketList, setTicketList] = useState(tickets);
 
   const searched = useMemo(() => {
     const query = search.trim().toLowerCase();
 
-    if (!query) return tickets;
+    if (!query) return ticketList;
 
-    return tickets.filter((t) => t.title.toLowerCase().includes(query));
-  }, [tickets, search]);
+    return ticketList.filter((t) => t.title.toLowerCase().includes(query));
+  }, [ticketList, search]);
 
   const filtered = useMemo(() => {
     const byStatus =
@@ -51,13 +73,42 @@ export function TicketsView({ tickets, resolveUser }: TicketsViewProps) {
     );
   }, [searched, statusFilter]);
 
+  const upsertTicket = (saved: Ticket) => {
+    setTicketList((prev) => {
+      const exists = prev.some((t) => t.id === saved.id);
+      return exists
+        ? prev.map((t) => (t.id === saved.id ? saved : t))
+        : [saved, ...prev];
+    });
+  };
+
+  const assignToMe = (ticket: Ticket) => {
+    upsertTicket({
+      ...ticket,
+      assigneeId: self.id,
+      version: ticket.version + 1,
+      updatedAt: new Date().toISOString(),
+    });
+  };
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
-      <div className="shrink-0">
-        <h1 className="text-lg font-medium text-ink">Tickets</h1>
-        <p className="text-sm text-ink-dim">
-          {tickets.length} {tickets.length === 1 ? "ticket" : "tickets"}
-        </p>
+      <div className="flex shrink-0 items-center justify-between gap-3">
+        <div>
+          <h1 className="text-lg font-medium text-ink">Tickets</h1>
+          <p className="text-sm text-ink-dim">
+            {ticketList.length} {ticketList.length === 1 ? "ticket" : "tickets"}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setModalState({ mode: "create" })}
+          className="flex shrink-0 items-center gap-1.5 rounded-md bg-ink px-3 py-1.5 text-sm font-medium text-bg transition-opacity hover:opacity-90"
+        >
+          <PlusIcon size={14} weight="bold" />
+          New ticket
+        </button>
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-line bg-panel">
@@ -104,7 +155,16 @@ export function TicketsView({ tickets, resolveUser }: TicketsViewProps) {
               return (
                 <li
                   key={ticket.id}
-                  className="flex items-center gap-3 border-b border-line px-4 py-3 last:border-b-0 transition-colors hover:bg-panel-raised"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setModalState({ mode: "edit", ticket })}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setModalState({ mode: "edit", ticket });
+                    }
+                  }}
+                  className="flex cursor-pointer items-center gap-3 border-b border-line px-4 py-3 last:border-b-0 transition-colors hover:bg-panel-raised"
                 >
                   <span
                     className={`size-1.5 shrink-0 rounded-full ${statusDot[priorityMeta.color]}`}
@@ -142,7 +202,16 @@ export function TicketsView({ tickets, resolveUser }: TicketsViewProps) {
                       title={assignee.name}
                     />
                   ) : (
-                    <span className="size-6 shrink-0 rounded-full border border-dashed border-line-strong" />
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        assignToMe(ticket);
+                      }}
+                      className="shrink-0 rounded-full border border-dashed border-line-strong px-2 py-0.5 text-[11px] text-ink-faint transition-colors hover:border-signal hover:text-ink"
+                    >
+                      Assign to me
+                    </button>
                   )}
                 </li>
               );
@@ -150,6 +219,16 @@ export function TicketsView({ tickets, resolveUser }: TicketsViewProps) {
           </ul>
         )}
       </div>
+
+      {modalState && (
+        <TicketModal
+          ticket={modalState.mode === "edit" ? modalState.ticket : null}
+          users={users}
+          self={self}
+          onClose={() => setModalState(null)}
+          onSave={upsertTicket}
+        />
+      )}
     </div>
   );
 }
