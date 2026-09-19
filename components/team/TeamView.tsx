@@ -7,6 +7,7 @@ import { SearchInput } from "@/components/shared/SearchInput";
 import { SelectField } from "@/components/shared/SelectField";
 import { TeamInviteModal } from "@/components/team/TeamInviteModal";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
+import { useToast } from "@/components/shared/Toast";
 import type { Role, User } from "@/types";
 
 interface TeamViewProps {
@@ -26,6 +27,7 @@ const roleOptions: { value: Role; label: string }[] = [
  *  whose label changes when you click it twice. Same local-only caveat
  *  as the other domains: no backend yet, changes here reset on reload. */
 export function TeamView({ users, self }: TeamViewProps) {
+  const toast = useToast();
   const [search, setSearch] = useState("");
   const [inviting, setInviting] = useState(false);
   const [removeCandidate, setRemoveCandidate] = useState<User | null>(null);
@@ -50,14 +52,19 @@ export function TeamView({ users, self }: TeamViewProps) {
     setUserList((prev) =>
       prev.map((u) => (u.id === user.id ? { ...u, role } : u)),
     );
+    toast.show(
+      `${user.name}'s role changed to ${role === "MANAGER" ? "Manager" : "Member"}`,
+    );
   };
 
   const addMember = (user: User) => {
     setUserList((prev) => [user, ...prev]);
+    toast.show(`${user.name} added to the team`);
   };
 
   const removeMember = (user: User) => {
     setUserList((prev) => prev.filter((u) => u.id !== user.id));
+    toast.show(`${user.name} removed from the team`);
   };
 
   return (

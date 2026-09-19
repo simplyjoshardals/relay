@@ -1,5 +1,7 @@
 import { redirect } from "next/navigation";
+import { hasDevSession } from "@/lib/dev-self";
+import { PATHS } from "@/utils/paths";
 
-export default function RootPage() {
-  redirect("/dashboard");
+export default async function RootPage() {
+  redirect((await hasDevSession()) ? PATHS.DASHBOARD : PATHS.LOGIN);
 }

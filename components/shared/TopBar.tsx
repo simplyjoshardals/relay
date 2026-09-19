@@ -4,12 +4,13 @@ import { useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ListIcon, XIcon } from "@phosphor-icons/react";
+import { ListIcon, SignOutIcon, XIcon } from "@phosphor-icons/react";
 import { Avatar } from "@/components/dashboard/Avatar";
 import { LiveIndicator } from "@/components/dashboard/LiveIndicator";
 import { DevRoleSwitcher } from "@/components/shared/DevRoleSwitcher";
 import type { User } from "@/types";
 import { canManageTeam } from "@/lib/permissions";
+import { signOutAction } from "@/lib/dev-auth-actions";
 import { PATHS } from "@/utils/paths";
 
 const baseNavItems = [
@@ -105,6 +106,16 @@ export function TopBar({ orgName, self }: { orgName: string; self: User }) {
           size="sm"
           title={self.name}
         />
+        <form action={signOutAction}>
+          <button
+            type="submit"
+            title="Sign out"
+            aria-label="Sign out"
+            className="flex items-center justify-center rounded-md p-1.5 text-ink-faint transition-colors hover:text-ink"
+          >
+            <SignOutIcon size={16} />
+          </button>
+        </form>
       </div>
 
       {menuOpen && (

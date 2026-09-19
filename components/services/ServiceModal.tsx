@@ -11,11 +11,12 @@ interface ServiceModalProps {
   self: User;
   onClose: () => void;
   onSave: (service: Service) => void;
-  /** Asks the caller (ServicesView) to switch to a confirm-remove step —
-   *  this modal doesn't own that flow itself, see ServicesView's comment
-   *  on why removal gets its own dedicated confirmation modal instead of
-   *  an in-place button swap. */
-  onRequestRemove: (service: Service) => void;
+  /** Asks the caller (ServicesView) to switch to an archive-confirm step
+   *  before this modal's own onSave applies the change. Only called for
+   *  archiving (going false → true) — restoring (true → false) doesn't
+   *  need a confirm step, since it's not the action that hides a
+   *  service from the default view. */
+  onRequestArchive: (service: Service) => void;
 }
 
 /** Create-or-edit form for a service *catalog entry* — name and
@@ -24,13 +25,18 @@ interface ServiceModalProps {
  *  deliberately not editable here; Manager manages which services exist,
  *  not their live health numbers. A brand-new service gets OPERATIONAL /
  *  zeroed metrics as a placeholder until real telemetry exists to report
- *  otherwise. */
+ *  otherwise.
+ *
+ *  There's no delete here — README §19 is explicit that services (like
+ *  tickets and incidents) are never hard-deleted in the MVP, only
+ *  archived. Archiving just hides a service from the default view; the
+ *  record, and anything historical referencing it, stays intact. */
 export function ServiceModal({
   service,
   self,
   onClose,
   onSave,
-  onRequestRemove,
+  onRequestArchive,
 }: ServiceModalProps) {
   const isCreate = service === null;
 
@@ -55,6 +61,7 @@ export function ServiceModal({
             errorRate: 0,
             version: 1,
             updatedAt: now,
+            archived: false,
             sessionLatencyTrend: [],
           }
         : {
@@ -68,15 +75,28 @@ export function ServiceModal({
     onClose();
   };
 
+  const handleRestore = () => {
+    if (!service) return;
+    onSave({
+      ...service,
+      archived: false,
+      version: service.version + 1,
+      updatedAt: new Date().toISOString(),
+    });
+    onClose();
+  };
+
   const footer = (
     <div className="flex items-center justify-between gap-2">
       {!isCreate ? (
         <button
           type="button"
-          onClick={() => onRequestRemove(service)}
-          className="rounded-md px-3 py-1.5 text-sm text-ink-faint transition-colors hover:text-danger"
+          onClick={() =>
+            service.archived ? handleRestore() : onRequestArchive(service)
+          }
+          className="rounded-md px-3 py-1.5 text-sm text-ink-faint transition-colors hover:text-ink"
         >
-          Remove service
+          {service.archived ? "Restore service" : "Archive service"}
         </button>
       ) : (
         <span />
@@ -109,6 +129,13 @@ export function ServiceModal({
       footer={footer}
     >
       <div className="flex flex-col gap-3">
+        {!isCreate && service.archived && (
+          <p className="rounded-md bg-panel-raised px-2.5 py-1.5 text-xs text-ink-faint">
+            This service is archived — hidden from the default view, but its
+            history is still intact. Restore it to monitor it again.
+          </p>
+        )}
+
         <TextField
           label="Name"
           autoFocus

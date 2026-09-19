@@ -63,6 +63,7 @@ export const services: Service[] = [
     errorRate: 0.12,
     version: 14,
     updatedAt: minutesAgo(2),
+    archived: false,
     sessionLatencyTrend: [112, 115, 109, 121, 118],
   },
   {
@@ -75,6 +76,7 @@ export const services: Service[] = [
     errorRate: 4.86,
     version: 27,
     updatedAt: minutesAgo(1),
+    archived: false,
     sessionLatencyTrend: [190, 205, 260, 310, 342],
   },
   {
@@ -87,6 +89,7 @@ export const services: Service[] = [
     errorRate: 0.04,
     version: 9,
     updatedAt: minutesAgo(4),
+    archived: false,
     sessionLatencyTrend: [80, 78, 74, 77, 76],
   },
   {
@@ -99,6 +102,7 @@ export const services: Service[] = [
     errorRate: 0.31,
     version: 22,
     updatedAt: minutesAgo(6),
+    archived: false,
     sessionLatencyTrend: [198, 210, 205, 200, 203],
   },
   {
@@ -111,6 +115,7 @@ export const services: Service[] = [
     errorRate: 100,
     version: 31,
     updatedAt: minutesAgo(3),
+    archived: false,
     sessionLatencyTrend: [220, 890, 0, 0, 0],
   },
   {
@@ -123,6 +128,7 @@ export const services: Service[] = [
     errorRate: 0.08,
     version: 11,
     updatedAt: minutesAgo(9),
+    archived: false,
     sessionLatencyTrend: [150, 148, 144, 146, 145],
   },
 ];

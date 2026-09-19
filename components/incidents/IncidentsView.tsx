@@ -6,6 +6,7 @@ import { Avatar } from "@/components/dashboard/Avatar";
 import { FilterPill } from "@/components/shared/FilterPill";
 import { SearchInput } from "@/components/shared/SearchInput";
 import { IncidentModal } from "@/components/incidents/IncidentModal";
+import { useToast } from "@/components/shared/Toast";
 import {
   incidentSeverityMeta,
   incidentStatusMeta,
@@ -59,6 +60,7 @@ export function IncidentsView({
   self,
 }: IncidentsViewProps) {
   const now = useNow();
+  const toast = useToast();
 
   // Built locally from `users` rather than taken as a `resolveUser`
   // function prop — see the same comment in TicketsView for why (this
@@ -128,7 +130,7 @@ export function IncidentsView({
     (i) => i.status !== "RESOLVED",
   ).length;
 
-  const upsertIncident = (saved: Incident) => {
+  const applyIncident = (saved: Incident) => {
     setIncidentList((prev) => {
       const exists = prev.some((i) => i.id === saved.id);
       return exists
@@ -137,12 +139,19 @@ export function IncidentsView({
     });
   };
 
+  const upsertIncident = (saved: Incident) => {
+    const isNew = !incidentList.some((i) => i.id === saved.id);
+    applyIncident(saved);
+    toast.show(isNew ? "Incident created" : "Incident updated");
+  };
+
   const respond = (incident: Incident) => {
-    upsertIncident({
+    applyIncident({
       ...incident,
       responderId: self.id,
       version: incident.version + 1,
     });
+    toast.show("You're responding");
   };
 
   return (

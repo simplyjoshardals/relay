@@ -66,6 +66,10 @@ export interface Service {
   errorRate: number;
   version: number;
   updatedAt: string;
+  /** README §19: services are never hard-deleted in the MVP, only
+   *  archived — the record (and any incident history referencing it)
+   *  stays intact. Archived services are hidden from the default view. */
+  archived: boolean;
   /** Not a persisted column — buffered client-side from realtime updates
    *  received since the page loaded. Empty on a fresh load. See dashboard
    *  design note on service history. */

@@ -6,6 +6,7 @@ import { Avatar } from "@/components/dashboard/Avatar";
 import { FilterPill } from "@/components/shared/FilterPill";
 import { SearchInput } from "@/components/shared/SearchInput";
 import { TicketModal } from "@/components/tickets/TicketModal";
+import { useToast } from "@/components/shared/Toast";
 import {
   ticketPriorityMeta,
   ticketStatusMeta,
@@ -33,6 +34,7 @@ type ModalState = { mode: "create" } | { mode: "edit"; ticket: Ticket } | null;
 
 export function TicketsView({ tickets, users, self }: TicketsViewProps) {
   const now = useNow();
+  const toast = useToast();
 
   // Built locally from `users` rather than taken as a `resolveUser`
   // function prop: this component's parent page is a Server Component
@@ -73,7 +75,7 @@ export function TicketsView({ tickets, users, self }: TicketsViewProps) {
     );
   }, [searched, statusFilter]);
 
-  const upsertTicket = (saved: Ticket) => {
+  const applyTicket = (saved: Ticket) => {
     setTicketList((prev) => {
       const exists = prev.some((t) => t.id === saved.id);
       return exists
@@ -82,13 +84,20 @@ export function TicketsView({ tickets, users, self }: TicketsViewProps) {
     });
   };
 
+  const upsertTicket = (saved: Ticket) => {
+    const isNew = !ticketList.some((t) => t.id === saved.id);
+    applyTicket(saved);
+    toast.show(isNew ? "Ticket created" : "Ticket updated");
+  };
+
   const assignToMe = (ticket: Ticket) => {
-    upsertTicket({
+    applyTicket({
       ...ticket,
       assigneeId: self.id,
       version: ticket.version + 1,
       updatedAt: new Date().toISOString(),
     });
+    toast.show("Assigned to you");
   };
 
   return (

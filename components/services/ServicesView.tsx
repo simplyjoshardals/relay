@@ -7,6 +7,7 @@ import { SearchInput } from "@/components/shared/SearchInput";
 import { Sparkline } from "@/components/shared/Sparkline";
 import { ServiceModal } from "@/components/services/ServiceModal";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
+import { useToast } from "@/components/shared/Toast";
 import {
   incidentSeverityMeta,
   serviceStatusMeta,
@@ -42,15 +43,17 @@ interface ServicesViewProps {
 type ModalState =
   | { mode: "create" }
   | { mode: "edit"; service: Service }
-  | { mode: "confirm-remove"; service: Service }
+  | { mode: "confirm-archive"; service: Service }
   | null;
 
 export function ServicesView({ services, incidents, self }: ServicesViewProps) {
   const now = useNow();
+  const toast = useToast();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<ServiceStatus | "ALL">(
     "ALL",
   );
+  const [showArchived, setShowArchived] = useState(false);
   const [modalState, setModalState] = useState<ModalState>(null);
 
   // Local-only, optimistic state — same reasoning as Tickets/Incidents:
@@ -76,17 +79,28 @@ export function ServicesView({ services, incidents, self }: ServicesViewProps) {
     return map;
   }, [incidents]);
 
+  // Archived services never appear at all for Member — the toggle to see
+  // them only exists for Manager, since only Manager can act on them
+  // (restore). README §19: archiving hides from the default view without
+  // destroying the record, unlike the hard-delete this replaced.
+  const unarchived = useMemo(
+    () => serviceList.filter((s) => !s.archived),
+    [serviceList],
+  );
+  const archivedCount = serviceList.length - unarchived.length;
+  const baseList = canManage && showArchived ? serviceList : unarchived;
+
   const searched = useMemo(() => {
     const query = search.trim().toLowerCase();
 
-    if (!query) return serviceList;
+    if (!query) return baseList;
 
-    return serviceList.filter(
+    return baseList.filter(
       (s) =>
         s.name.toLowerCase().includes(query) ||
         s.description.toLowerCase().includes(query),
     );
-  }, [serviceList, search]);
+  }, [baseList, search]);
 
   const filtered = useMemo(() => {
     const byStatus =
@@ -95,6 +109,8 @@ export function ServicesView({ services, incidents, self }: ServicesViewProps) {
         : searched.filter((s) => s.status === statusFilter);
 
     return [...byStatus].sort((a, b) => {
+      if (a.archived !== b.archived) return a.archived ? 1 : -1;
+
       const byStatusRank = statusRank[a.status] - statusRank[b.status];
 
       if (byStatusRank !== 0) return byStatusRank;
@@ -103,11 +119,11 @@ export function ServicesView({ services, incidents, self }: ServicesViewProps) {
     });
   }, [searched, statusFilter]);
 
-  const unhealthyCount = serviceList.filter(
+  const unhealthyCount = unarchived.filter(
     (s) => s.status !== "OPERATIONAL",
   ).length;
 
-  const upsertService = (saved: Service) => {
+  const applyService = (saved: Service) => {
     setServiceList((prev) => {
       const exists = prev.some((s) => s.id === saved.id);
       return exists
@@ -116,8 +132,30 @@ export function ServicesView({ services, incidents, self }: ServicesViewProps) {
     });
   };
 
-  const removeService = (service: Service) => {
-    setServiceList((prev) => prev.filter((s) => s.id !== service.id));
+  const upsertService = (saved: Service) => {
+    const previous = serviceList.find((s) => s.id === saved.id);
+    const isNew = !previous;
+    const isRestore = previous?.archived === true && !saved.archived;
+
+    applyService(saved);
+
+    toast.show(
+      isNew
+        ? "Service added"
+        : isRestore
+          ? "Service restored"
+          : "Service updated",
+    );
+  };
+
+  const archiveService = (service: Service) => {
+    applyService({
+      ...service,
+      archived: true,
+      version: service.version + 1,
+      updatedAt: new Date().toISOString(),
+    });
+    toast.show("Service archived");
   };
 
   return (
@@ -127,7 +165,7 @@ export function ServicesView({ services, incidents, self }: ServicesViewProps) {
           <h1 className="text-lg font-medium text-ink">Services</h1>
 
           <p className="text-sm text-ink-dim">
-            {serviceList.length} monitored
+            {unarchived.length} monitored
             {unhealthyCount > 0 && ` · ${unhealthyCount} degraded or down`}
           </p>
         </div>
@@ -164,6 +202,15 @@ export function ServicesView({ services, incidents, self }: ServicesViewProps) {
                   count={searched.filter((s) => s.status === status).length}
                 />
               ))}
+
+              {canManage && archivedCount > 0 && (
+                <FilterPill
+                  active={showArchived}
+                  onClick={() => setShowArchived((v) => !v)}
+                  label="Archived"
+                  count={archivedCount}
+                />
+              )}
             </div>
 
             <SearchInput
@@ -209,7 +256,7 @@ export function ServicesView({ services, incidents, self }: ServicesViewProps) {
                           }
                         : undefined
                     }
-                    className={`bg-panel p-4 transition-colors ${canManage ? "cursor-pointer hover:bg-panel-raised" : ""}`}
+                    className={`bg-panel p-4 transition-colors ${canManage ? "cursor-pointer hover:bg-panel-raised" : ""} ${service.archived ? "opacity-50" : ""}`}
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
@@ -222,15 +269,21 @@ export function ServicesView({ services, incidents, self }: ServicesViewProps) {
                         </div>
                       </div>
 
-                      <span
-                        className={`flex shrink-0 items-center gap-1.5 rounded px-1.5 py-0.5 text-[11px] font-medium ${statusChipBg[meta.color]} ${statusText[meta.color]}`}
-                      >
+                      {service.archived ? (
+                        <span className="shrink-0 rounded bg-panel-raised px-1.5 py-0.5 text-[11px] font-medium text-ink-faint">
+                          Archived
+                        </span>
+                      ) : (
                         <span
-                          className={`size-1.5 rounded-full ${statusDot[meta.color]}`}
-                        />
+                          className={`flex shrink-0 items-center gap-1.5 rounded px-1.5 py-0.5 text-[11px] font-medium ${statusChipBg[meta.color]} ${statusText[meta.color]}`}
+                        >
+                          <span
+                            className={`size-1.5 rounded-full ${statusDot[meta.color]}`}
+                          />
 
-                        {meta.label}
-                      </span>
+                          {meta.label}
+                        </span>
+                      )}
                     </div>
 
                     <div className="mt-3 flex items-end justify-between">
@@ -300,19 +353,20 @@ export function ServicesView({ services, incidents, self }: ServicesViewProps) {
             self={self}
             onClose={() => setModalState(null)}
             onSave={upsertService}
-            onRequestRemove={(service) =>
-              setModalState({ mode: "confirm-remove", service })
+            onRequestArchive={(service) =>
+              setModalState({ mode: "confirm-archive", service })
             }
           />
         )}
 
-      {canManage && modalState?.mode === "confirm-remove" && (
+      {canManage && modalState?.mode === "confirm-archive" && (
         <ConfirmDialog
-          title="Remove service?"
-          message={`This removes "${modalState.service.name}" from the catalog. There's no soft-delete yet, so this can't be undone.`}
-          confirmLabel="Remove service"
+          title="Archive service?"
+          message={`"${modalState.service.name}" will be hidden from the default view and won't be monitored going forward. Nothing is deleted — you can restore it any time from the Archived filter.`}
+          confirmLabel="Archive service"
+          destructive={false}
           onConfirm={() => {
-            removeService(modalState.service);
+            archiveService(modalState.service);
             setModalState(null);
           }}
           onCancel={() => setModalState(null)}
