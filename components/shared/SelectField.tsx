@@ -34,7 +34,7 @@ export function SelectField({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
-        className="rounded-md border border-line bg-panel-raised px-2.5 py-1.5 text-sm text-ink focus:outline-none focus:ring-1 focus:ring-signal disabled:opacity-50"
+        className="rounded-md border border-line bg-panel-raised px-2.5 py-1.5 text-sm text-ink focus:outline-none focus:ring-1 focus:ring-inset focus:ring-signal disabled:opacity-50"
       >
         {options.map((option) => (
           <option key={option.value} value={option.value}>

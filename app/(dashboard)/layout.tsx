@@ -3,30 +3,28 @@ import { redirect } from "next/navigation";
 import { TopBar } from "@/components/shared/TopBar";
 import { ToastProvider } from "@/components/shared/Toast";
 import { currentOrgName } from "@/lib/mock-data";
-import { getDevSelf, hasDevSession } from "@/lib/dev-self";
+import { getCurrentUser } from "@/server/auth/session";
 import { PATHS } from "@/utils/paths";
 
-// TODO(milestone 9): self/org will come from the authenticated session
-// (README §16) once auth lands, rather than the dev role-switch cookie —
-// getDevSelf() (lib/dev-self.ts) is the one place that'll need to change.
-//
-// The hasDevSession() check below is the actual sign-in gate — it
+// The getCurrentUser() check below is the actual sign-in gate — it
 // protects every route in this group even on a direct navigation (typing
 // /tickets straight into the address bar), not just the root page's
-// redirect. getDevSelf() itself always resolves to *someone* (defaults
-// to a Manager) precisely so pages inside this already-gated layout don't
-// each need their own null check — the gate is here, once.
+// redirect. It covers both "no session at all" and the edge case of a
+// still-valid access token whose underlying user record no longer
+// exists — either way, no user means no admission. Because the gate is
+// here once, every page inside this layout can treat `self` as always
+// present, no per-page null check needed.
 
 export default async function DashboardLayout({
   children,
 }: {
   children: ReactNode;
 }) {
-  if (!(await hasDevSession())) {
+  const self = await getCurrentUser();
+
+  if (!self) {
     redirect(PATHS.LOGIN);
   }
-
-  const self = await getDevSelf();
 
   return (
     <ToastProvider>

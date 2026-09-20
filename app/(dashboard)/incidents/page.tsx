@@ -1,19 +1,21 @@
+import { redirect } from "next/navigation";
 import { IncidentsView } from "@/components/incidents/IncidentsView";
 import { incidents, services, tickets, users } from "@/lib/mock-data";
-import { getDevSelf } from "@/lib/dev-self";
+import { getCurrentUser } from "@/server/auth/session";
+import { PATHS } from "@/utils/paths";
 
-// TODO(milestone 9): replace the mock-data import above with a real
-// org-scoped incidents query once auth + the API routes land (README §15 /
-// implementation plan). IncidentsView already takes its data as props shaped
-// like the query result, so that swap shouldn't touch the JSX here.
-// `self` similarly comes from getDevSelf() (a cookie) until real sessions
-// exist — see lib/dev-self.ts. Note there's no `resolveUser` prop: this
-// page is a Server Component (it needs to read the self cookie), and a
-// plain function can't be passed to a Client Component — IncidentsView
-// builds its own lookup from `users` instead.
+// `self` is real now (Milestone 1). The incident/service/ticket/user
+// data itself is still fake — that's Milestone 5's real query once
+// auth + the API routes for this domain land (README §15 /
+// implementation plan). IncidentsView already takes its data as props
+// shaped like the query result, so that swap shouldn't touch the JSX
+// here. There's no `resolveUser` prop: IncidentsView builds its own
+// lookup from `users` instead, since a plain function can't cross the
+// server/client boundary from this Server Component.
 
 export default async function IncidentsPage() {
-  const self = await getDevSelf();
+  const self = await getCurrentUser();
+  if (!self) redirect(PATHS.LOGIN);
 
   return (
     <IncidentsView

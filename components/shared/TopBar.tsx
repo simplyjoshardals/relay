@@ -7,10 +7,9 @@ import { usePathname } from "next/navigation";
 import { ListIcon, SignOutIcon, XIcon } from "@phosphor-icons/react";
 import { Avatar } from "@/components/dashboard/Avatar";
 import { LiveIndicator } from "@/components/dashboard/LiveIndicator";
-import { DevRoleSwitcher } from "@/components/shared/DevRoleSwitcher";
 import type { User } from "@/types";
 import { canManageTeam } from "@/lib/permissions";
-import { signOutAction } from "@/lib/dev-auth-actions";
+import { logoutAction } from "@/app/login/actions";
 import { PATHS } from "@/utils/paths";
 
 const baseNavItems = [
@@ -98,7 +97,7 @@ export function TopBar({ orgName, self }: { orgName: string; self: User }) {
 
       <div className="flex shrink-0 items-center gap-2 sm:gap-4">
         <LiveIndicator connected />
-        <DevRoleSwitcher role={self.role} />
+
         <Avatar
           initials={self.initials}
           seed={self.id}
@@ -106,7 +105,8 @@ export function TopBar({ orgName, self }: { orgName: string; self: User }) {
           size="sm"
           title={self.name}
         />
-        <form action={signOutAction}>
+
+        <form action={logoutAction}>
           <button
             type="submit"
             title="Sign out"

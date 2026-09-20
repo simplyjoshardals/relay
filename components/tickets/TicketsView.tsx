@@ -38,7 +38,7 @@ export function TicketsView({ tickets, users, self }: TicketsViewProps) {
 
   // Built locally from `users` rather than taken as a `resolveUser`
   // function prop: this component's parent page is a Server Component
-  // (it needs to read the dev-self cookie), and a plain function can't
+  // (it needs to read the session), and a plain function can't
   // be passed across the server/client boundary — only serializable data
   // like `users` can. Same reasoning applies to IncidentsView.
   const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);

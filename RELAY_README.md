@@ -6,7 +6,7 @@
 **Status:** MVP planning + implementation architecture resolved  
 **Product:** Relay  
 **Authentication:** JWT-based authentication (NOT Supabase Auth)
-**Stack:** Next.js (App Router) · Drizzle ORM over a direct Postgres connection · Supabase for Postgres hosting + Realtime only
+**Stack:** Next.js (App Router) · Prisma ORM over a direct Postgres connection · Supabase for Postgres hosting + Realtime only
 
 ---
 
@@ -37,21 +37,25 @@ Relay provides that context in one place.
 ## 1.3 The Four Things Relay Connects
 
 ### Work
+
 - Tickets
 - Operational tasks
 
 ### Systems
+
 - Services
 - Health
 - Latency
 - Errors
 
 ### People
+
 - Who is online
 - Who owns something
 - Who is responding
 
 ### Events
+
 - What just happened
 - What changed
 - What is happening now
@@ -383,6 +387,7 @@ Realtime is a core system requirement, not an optional UI feature.
 The following shared domain changes must propagate to authorized connected clients without requiring a page refresh:
 
 ### Tickets
+
 - Creation
 - Assignment
 - Status
@@ -390,11 +395,13 @@ The following shared domain changes must propagate to authorized connected clien
 - Deletion, if deletion is ever introduced
 
 ### Services
+
 - Status
 - Latency
 - Error rate
 
 ### Incidents
+
 - Creation
 - Assignment
 - Status
@@ -403,9 +410,11 @@ The following shared domain changes must propagate to authorized connected clien
 - Affected tickets
 
 ### Activity
+
 - New activity events
 
 ### Presence
+
 - Online/offline state
 
 Not every piece of UI state needs to be realtime.
@@ -514,18 +523,23 @@ The dashboard is the operational overview, not another CRUD screen.
 A user should immediately understand:
 
 ### What's happening?
+
 Current operational workload.
 
 ### What's broken?
+
 Current system/service health.
 
 ### What's urgent?
+
 Active incidents and high-priority work.
 
 ### Who's handling it?
+
 Assignments and responders.
 
 ### What just happened?
+
 Live activity.
 
 The dashboard must expose:
@@ -1373,6 +1387,7 @@ Relay is a **modular monolith** built around a PostgreSQL source of truth.
 > **Realtime makes Relay feel live. PostgreSQL makes Relay correct.**
 
 ---
+
 ---
 
 # Part II: Implementation Plan
@@ -1388,7 +1403,7 @@ This section is written to answer §42's checklist item-by-item, in order, plus 
 Supabase Realtime's two subscription modes both assume Supabase Auth by default:
 
 - **Postgres Changes** (subscribe directly to table changes) — authorized via RLS using `auth.uid()`, which only exists for Supabase-Auth-issued JWTs.
-- **Broadcast / Presence with private channels** — authorized via **Realtime Authorization**, which *can* accept a third-party JWT as long as Realtime is configured with the same signing secret and your RLS policies read claims generically (not `auth.uid()`).
+- **Broadcast / Presence with private channels** — authorized via **Realtime Authorization**, which _can_ accept a third-party JWT as long as Realtime is configured with the same signing secret and your RLS policies read claims generically (not `auth.uid()`).
 
 Since Relay uses its own JWTs, **Postgres Changes is not a good fit** — we'd have to fight the RLS model. Instead:
 
@@ -1445,6 +1460,7 @@ activities
 ```
 
 **Cardinality notes (from §8):**
+
 - A ticket may have many `incident_tickets` rows over its life, but at most one with `is_active = true` at a time → enforced with a **partial unique index**, not application logic alone.
 - An incident can affect many services and many tickets simultaneously (both true many-to-many).
 - Presence is **not a table**. It's handled entirely by Supabase Realtime's Presence primitive (in-memory, per-channel, heartbeat-based expiry) — satisfies §14 ("ephemeral state rather than ordinary persistent database state") with zero extra infrastructure.
@@ -1454,6 +1470,7 @@ activities
 ## 2. Constraints & Indexes
 
 **Constraints**
+
 - All primary keys: UUID, generated server-side (`gen_random_uuid()`).
 - Every domain table has a mandatory, non-nullable `org_id` FK — no orphaned or globally-scoped rows are possible.
 - Status/priority/severity/role columns: Postgres native `enum` types (not free-text) — invalid states are rejected at the DB layer, not just the app layer, per architectural principle #4 ("business rules do not belong exclusively in the UI").
@@ -1462,6 +1479,7 @@ activities
 - No `ON DELETE CASCADE` on domain FKs given the no-deletion policy (§19) — use `ON DELETE RESTRICT` so an accidental delete attempt fails loudly rather than silently cascading through history.
 
 **Indexes**
+
 - `(org_id)` on every domain table — every query is tenant-scoped, this index carries the whole app.
 - `(org_id, status)` on tickets, incidents, services — dashboard summary queries filter by status constantly.
 - `(org_id, created_at DESC)` on activities — required for pagination (AC-05 says paginate, don't load everything).
@@ -1472,7 +1490,7 @@ activities
 
 ## 3. Tenant Isolation Strategy (replacing RLS-via-Supabase-Auth)
 
-Because there's no Supabase Auth session, classic `auth.uid()`-based RLS isn't available for normal queries (Drizzle talks to Postgres directly with a service-level connection string, not per-user browser sessions). Two layers:
+Because there's no Supabase Auth session, classic `auth.uid()`-based RLS isn't available for normal queries (Prisma talks to Postgres directly with a service-level connection string, not per-user browser sessions). Two layers:
 
 **Layer 1 — Application layer (primary, mandatory):**
 Every repository function takes `orgId` as a required first parameter, sourced only from the verified JWT on the server — never from client input, never from a route param taken at face value.
@@ -1528,6 +1546,7 @@ Building on §0:
 **Channels:** one private channel per organization: `org:{orgId}`. No per-resource channels for MVP.
 
 **Authorization:**
+
 ```sql
 -- Realtime Authorization policy on realtime.messages
 create policy "org members can listen to their org channel"
@@ -1538,9 +1557,10 @@ using (
 ```
 
 **Client flow:**
+
 1. On session start, client calls `supabase.realtime.setAuth(realtimeJwt)`.
 2. Client subscribes to `org:{orgId}` as a **private** channel.
-3. Server, after committing any mutation, broadcasts a small event: `{ type: 'ticket.updated', id, orgId }` — an *invalidation hint*, not the full resource (keeps payload small, keeps Realtime non-authoritative — RT-06).
+3. Server, after committing any mutation, broadcasts a small event: `{ type: 'ticket.updated', id, orgId }` — an _invalidation hint_, not the full resource (keeps payload small, keeps Realtime non-authoritative — RT-06).
 
 **Presence:** same channel carries Supabase Presence (`track()`/`untrack()` on connect/disconnect) for PR-01/PR-02 — no separate channel or table.
 
@@ -1551,9 +1571,9 @@ using (
 Given RT-05 (tolerate duplicates) and RT-06 (Realtime is not authoritative): **treat every broadcast as an invalidation signal, never as new state itself.**
 
 ```ts
-channel.on('broadcast', { event: 'ticket.updated' }, ({ payload }) => {
-  queryClient.invalidateQueries({ queryKey: ['tickets', payload.id] });
-  queryClient.invalidateQueries({ queryKey: ['tickets', 'list'] });
+channel.on("broadcast", { event: "ticket.updated" }, ({ payload }) => {
+  queryClient.invalidateQueries({ queryKey: ["tickets", payload.id] });
+  queryClient.invalidateQueries({ queryKey: ["tickets", "list"] });
 });
 ```
 
@@ -1561,7 +1581,7 @@ Duplicate/out-of-order events become harmless by construction — an extra inval
 
 **Exception — high-frequency telemetry:** debounce `service.updated` invalidations client-side (max ~once per 1–2s per service) to avoid refetch storms; sub-second precision isn't a product requirement.
 
-**Reconnection (§35):** on `SUBSCRIBED` after a reconnect, invalidate *all* active queries unconditionally — simpler and safer than diffing what was missed.
+**Reconnection (§35):** on `SUBSCRIBED` after a reconnect, invalidate _all_ active queries unconditionally — simpler and safer than diffing what was missed.
 
 ---
 
@@ -1589,13 +1609,13 @@ Zero rows affected → the use-case throws a `ConflictError`. The Server Action 
 /server
   /application                Use-cases: createTicket(), assignIncident(), ...
   /domain                     Entities, status enums, transition rules, invariants
-  /repositories                Drizzle query functions, always org-scoped
+  /repositories                Prisma query functions, always org-scoped
   /auth                        JWT sign/verify, session helpers, refresh rotation
   /realtime                    broadcast(orgId, event, payload) helper
   /validation                  Zod schemas (shared with client)
 
-/db
-  schema.ts                    Drizzle schema definitions
+/prisma
+  schema.prisma                    Prisma schema definitions
   /migrations
 
 /workers
@@ -1615,7 +1635,7 @@ Rule: a Server Action or Route Handler in `/app` may call `/server/application`,
 - **No Zustand** unless a genuine cross-cutting need appears (§26) — none currently anticipated.
 - **Realtime wiring:** a single `<RealtimeProvider>` near the root subscribes to `org:{orgId}` once, holds no domain state itself, calls `queryClient.invalidateQueries(...)` per §7.
 - **Route structure:** grouped by domain — `/dashboard`, `/tickets`, `/incidents`, `/services`, `/activity` — each with list + detail views. Dashboard composes from the same queries the detail pages use.
-- **Optimistic updates:** via TanStack Query `onMutate` for the interactions §34 calls out (status changes, assignment) — not blanket-applied; e.g., ticket *creation* can wait for server confirmation.
+- **Optimistic updates:** via TanStack Query `onMutate` for the interactions §34 calls out (status changes, assignment) — not blanket-applied; e.g., ticket _creation_ can wait for server confirmation.
 
 ---
 
@@ -1623,21 +1643,21 @@ Rule: a Server Action or Route Handler in `/app` may call `/server/application`,
 
 - **Single source of truth:** Zod schemas in `/server/validation`, one per use-case input (`createTicketInput`, `assignIncidentInput`, etc.).
 - **Server-side:** every Server Action / Route Handler parses input through the matching schema before it reaches the use-case — invalid input never reaches domain logic (org/role checks happen immediately after parsing).
-- **Client-side:** the *same* schemas feed `react-hook-form` via `zodResolver` — avoids two parallel definitions of "what's a valid ticket."
+- **Client-side:** the _same_ schemas feed `react-hook-form` via `zodResolver` — avoids two parallel definitions of "what's a valid ticket."
 - Domain **invariants** (valid status transitions) live in `/server/domain`, not in the Zod schema — keeps "is this shape valid" separate from "is this business rule satisfied."
 
 ---
 
 ## 12. Testing Strategy
 
-| Layer | Tool | What it covers |
-|---|---|---|
-| Domain | Vitest | Status transition rules, invariants — pure functions, no DB |
-| Application/use-case | Vitest + a real test Postgres (Testcontainers or a disposable local Supabase DB) | Full use-case behavior: validation → authorization → persistence → activity record, including the version-conflict path |
-| Realtime | Manual + a thin integration test on the broadcast helper | Confirms a committed mutation emits the expected event shape |
-| End-to-end | Playwright, **two browser contexts** | Directly implements §41's acceptance test — Browser A mutates, assert Browser B's DOM reflects it without reload, including disconnect/reconnect (`context.setOffline(true)`) |
+| Layer                | Tool                                                                             | What it covers                                                                                                                                                                |
+| -------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Domain               | Vitest                                                                           | Status transition rules, invariants — pure functions, no DB                                                                                                                   |
+| Application/use-case | Vitest + a real test Postgres (Testcontainers or a disposable local Supabase DB) | Full use-case behavior: validation → authorization → persistence → activity record, including the version-conflict path                                                       |
+| Realtime             | Manual + a thin integration test on the broadcast helper                         | Confirms a committed mutation emits the expected event shape                                                                                                                  |
+| End-to-end           | Playwright, **two browser contexts**                                             | Directly implements §41's acceptance test — Browser A mutates, assert Browser B's DOM reflects it without reload, including disconnect/reconnect (`context.setOffline(true)`) |
 
-The Playwright two-context test *is* the MVP's definition of done — write it early and keep it red until the full path (mutation → commit → broadcast → invalidate → re-render) works end to end.
+The Playwright two-context test _is_ the MVP's definition of done — write it early and keep it red until the full path (mutation → commit → broadcast → invalidate → re-render) works end to end.
 
 ---
 
@@ -1646,11 +1666,13 @@ The Playwright two-context test *is* the MVP's definition of done — write it e
 **Decision: standalone, long-lived Node process, calling the application layer in-process — not serverless/cron, not over HTTP.**
 
 Reasoning:
+
 - Serverless/cron is a poor fit for something that needs to tick every few seconds to feel "live" — you'd be fighting execution-time limits and cold starts to fake a loop that's naturally just... a loop.
 - Calling a Route Handler over HTTP would require inventing service-auth machinery (a `role: 'system'` JWT, a code path that authorizes a non-human caller) for a component §36 explicitly describes as temporary scaffolding ("keeps the monitoring component replaceable by real telemetry integrations in the future"). Importing the use-case directly gets identical guarantees — same version bump, same activity generation, same broadcast — with zero new auth surface.
 - Matches architectural principles #9 ("modular, not distributed") and #10 ("prefer simple infrastructure until the product demonstrates a need for more complexity").
 
 Concretely:
+
 - `/workers/telemetry.ts` — a standalone Node script with a `setInterval` loop, run as its own process (locally via `node`, in production as a small always-on worker alongside the Next.js app — not colocated in the same server process, but not reached over HTTP either).
 - Imports from `/server/application` only — **never** `/server/repositories` or `/db` directly. This is the boundary that has to survive when this gets replaced by a real telemetry integration later.
 - On each tick, for each service: generates a plausible latency/error-rate delta and calls `updateServiceTelemetry()` — the same use-case a human-triggered path would call. This guarantees the version increment, the activity record on status change (SM-05), and the Realtime broadcast (§6) all happen identically to any other mutation.

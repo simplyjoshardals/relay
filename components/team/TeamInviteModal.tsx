@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Modal } from "@/components/shared/Modal";
 import { SelectField } from "@/components/shared/SelectField";
 import { TextField } from "@/components/shared/TextField";
+import { initialsFor } from "@/lib/initials";
 import type { Role, User } from "@/types";
 
 interface TeamInviteModalProps {
@@ -16,17 +17,6 @@ const roleOptions: { value: Role; label: string }[] = [
   { value: "MEMBER", label: "Member" },
   { value: "MANAGER", label: "Manager" },
 ];
-
-function initialsFor(name: string): string {
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  return (
-    words
-      .slice(0, 2)
-      .map((w) => w[0])
-      .join("")
-      .toUpperCase() || "?"
-  );
-}
 
 /** There's no real invite flow yet — no email sends, no pending/accepted
  *  states (that's genuine auth-system work, not scaffolding). This adds
