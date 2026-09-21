@@ -54,30 +54,39 @@ const RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 15_000];
 // scratch with a fresh token.
 const VISIBILITY_RECHECK_AFTER_MS = 60_000;
 
+// If a connect attempt neither reaches SUBSCRIBED nor fails outright
+// within this long (a hung token call, a join that never gets a reply),
+// abandon it and retry. Without this, "connecting" can sit there forever
+// with nothing to say why.
+const CONNECT_TIMEOUT_MS = 10_000;
+
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-// Built lazily, on first use inside useEffect — NOT at module scope.
+// Built inside useEffect — NOT at module scope — and one per effect run,
+// not shared.
 //
-// A module-level createClient() runs while Next evaluates this file for
-// server-side rendering of the "use client" tree, and supabase-js can
-// invoke the accessToken callback below while constructing the client.
-// That callback is a Server Action, and Next refuses Server Action calls
-// made during render ("Server Functions cannot be called during initial
-// render"). Effects never run on the server, so creating the client
-// there guarantees the Server Action is only ever called from the
-// browser, from an event/async context — never mid-render.
+// Not at module scope: a module-level createClient() runs while Next
+// evaluates this file for server-side rendering of the "use client"
+// tree, and supabase-js can invoke the accessToken callback below while
+// constructing the client. That callback is a Server Action, and Next
+// refuses Server Action calls made during render ("Server Functions
+// cannot be called during initial render"). Effects never run on the
+// server, so the Server Action is only ever called from the browser.
 //
-// Cached in a module variable so every effect run (Strict Mode's
-// mount→cleanup→mount included) shares one client and one socket.
-let supabaseClient: SupabaseClient | null = null;
-
-function getSupabase(): SupabaseClient | null {
+// Not shared: a module-level singleton outlives the provider. After a
+// logout → login in the same tab (client-side navigation, no page
+// reload) the new session would inherit the old one's socket state and,
+// worse, its half-removed channel — supabase-js hands back an existing
+// channel for the same topic, and removeChannel() is async, so a quick
+// re-login can get the old, already-subscribed one back and then fail
+// to subscribe it again. A fresh client per mount, disposed on unmount,
+// makes every login start from a clean slate.
+function createSupabase(): SupabaseClient | null {
   if (typeof window === "undefined") return null;
-  if (supabaseClient) return supabaseClient;
   if (!supabaseUrl || !supabaseAnonKey) return null;
 
-  supabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
+  return createClient(supabaseUrl, supabaseAnonKey, {
     // Why accessToken is passed at all: createClient()'s default wiring
     // resolves to `supabase.auth`'s session token, or the anon key when
     // there's no session. This app never signs in via supabase.auth
@@ -92,7 +101,6 @@ function getSupabase(): SupabaseClient | null {
     // touched), which is fine: nothing in this app uses it.
     accessToken: () => getRealtimeTokenAction(),
   });
-  return supabaseClient;
 }
 
 interface RealtimeProviderProps {
@@ -125,8 +133,15 @@ export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Per-connect-attempt counter and its watchdog timer. A hung attempt
+  // (say, a token call that never returns) is abandoned by the watchdog;
+  // the counter is what stops that abandoned attempt from later waking
+  // up and building a second channel alongside the retry's.
+  const attemptRef = useRef(0);
+  const connectWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
-    const supabase = getSupabase();
+    const supabase = createSupabase();
     if (!supabase) {
       console.warn(
         "RealtimeProvider: NEXT_PUBLIC_SUPABASE_URL/NEXT_PUBLIC_SUPABASE_ANON_KEY not set — realtime disabled.",
@@ -142,6 +157,13 @@ export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
       if (retryTimerRef.current) {
         clearTimeout(retryTimerRef.current);
         retryTimerRef.current = null;
+      }
+    };
+
+    const clearConnectWatchdog = () => {
+      if (connectWatchdogRef.current) {
+        clearTimeout(connectWatchdogRef.current);
+        connectWatchdogRef.current = null;
       }
     };
 
@@ -172,6 +194,10 @@ export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
       // event, tab foregrounded), so there's never a moment with two
       // live channels or two overlapping refresh intervals.
       teardown();
+      clearConnectWatchdog();
+      attemptRef.current += 1;
+      const myAttempt = attemptRef.current;
+      const isSuperseded = () => isStale() || myAttempt !== attemptRef.current;
 
       // No network at all: nothing to attempt. The 'online' listener
       // below calls connect() again the moment it's back — retrying on a
@@ -181,6 +207,15 @@ export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
         return;
       }
       setStatus(hasConnectedRef.current ? "reconnecting" : "connecting");
+
+      connectWatchdogRef.current = setTimeout(() => {
+        if (isSuperseded()) return;
+        console.warn(
+          `RealtimeProvider: connect attempt didn't complete within ${CONNECT_TIMEOUT_MS / 1000}s — retrying.`,
+        );
+        setStatus("reconnecting");
+        scheduleReconnect();
+      }, CONNECT_TIMEOUT_MS);
 
       try {
         // setAuth() with no argument pulls a fresh token from the
@@ -197,7 +232,7 @@ export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
         // channel afterward, removes that race entirely rather than
         // just narrowing it.
         await supabase.realtime.setAuth();
-        if (isStale()) return;
+        if (isSuperseded()) return;
 
         const channel = supabase
           .channel(`org:${orgId}`, { config: { private: true } })
@@ -211,11 +246,12 @@ export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
             queryClient.invalidateQueries({ queryKey: ["tickets", "list"] });
           })
           .subscribe((status) => {
-            if (isStale()) return;
+            if (isSuperseded()) return;
 
             if (status === "SUBSCRIBED") {
               retryCountRef.current = 0;
               clearRetryTimer();
+              clearConnectWatchdog();
               hasConnectedRef.current = true;
               setStatus("connected");
               // §35: after (re)connecting, refetch everything active
@@ -247,7 +283,8 @@ export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
 
         channelRef.current = channel;
       } catch (error) {
-        if (!isStale()) {
+        if (!isSuperseded()) {
+          clearConnectWatchdog();
           console.error(
             "RealtimeProvider: failed to authenticate realtime session",
             error,
@@ -278,6 +315,7 @@ export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
       // itself, and if not, handleOnline() rebuilds everything.
       if (isStale()) return;
       clearRetryTimer();
+      clearConnectWatchdog();
       setStatus("offline");
     };
 
@@ -317,8 +355,30 @@ export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
       document.removeEventListener("visibilitychange", handleVisibility);
+
+      // Mark this run stale *now*. Previously only the next effect run
+      // bumped the generation, so on a plain unmount (logout) an
+      // in-flight token call could still resolve, pass isStale(), and
+      // subscribe a channel on a client nobody owns any more.
+      generationRef.current += 1;
+
       clearRetryTimer();
+      clearConnectWatchdog();
       teardown();
+
+      // This run's client is discarded with it (see createSupabase):
+      // leave every channel and close the socket so nothing lingers
+      // into the next session.
+      void supabase
+        .removeAllChannels()
+        .catch(() => undefined)
+        .finally(() => {
+          try {
+            supabase.realtime.disconnect();
+          } catch {
+            // Already closed — nothing to do.
+          }
+        });
     };
   }, [orgId, queryClient]);
 
