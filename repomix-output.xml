@@ -154,8 +154,6 @@ server/
     auth.ts
     tickets.ts
 test-results/
-  ticket-realtime-§41-Test-1-06a71-or-another-without-a-reload-chromium/
-    error-context.md
   .last-run.json
 types/
   index.ts
@@ -176,1052 +174,6 @@ tsconfig.json
 
 <files>
 This section contains the contents of the repository's files.
-
-<file path="app/(dashboard)/tickets/actions.ts">
-"use server";
-
-import { requireSession } from "@/server/auth/session";
-import {
-  createTicket,
-  listTickets,
-  updateTicket,
-} from "@/server/application/tickets";
-import { listOrgUsers } from "@/server/application/users";
-import { toActionError, type ActionError } from "@/server/application/errors";
-import type { Ticket, User } from "@/types";
-
-export type ActionResult<T> =
-  | { ok: true; data: T }
-  | { ok: false; error: ActionError };
-
-/**
- * Used directly as TanStack Query's `queryFn` (§10) — a Server Action is
- * just an async function from the client's perspective, so this is a
- * completely ordinary queryFn, no separate Route Handler needed (§5:
- * Route Handlers are for callers that aren't the Relay UI itself).
- */
-export async function listTicketsAction(): Promise<Ticket[]> {
-  const session = await requireSession();
-  return listTickets(session);
-}
-
-/** For TicketModal's assignee picker — real org users, not mock data
- *  (server/application/users.ts explains why this one got pulled
- *  forward from Milestone 9). */
-export async function listOrgUsersAction(): Promise<User[]> {
-  const session = await requireSession();
-  return listOrgUsers(session);
-}
-
-export async function createTicketAction(
-  input: unknown,
-): Promise<ActionResult<Ticket>> {
-  try {
-    const session = await requireSession();
-    const ticket = await createTicket(session, input);
-    return { ok: true, data: ticket };
-  } catch (error) {
-    return { ok: false, error: toActionError(error) };
-  }
-}
-
-export async function updateTicketAction(
-  ticketId: string,
-  input: unknown,
-): Promise<ActionResult<Ticket>> {
-  try {
-    const session = await requireSession();
-    const ticket = await updateTicket(session, ticketId, input);
-    return { ok: true, data: ticket };
-  } catch (error) {
-    return { ok: false, error: toActionError(error) };
-  }
-}
-</file>
-
-<file path="app/(dashboard)/actions.ts">
-"use server";
-
-import { requireSession } from "@/server/auth/session";
-import { mintRealtimeToken } from "@/server/application/realtime";
-
-/**
- * Called by RealtimeProvider (components/shared/RealtimeProvider.tsx) on
- * mount and periodically thereafter. Lives here rather than under
- * tickets/ or any other domain folder — Realtime's subscription is
- * cross-cutting infrastructure for the whole dashboard shell, not owned
- * by one domain.
- */
-export async function getRealtimeTokenAction(): Promise<string> {
-  const session = await requireSession();
-  return mintRealtimeToken(session);
-}
-</file>
-
-<file path="components/shared/QueryProvider.tsx">
-"use client";
-
-import { useState, type ReactNode } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
-
-/**
- * §10: "TanStack Query owns all server-derived state... one
- * QueryClientProvider at the root." "Root" here means the root of the
- * authenticated app (this composes alongside ToastProvider in the
- * dashboard layout) rather than the true app root — /login has nothing
- * to query, so there's no reason to give it a query client too.
- *
- * The QueryClient is created once via useState's lazy initializer, not
- * as a plain `new QueryClient()` inline — that would build a fresh
- * client (and lose all cached data) on every render.
- */
-export function QueryProvider({ children }: { children: ReactNode }) {
-  const [queryClient] = useState(() => new QueryClient());
-
-  return (
-    <QueryClientProvider client={queryClient}>
-      {children}
-      {process.env.NODE_ENV === "development" && (
-        <ReactQueryDevtools initialIsOpen={false} />
-      )}
-    </QueryClientProvider>
-  );
-}
-</file>
-
-<file path="components/shared/RealtimeProvider.tsx">
-"use client";
-
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { createClient, type RealtimeChannel } from "@supabase/supabase-js";
-import { getRealtimeTokenAction } from "@/app/(dashboard)/actions";
-
-const RealtimeStatusContext = createContext(false);
-
-/** Consumed by TopBar's LiveIndicator — real connection status instead
- *  of the hardcoded `connected` prop it shipped with before this
- *  milestone. */
-export function useRealtimeConnected(): boolean {
-  return useContext(RealtimeStatusContext);
-}
-
-// Re-mint the realtime JWT well before its ~15-minute expiry (matches
-// the access token's TTL, per server/application/realtime.ts) — a
-// long-lived tab with no page navigation wouldn't otherwise get a fresh
-// one, since proxy.ts's refresh only runs on navigation requests.
-const TOKEN_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-// Created once at module scope, not per-render/per-mount — this is a
-// long-lived client meant to be reused across the whole session.
-// Guarded rather than thrown from: an unconfigured Supabase project
-// (true in this sandbox, and possibly true early in a real deploy
-// before it's wired up) should degrade to "no realtime" rather than
-// crash the whole app.
-const supabase =
-  supabaseUrl && supabaseAnonKey
-    ? createClient(supabaseUrl, supabaseAnonKey)
-    : null;
-
-interface RealtimeProviderProps {
-  orgId: string;
-  children: ReactNode;
-}
-
-/**
- * §10's single `<RealtimeProvider>` near the root: subscribes once,
- * holds no domain state itself, and treats every broadcast purely as an
- * invalidation signal (§7, RT-06) — it never touches the query cache
- * with the broadcast payload directly, only tells TanStack Query what
- * to refetch.
- *
- * Milestone 3 scope only wires the ticket slice (`ticket.updated`).
- * Services/incidents/activity get their own `.on('broadcast', ...)`
- * listeners added to this same channel subscription in their own
- * milestones (4/5/6) — same channel, one per org, not a new one per
- * domain (§6: "one private channel per organization... no per-resource
- * channels for MVP"). Presence (Milestone 7) also rides this same
- * channel via track()/untrack(), per §6.
- */
-export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
-  const queryClient = useQueryClient();
-  const [connected, setConnected] = useState(false);
-  const channelRef = useRef<RealtimeChannel | null>(null);
-
-  useEffect(() => {
-    if (!supabase) {
-      console.warn(
-        "RealtimeProvider: NEXT_PUBLIC_SUPABASE_URL/NEXT_PUBLIC_SUPABASE_ANON_KEY not set — realtime disabled.",
-      );
-      return;
-    }
-
-    let cancelled = false;
-
-    const authenticate = async () => {
-      try {
-        const token = await getRealtimeTokenAction();
-        if (!cancelled) await supabase.realtime.setAuth(token);
-      } catch (error) {
-        console.error("RealtimeProvider: failed to mint/set auth token", error);
-      }
-    };
-
-    const channel = supabase
-      .channel(`org:${orgId}`, { config: { private: true } })
-      .on("broadcast", { event: "ticket.updated" }, ({ payload }) => {
-        // §7's exact pattern: invalidate the single-resource key and the
-        // list key together. Duplicate/out-of-order events are harmless
-        // by construction (RT-05) — an extra invalidation is just an
-        // extra idempotent refetch.
-        if (payload?.id) {
-          queryClient.invalidateQueries({ queryKey: ["tickets", payload.id] });
-        }
-        queryClient.invalidateQueries({ queryKey: ["tickets", "list"] });
-      })
-      .subscribe((status) => {
-        if (cancelled) return;
-
-        if (status === "SUBSCRIBED") {
-          setConnected(true);
-          // §7's reconnection rule: on (re)connect, invalidate
-          // everything unconditionally rather than trying to diff what
-          // was missed while disconnected — simpler and safer.
-          queryClient.invalidateQueries();
-        } else {
-          setConnected(false);
-        }
-      });
-
-    channelRef.current = channel;
-
-    void authenticate();
-    const refreshInterval = setInterval(
-      authenticate,
-      TOKEN_REFRESH_INTERVAL_MS,
-    );
-
-    return () => {
-      cancelled = true;
-      clearInterval(refreshInterval);
-      supabase.removeChannel(channel);
-      channelRef.current = null;
-    };
-  }, [orgId, queryClient]);
-
-  return (
-    <RealtimeStatusContext.Provider value={connected}>
-      {children}
-    </RealtimeStatusContext.Provider>
-  );
-}
-</file>
-
-<file path="e2e/ticket-realtime.spec.ts">
-import { test, expect, type Page } from "@playwright/test";
-
-/**
- * §41's actual definition of done — this file currently covers only
- * this milestone's slice (Tests 1 & 2: ticket creation and assignment
- * propagating between two browser contexts with no reload). Tests 3–8
- * get added here as Milestones 4/5/8 make them coverable, per §12's
- * instruction to keep this file red rather than write eight tests up
- * front against features that don't exist yet.
- *
- * Password must match prisma/seed.ts's DEMO_PASSWORD — there's no
- * shared import between the seed script and this test file, so if one
- * changes, the other needs to change too.
- */
-const DEMO_PASSWORD = "relay-dev-1234";
-
-const USER_A = { email: "maya@kestrel.dev", name: "Maya Reyes" };
-const USER_B = { email: "josh@kestrel.dev", name: "Josh Dietrich" };
-
-async function loginAs(page: Page, email: string) {
-  await page.goto("/login");
-  await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Password").fill(DEMO_PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).toHaveURL(/\/dashboard/);
-}
-
-test.describe("§41 Test 1 & 2 — ticket creation and assignment propagate live", () => {
-  test("a ticket created by one user appears for another without a reload", async ({
-    browser,
-  }) => {
-    const contextA = await browser.newContext();
-    const contextB = await browser.newContext();
-    const pageA = await contextA.newPage();
-    const pageB = await contextB.newPage();
-
-    await loginAs(pageA, USER_A.email);
-    await loginAs(pageB, USER_B.email);
-
-    await pageA.goto("/tickets");
-    await pageB.goto("/tickets");
-
-    const title = `Realtime test ticket ${Date.now()}`;
-
-    // Test 1 (§41): create in Browser A.
-    await pageA.getByRole("button", { name: "New ticket" }).click();
-    await pageA.getByLabel("Title").fill(title);
-    await pageA.getByRole("button", { name: "Create ticket" }).click();
-
-    // Check Browser A first — this does NOT depend on realtime at all
-    // (its own mutation invalidates its own query on success), so a
-    // failure here means ticket creation itself is broken, not
-    // propagation. Splitting this out turns "Browser B never sees it"
-    // from one failure into two, so a red run actually points at which
-    // half is broken instead of leaving both as suspects.
-    await expect(pageA.getByText(title)).toBeVisible({ timeout: 10_000 });
-
-    // The real assertion: Browser B never reloads or navigates. If this
-    // only passes after a manual pageB.reload(), the realtime wiring
-    // (broadcast → RLS-authorized subscription → invalidateQueries)
-    // isn't actually working — a passing test with a reload added would
-    // be testing the wrong thing.
-    await expect(pageB.getByText(title)).toBeVisible({ timeout: 10_000 });
-
-    // Test 2 (§41): assign it to Browser B's user, from Browser A.
-    await pageA.getByText(title).click();
-    await pageA.getByLabel("Assignee").selectOption({ label: USER_B.name });
-    await pageA.getByRole("button", { name: "Save changes" }).click();
-
-    // Browser B should see itself assigned without any reload either —
-    // the avatar/assignment indicator replacing "Assign to me" on that
-    // row is the visible signal.
-    const rowB = pageB.locator("li", { hasText: title });
-    await expect(rowB.getByTitle(USER_B.name)).toBeVisible({
-      timeout: 10_000,
-    });
-
-    await contextA.close();
-    await contextB.close();
-  });
-});
-</file>
-
-<file path="server/application/errors.ts">
-/**
- * Typed errors the application layer throws so a Server Action can map
- * them to a specific client-facing result rather than a generic
- * failure. Per §8: "the use-case throws a ConflictError. The Server
- * Action surfaces this as a typed error" — the throwing happens here in
- * application code; catching and converting to a serializable result
- * happens at the Server Action boundary (see e.g.
- * app/(dashboard)/tickets/actions.ts), since a thrown Error doesn't
- * cross that boundary with its specific type intact.
- */
-
-/** §8: an update's `expectedVersion` no longer matches the row's current
- *  version — someone else's write got there first. */
-export class ConflictError extends Error {
-  constructor(message = "This record was changed by someone else.") {
-    super(message);
-    this.name = "ConflictError";
-  }
-}
-
-/** The referenced record doesn't exist, or doesn't belong to this org —
- *  those two cases are deliberately indistinguishable to the caller
- *  (§3): a ticket from another org should look identical to a ticket
- *  that doesn't exist, not leak that it exists elsewhere. */
-export class NotFoundError extends Error {
-  constructor(message = "Not found.") {
-    super(message);
-    this.name = "NotFoundError";
-  }
-}
-
-/** Input failed Zod validation (§11) before it ever reached domain
- *  logic. */
-export class ValidationError extends Error {
-  constructor(message = "Invalid input.") {
-    super(message);
-    this.name = "ValidationError";
-  }
-}
-
-export interface ActionError {
-  code: "conflict" | "not_found" | "invalid_input" | "unknown";
-  message: string;
-}
-
-/**
- * Shared catch-and-map for every domain's Server Actions (tickets today;
- * incidents/services will reuse this in later milestones) — one place
- * mapping the three typed errors above to a serializable result, rather
- * than each actions.ts file re-implementing the same three `instanceof`
- * checks. Anything not one of the three known types becomes "unknown"
- * with a generic message — an unexpected failure (a DB outage) shouldn't
- * leak its internals to the client.
- */
-export function toActionError(error: unknown): ActionError {
-  if (error instanceof ConflictError) {
-    return { code: "conflict", message: error.message };
-  }
-  if (error instanceof NotFoundError) {
-    return { code: "not_found", message: error.message };
-  }
-  if (error instanceof ValidationError) {
-    return { code: "invalid_input", message: error.message };
-  }
-  return { code: "unknown", message: "Something went wrong. Try again." };
-}
-</file>
-
-<file path="server/application/realtime.ts">
-import type { AccessTokenClaims } from "@/server/auth/jwt";
-import { signAccessToken } from "@/server/auth/jwt";
-
-/**
- * §4: "mint a Realtime-scoped JWT with the same secret and claim shape
- * Realtime's Authorization policies expect (org_id, role)." That's
- * exactly signAccessToken's shape already — no separate signing
- * function needed, just a clearly-named entry point so call sites read
- * as "get a token for Realtime" rather than looking like a second
- * app-session token.
- *
- * Re-minted on demand rather than only at login/refresh: RealtimeProvider
- * (the client) calls this periodically to refresh what it hands to
- * `supabase.realtime.setAuth()`, independent of whether a page
- * navigation happened to trigger proxy.ts's access-token refresh in the
- * meantime — a long-lived tab with no navigation wouldn't otherwise get
- * a fresh one before the ~15 minute expiry.
- */
-export async function mintRealtimeToken(
-  session: AccessTokenClaims,
-): Promise<string> {
-  return signAccessToken(session);
-}
-</file>
-
-<file path="server/application/tickets.ts">
-import type { Ticket } from "@/types";
-import type { AccessTokenClaims } from "@/server/auth/jwt";
-import {
-  createTicketInputSchema,
-  updateTicketInputSchema,
-} from "@/server/validation/tickets";
-import {
-  createTicket as createTicketRow,
-  findTicketById,
-  findTicketsForOrg,
-  updateTicketConditional,
-} from "@/server/repositories/tickets";
-import { findUserById } from "@/server/repositories/users";
-import {
-  ConflictError,
-  NotFoundError,
-  ValidationError,
-} from "@/server/application/errors";
-import { broadcastToOrg } from "@/server/realtime/broadcast";
-
-function toClientShape(ticket: {
-  id: string;
-  orgId: string;
-  title: string;
-  description: string;
-  status: string;
-  priority: string;
-  assigneeId: string | null;
-  creatorId: string;
-  version: number;
-  createdAt: Date;
-  updatedAt: Date;
-}): Ticket {
-  return {
-    id: ticket.id,
-    orgId: ticket.orgId,
-    title: ticket.title,
-    description: ticket.description,
-    status: ticket.status as Ticket["status"],
-    priority: ticket.priority as Ticket["priority"],
-    assigneeId: ticket.assigneeId,
-    creatorId: ticket.creatorId,
-    version: ticket.version,
-    createdAt: ticket.createdAt.toISOString(),
-    updatedAt: ticket.updatedAt.toISOString(),
-  };
-}
-
-/** WR-05: view. Org-scoped via the verified session — never a
- *  client-supplied org id (§3, Layer 1). */
-export async function listTickets(
-  session: AccessTokenClaims,
-): Promise<Ticket[]> {
-  const tickets = await findTicketsForOrg(session.orgId);
-  return tickets.map(toClientShape);
-}
-
-/**
- * Verifies a referenced user actually belongs to this org before a
- * ticket can point at them — assigning to a user id from a different
- * org (or one that doesn't exist) would otherwise silently corrupt the
- * ticket's assignee reference. Shared by create and update below.
- */
-async function assertAssigneeInOrg(orgId: string, assigneeId: string | null) {
-  if (assigneeId === null) return;
-  const user = await findUserById(orgId, assigneeId);
-  if (!user) {
-    throw new NotFoundError("Assignee not found in this organization.");
-  }
-}
-
-/** WR-01: create. */
-export async function createTicket(
-  session: AccessTokenClaims,
-  input: unknown,
-): Promise<Ticket> {
-  const parsed = createTicketInputSchema.safeParse(input);
-  if (!parsed.success) {
-    throw new ValidationError(
-      parsed.error.issues[0]?.message ?? "Invalid input.",
-    );
-  }
-
-  const assigneeId = parsed.data.assigneeId ?? null;
-  await assertAssigneeInOrg(session.orgId, assigneeId);
-
-  const ticket = await createTicketRow(session.orgId, {
-    title: parsed.data.title,
-    description: parsed.data.description,
-    priority: parsed.data.priority,
-    assigneeId,
-    creatorId: session.sub,
-  });
-
-  // §6's example event name is 'ticket.updated' for both creates and
-  // updates — there's no separate 'ticket.created' event in spec, so
-  // this uses the same one rather than inventing a variant. The payload
-  // is deliberately just the id — an invalidation hint, not the ticket
-  // itself (RT-06).
-  await broadcastToOrg(session.orgId, "ticket.updated", {
-    id: ticket.id,
-    orgId: session.orgId,
-  });
-
-  return toClientShape(ticket);
-}
-
-/**
- * WR-02/03/04 (assign, status, priority) plus title/description, all
- * through one version-checked update rather than four near-identical
- * use-cases — see BACKEND_ROADMAP.md's Milestone 2 notes for why: the
- * README frames these as separate user-facing capabilities, not
- * necessarily separate endpoints, and the one place that distinction
- * would matter (Activity needing to know *which* field changed to pick
- * TICKET_ASSIGNED vs. TICKET_STATUS_CHANGED) isn't wired up until
- * Milestone 6 — which can inspect this same diff then.
- */
-export async function updateTicket(
-  session: AccessTokenClaims,
-  ticketId: string,
-  input: unknown,
-): Promise<Ticket> {
-  const parsed = updateTicketInputSchema.safeParse(input);
-  if (!parsed.success) {
-    throw new ValidationError(
-      parsed.error.issues[0]?.message ?? "Invalid input.",
-    );
-  }
-
-  const existing = await findTicketById(session.orgId, ticketId);
-  if (!existing) {
-    throw new NotFoundError("Ticket not found.");
-  }
-
-  if (parsed.data.assigneeId !== undefined) {
-    await assertAssigneeInOrg(session.orgId, parsed.data.assigneeId);
-  }
-
-  const { expectedVersion, ...fields } = parsed.data;
-
-  const result = await updateTicketConditional(
-    session.orgId,
-    ticketId,
-    expectedVersion,
-    fields,
-  );
-
-  if (result.count === 0) {
-    throw new ConflictError(
-      "This ticket was changed by someone else. Refresh and try again.",
-    );
-  }
-
-  const updated = await findTicketById(session.orgId, ticketId);
-  if (!updated) {
-    // Genuinely shouldn't happen — the row we just updated vanished
-    // between the update and this refetch.
-    throw new NotFoundError("Ticket not found.");
-  }
-
-  await broadcastToOrg(session.orgId, "ticket.updated", {
-    id: updated.id,
-    orgId: session.orgId,
-  });
-
-  return toClientShape(updated);
-}
-</file>
-
-<file path="server/application/users.ts">
-import type { AccessTokenClaims } from "@/server/auth/jwt";
-import { listUsersForOrg } from "@/server/repositories/users";
-import { initialsFor } from "@/lib/initials";
-import type { User } from "@/types";
-
-/**
- * Real user data for the ticket assignee picker (TicketModal), so
- * `assigneeId` always references a row that actually exists — the
- * alternative (mock user ids) would violate the ticket→user foreign key
- * the moment a real database is behind this. The rest of Team
- * management is still mock data (that's Milestone 9); this one read is
- * pulled forward because Milestone 2's ticket assignment needs it to be
- * real to work at all.
- */
-export async function listOrgUsers(
-  session: AccessTokenClaims,
-): Promise<User[]> {
-  const users = await listUsersForOrg(session.orgId);
-  return users.map((u) => ({
-    id: u.id,
-    orgId: u.orgId,
-    email: u.email,
-    name: u.name,
-    role: u.role,
-    initials: initialsFor(u.name),
-  }));
-}
-</file>
-
-<file path="server/domain/ticket.ts">
-import type { TicketPriority, TicketStatus } from "@/types";
-
-export const TICKET_STATUSES: TicketStatus[] = [
-  "OPEN",
-  "IN_PROGRESS",
-  "BLOCKED",
-  "RESOLVED",
-];
-
-export const TICKET_PRIORITIES: TicketPriority[] = [
-  "LOW",
-  "MEDIUM",
-  "HIGH",
-  "URGENT",
-];
-
-/**
- * README §4.1 describes a loose lifecycle — "OPEN → IN_PROGRESS →
- * RESOLVED, the MVP may also support BLOCKED where appropriate" — not a
- * strict adjacency matrix with rejected transitions. That wording ("may
- * also support," "where appropriate") is deliberately permissive, not
- * an oversight: real ops work reopens resolved tickets and resolves
- * things immediately without ever touching IN_PROGRESS. So there is no
- * transition-validation function here — any status may move to any
- * other status. If a real business rule requiring otherwise emerges
- * later, it belongs here, not scattered into the application layer.
- */
-</file>
-
-<file path="server/realtime/broadcast.ts">
-/**
- * Broadcasts a small invalidation hint to an org's Realtime channel
- * after a mutation commits (§0/§6/§7) — never the resource itself, per
- * RT-06 ("Realtime is not authoritative"): clients treat this as a
- * signal to refetch through the normal, authorized path, not as data.
- *
- * Sent via Supabase's REST broadcast endpoint (a single HTTP POST), not
- * the `channel.send()` client-library method. That method sends over an
- * *established WebSocket* — from a short-lived Server Action there
- * isn't one, and asking supabase-js to open and tear down a socket per
- * mutation just to send one message is exactly the kind of thing that
- * fails silently in practice (a real, filed issue: supabase/realtime#774
- * reports channel.send() from a Node backend returning an opaque
- * "error" with no explanation when no socket is connected). The REST
- * endpoint is the documented, supported way to broadcast from a backend
- * with no persistent connection.
- *
- * External setup this depends on (Supabase dashboard/SQL — not
- * something this file can do): the project's Realtime Authorization
- * must be configured to trust this app's JWT_SECRET for custom JWT
- * verification, and the RLS policy from README §6 must exist on
- * realtime.messages. Both are one-time project configuration, not code.
- */
-export async function broadcastToOrg(
-  orgId: string,
-  event: string,
-  payload: Record<string, unknown>,
-): Promise<void> {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!url || !serviceRoleKey) {
-    console.error(
-      "broadcastToOrg: NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not set — skipping broadcast.",
-    );
-    return;
-  }
-
-  try {
-    const response = await fetch(`${url}/realtime/v1/api/broadcast`, {
-      method: "POST",
-      headers: {
-        apikey: serviceRoleKey,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        messages: [{ topic: `org:${orgId}`, event, payload }],
-      }),
-    });
-
-    if (!response.ok) {
-      console.error(
-        `broadcastToOrg: Realtime REST endpoint returned ${response.status}`,
-      );
-    }
-  } catch (error) {
-    // Deliberately swallowed, not re-thrown: the mutation this follows
-    // already committed successfully. A failed broadcast means clients
-    // find out on their next poll/navigation instead of instantly — a
-    // degraded experience, not a data-integrity problem — so it must
-    // never fail the request that triggered it.
-    console.error("broadcastToOrg: failed to broadcast", error);
-  }
-}
-</file>
-
-<file path="server/repositories/tickets.ts">
-import { prisma } from "@/lib/prisma";
-import type { TicketPriority, TicketStatus } from "@/types";
-
-export async function findTicketsForOrg(orgId: string) {
-  return prisma.ticket.findMany({
-    where: { orgId },
-    orderBy: { updatedAt: "desc" },
-  });
-}
-
-export async function findTicketById(orgId: string, id: string) {
-  return prisma.ticket.findFirst({ where: { id, orgId } });
-}
-
-export interface CreateTicketData {
-  title: string;
-  description: string;
-  priority: TicketPriority;
-  assigneeId: string | null;
-  creatorId: string;
-}
-
-export async function createTicket(orgId: string, data: CreateTicketData) {
-  return prisma.ticket.create({ data: { ...data, orgId } });
-}
-
-export interface TicketUpdateFields {
-  title?: string;
-  description?: string;
-  status?: TicketStatus;
-  priority?: TicketPriority;
-  assigneeId?: string | null;
-}
-
-/**
- * §8's conditional update, via Prisma: `updateMany` (not `update`, which
- * only accepts a unique where-clause) so `version` can sit in the where
- * clause alongside `id`/`orgId`. `count === 0` means either the row
- * didn't exist in this org, or — the case that actually matters here —
- * `expectedVersion` was stale, i.e. someone else's write already moved
- * it. Prisma's `{ increment: 1 }` compiles to the same atomic
- * `version = version + 1` the README's raw SQL shows; `updatedAt` is
- * `@updatedAt` in the schema, so Prisma sets it automatically.
- *
- * Returning the bare count (not throwing here) is deliberate — deciding
- * that zero rows means a conflict, specifically, is what the calling
- * use-case in server/application/tickets.ts does. This function only
- * knows "how many rows changed," not what that means.
- */
-export async function updateTicketConditional(
-  orgId: string,
-  id: string,
-  expectedVersion: number,
-  fields: TicketUpdateFields,
-) {
-  return prisma.ticket.updateMany({
-    where: { id, orgId, version: expectedVersion },
-    data: { ...fields, version: { increment: 1 } },
-  });
-}
-</file>
-
-<file path="server/validation/tickets.ts">
-import { z } from "zod";
-import { TICKET_PRIORITIES, TICKET_STATUSES } from "@/server/domain/ticket";
-
-/**
- * §11: the single source of truth for "is this input valid," checked
- * here before anything reaches application logic. Per the resolved
- * decision in BACKEND_ROADMAP.md, the client doesn't get React Hook
- * Form + zodResolver — TicketModal's existing `useState`-based form
- * runs this same schema through `.safeParse()` on submit instead, so
- * there's still exactly one definition of "a valid ticket."
- */
-
-const uuid = z.string().uuid();
-
-export const createTicketInputSchema = z.object({
-  title: z.string().trim().min(1, "Title is required"),
-  description: z.string().trim().default(""),
-  priority: z.enum(TICKET_PRIORITIES).default("MEDIUM"),
-  assigneeId: uuid.nullable().optional(),
-});
-
-export type CreateTicketInput = z.infer<typeof createTicketInputSchema>;
-
-export const updateTicketInputSchema = z
-  .object({
-    expectedVersion: z.number().int().positive(),
-    title: z.string().trim().min(1, "Title is required").optional(),
-    description: z.string().trim().optional(),
-    status: z.enum(TICKET_STATUSES).optional(),
-    priority: z.enum(TICKET_PRIORITIES).optional(),
-    assigneeId: uuid.nullable().optional(),
-  })
-  .refine(
-    (input) =>
-      input.title !== undefined ||
-      input.description !== undefined ||
-      input.status !== undefined ||
-      input.priority !== undefined ||
-      input.assigneeId !== undefined,
-    { message: "At least one field must change." },
-  );
-
-export type UpdateTicketInput = z.infer<typeof updateTicketInputSchema>;
-</file>
-
-<file path="test-results/ticket-realtime-§41-Test-1-06a71-or-another-without-a-reload-chromium/error-context.md">
-# Instructions
-
-- Following Playwright test failed.
-- Explain why, be concise, respect Playwright best practices.
-- Provide a snippet of code with the fix, if possible.
-
-# Test info
-
-- Name: ticket-realtime.spec.ts >> §41 Test 1 & 2 — ticket creation and assignment propagate live >> a ticket created by one user appears for another without a reload
-- Location: e2e\ticket-realtime.spec.ts:29:7
-
-# Error details
-
-```
-Error: expect(locator).toBeVisible() failed
-
-Locator: getByText('Realtime test ticket 1789948424186')
-Expected: visible
-Timeout: 10000ms
-Error: element(s) not found
-
-Call log:
-  - Expect "toBeVisible" getByText('Realtime test ticket 1789948424186') with timeout 10000ms
-  - waiting for getByText('Realtime test ticket 1789948424186')
-
-```
-
-```yaml
-- banner:
-  - img "Logo"
-  - text: Kestrel Commerce
-  - navigation:
-    - link "Dashboard":
-      - /url: /dashboard
-    - link "Tickets":
-      - /url: /tickets
-    - link "Incidents":
-      - /url: /incidents
-    - link "Services":
-      - /url: /services
-    - link "Activity":
-      - /url: /activity
-  - text: Reconnecting JD
-  - button "Sign out":
-    - img
-- main:
-  - heading "Tickets" [level=1]
-  - paragraph: 2 tickets
-  - button "New ticket":
-    - img
-    - text: New ticket
-  - button "All 2"
-  - button "Open 2"
-  - button "In progress 0"
-  - button "Blocked 0"
-  - button "Resolved 0"
-  - img
-  - textbox "Search tickets"
-  - list:
-    - button "Medium priority Realtime test ticket 1789948132017 Open 2m ago Assign to me":
-      - text: Realtime test ticket 1789948132017 Open 2m ago
-      - button "Assign to me"
-    - button "Medium priority Resolve intermittent 502 Bad Gateway errors on the user checkout API Open 5h ago Assign to me":
-      - text: Resolve intermittent 502 Bad Gateway errors on the user checkout API Open 5h ago
-      - button "Assign to me"
-- button "Open Tanstack query devtools":
-  - img
-- alert
-```
-
-# Test source
-
-```ts
-  1  | import { test, expect, type Page } from "@playwright/test";
-  2  | 
-  3  | /**
-  4  |  * §41's actual definition of done — this file currently covers only
-  5  |  * this milestone's slice (Tests 1 & 2: ticket creation and assignment
-  6  |  * propagating between two browser contexts with no reload). Tests 3–8
-  7  |  * get added here as Milestones 4/5/8 make them coverable, per §12's
-  8  |  * instruction to keep this file red rather than write eight tests up
-  9  |  * front against features that don't exist yet.
-  10 |  *
-  11 |  * Password must match prisma/seed.ts's DEMO_PASSWORD — there's no
-  12 |  * shared import between the seed script and this test file, so if one
-  13 |  * changes, the other needs to change too.
-  14 |  */
-  15 | const DEMO_PASSWORD = "relay-dev-1234";
-  16 | 
-  17 | const USER_A = { email: "maya@kestrel.dev", name: "Maya Reyes" };
-  18 | const USER_B = { email: "josh@kestrel.dev", name: "Josh Dietrich" };
-  19 | 
-  20 | async function loginAs(page: Page, email: string) {
-  21 |   await page.goto("/login");
-  22 |   await page.getByLabel("Email").fill(email);
-  23 |   await page.getByLabel("Password").fill(DEMO_PASSWORD);
-  24 |   await page.getByRole("button", { name: "Sign in" }).click();
-  25 |   await expect(page).toHaveURL(/\/dashboard/);
-  26 | }
-  27 | 
-  28 | test.describe("§41 Test 1 & 2 — ticket creation and assignment propagate live", () => {
-  29 |   test("a ticket created by one user appears for another without a reload", async ({
-  30 |     browser,
-  31 |   }) => {
-  32 |     const contextA = await browser.newContext();
-  33 |     const contextB = await browser.newContext();
-  34 |     const pageA = await contextA.newPage();
-  35 |     const pageB = await contextB.newPage();
-  36 | 
-  37 |     await loginAs(pageA, USER_A.email);
-  38 |     await loginAs(pageB, USER_B.email);
-  39 | 
-  40 |     await pageA.goto("/tickets");
-  41 |     await pageB.goto("/tickets");
-  42 | 
-  43 |     const title = `Realtime test ticket ${Date.now()}`;
-  44 | 
-  45 |     // Test 1 (§41): create in Browser A.
-  46 |     await pageA.getByRole("button", { name: "New ticket" }).click();
-  47 |     await pageA.getByLabel("Title").fill(title);
-  48 |     await pageA.getByRole("button", { name: "Create ticket" }).click();
-  49 | 
-  50 |     // Check Browser A first — this does NOT depend on realtime at all
-  51 |     // (its own mutation invalidates its own query on success), so a
-  52 |     // failure here means ticket creation itself is broken, not
-  53 |     // propagation. Splitting this out turns "Browser B never sees it"
-  54 |     // from one failure into two, so a red run actually points at which
-  55 |     // half is broken instead of leaving both as suspects.
-  56 |     await expect(pageA.getByText(title)).toBeVisible({ timeout: 10_000 });
-  57 | 
-  58 |     // The real assertion: Browser B never reloads or navigates. If this
-  59 |     // only passes after a manual pageB.reload(), the realtime wiring
-  60 |     // (broadcast → RLS-authorized subscription → invalidateQueries)
-  61 |     // isn't actually working — a passing test with a reload added would
-  62 |     // be testing the wrong thing.
-> 63 |     await expect(pageB.getByText(title)).toBeVisible({ timeout: 10_000 });
-     |                                          ^ Error: expect(locator).toBeVisible() failed
-  64 | 
-  65 |     // Test 2 (§41): assign it to Browser B's user, from Browser A.
-  66 |     await pageA.getByText(title).click();
-  67 |     await pageA.getByLabel("Assignee").selectOption({ label: USER_B.name });
-  68 |     await pageA.getByRole("button", { name: "Save changes" }).click();
-  69 | 
-  70 |     // Browser B should see itself assigned without any reload either —
-  71 |     // the avatar/assignment indicator replacing "Assign to me" on that
-  72 |     // row is the visible signal.
-  73 |     const rowB = pageB.locator("li", { hasText: title });
-  74 |     await expect(rowB.getByTitle(USER_B.name)).toBeVisible({
-  75 |       timeout: 10_000,
-  76 |     });
-  77 | 
-  78 |     await contextA.close();
-  79 |     await contextB.close();
-  80 |   });
-  81 | });
-```
-</file>
-
-<file path="test-results/.last-run.json">
-{
-  "status": "failed",
-  "failedTests": [
-    "30bcad0ebe4e9ffa9e6f-fa98e2d3107d6a2b8e62"
-  ]
-}
-</file>
-
-<file path="playwright.config.ts">
-import { defineConfig, devices } from "@playwright/test";
-
-/**
- * README §12/§41: the two-browser-context acceptance test is the actual
- * definition of done, not a final-phase checkbox — written at Milestone
- * 3 and extended as each later milestone's slice of it becomes coverable
- * (e2e/ticket-realtime.spec.ts currently covers Tests 1 & 2 only).
- *
- * Requires a running dev server with real Postgres + Supabase Realtime
- * configured (DATABASE_URL, JWT_SECRET, NEXT_PUBLIC_SUPABASE_URL,
- * NEXT_PUBLIC_SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY — see
- * .env.example) and a seeded database (`npm run db:seed` — see
- * prisma/seed.ts for the demo password). None of that exists in the
- * sandbox this was written in, so this config and the spec file next to
- * it are correct-by-construction, not verified-by-execution — see this
- * session's notes on that limitation.
- */
-export default defineConfig({
-  testDir: "./e2e",
-  fullyParallel: false,
-  retries: 0,
-  reporter: "list",
-  use: {
-    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000",
-    trace: "on-first-retry",
-  },
-  projects: [
-    {
-      name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
-    },
-  ],
-  webServer: {
-    command: "npm run build && npm run start",
-    url: "http://localhost:3000",
-    reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
-  },
-});
-</file>
 
 <file path="app/(dashboard)/activity/page.tsx">
 "use client";
@@ -1319,6 +271,87 @@ export default function DashboardPage() {
       </div>
     </>
   );
+}
+</file>
+
+<file path="app/(dashboard)/tickets/actions.ts">
+"use server";
+
+import { requireSession } from "@/server/auth/session";
+import {
+  createTicket,
+  listTickets,
+  updateTicket,
+} from "@/server/application/tickets";
+import { listOrgUsers } from "@/server/application/users";
+import { toActionError, type ActionError } from "@/server/application/errors";
+import type { Ticket, User } from "@/types";
+
+export type ActionResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: ActionError };
+
+/**
+ * Used directly as TanStack Query's `queryFn` (§10) — a Server Action is
+ * just an async function from the client's perspective, so this is a
+ * completely ordinary queryFn, no separate Route Handler needed (§5:
+ * Route Handlers are for callers that aren't the Relay UI itself).
+ */
+export async function listTicketsAction(): Promise<Ticket[]> {
+  const session = await requireSession();
+  return listTickets(session);
+}
+
+/** For TicketModal's assignee picker — real org users, not mock data
+ *  (server/application/users.ts explains why this one got pulled
+ *  forward from Milestone 9). */
+export async function listOrgUsersAction(): Promise<User[]> {
+  const session = await requireSession();
+  return listOrgUsers(session);
+}
+
+export async function createTicketAction(
+  input: unknown,
+): Promise<ActionResult<Ticket>> {
+  try {
+    const session = await requireSession();
+    const ticket = await createTicket(session, input);
+    return { ok: true, data: ticket };
+  } catch (error) {
+    return { ok: false, error: toActionError(error) };
+  }
+}
+
+export async function updateTicketAction(
+  ticketId: string,
+  input: unknown,
+): Promise<ActionResult<Ticket>> {
+  try {
+    const session = await requireSession();
+    const ticket = await updateTicket(session, ticketId, input);
+    return { ok: true, data: ticket };
+  } catch (error) {
+    return { ok: false, error: toActionError(error) };
+  }
+}
+</file>
+
+<file path="app/(dashboard)/actions.ts">
+"use server";
+
+import { requireSession } from "@/server/auth/session";
+import { mintRealtimeToken } from "@/server/application/realtime";
+
+/**
+ * Called by RealtimeProvider (components/shared/RealtimeProvider.tsx) on
+ * mount and periodically thereafter. Lives here rather than under
+ * tickets/ or any other domain folder — Realtime's subscription is
+ * cross-cutting infrastructure for the whole dashboard shell, not owned
+ * by one domain.
+ */
+export async function getRealtimeTokenAction(): Promise<string> {
+  const session = await requireSession();
+  return mintRealtimeToken(session);
 }
 </file>
 
@@ -1962,6 +995,204 @@ export function FilterPill({ active, onClick, label, count }: FilterPillProps) {
 }
 </file>
 
+<file path="components/shared/QueryProvider.tsx">
+"use client";
+
+import { useState, type ReactNode } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
+
+/**
+ * §10: "TanStack Query owns all server-derived state... one
+ * QueryClientProvider at the root." "Root" here means the root of the
+ * authenticated app (this composes alongside ToastProvider in the
+ * dashboard layout) rather than the true app root — /login has nothing
+ * to query, so there's no reason to give it a query client too.
+ *
+ * The QueryClient is created once via useState's lazy initializer, not
+ * as a plain `new QueryClient()` inline — that would build a fresh
+ * client (and lose all cached data) on every render.
+ */
+export function QueryProvider({ children }: { children: ReactNode }) {
+  const [queryClient] = useState(() => new QueryClient());
+
+  return (
+    <QueryClientProvider client={queryClient}>
+      {children}
+      {process.env.NODE_ENV === "development" && (
+        <ReactQueryDevtools initialIsOpen={false} />
+      )}
+    </QueryClientProvider>
+  );
+}
+</file>
+
+<file path="components/shared/RealtimeProvider.tsx">
+"use client";
+
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { createClient, type RealtimeChannel } from "@supabase/supabase-js";
+import { getRealtimeTokenAction } from "@/app/(dashboard)/actions";
+
+const RealtimeStatusContext = createContext(false);
+
+export function useRealtimeConnected(): boolean {
+  return useContext(RealtimeStatusContext);
+}
+
+const TOKEN_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+const supabase =
+  supabaseUrl && supabaseAnonKey
+    ? createClient(supabaseUrl, supabaseAnonKey)
+    : null;
+
+interface RealtimeProviderProps {
+  orgId: string;
+  children: ReactNode;
+}
+
+export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
+  const queryClient = useQueryClient();
+  const [connected, setConnected] = useState(false);
+  const channelRef = useRef<RealtimeChannel | null>(null);
+
+  // Generation counter, not just a `cancelled` boolean. A boolean stops
+  // a stale run's own setState calls but does nothing about async work
+  // already in flight: under Strict Mode's mount→cleanup→mount, the
+  // first run's getRealtimeTokenAction()/setAuth() call can still be on
+  // the wire when the second run starts. If both runs eventually
+  // resolve and each subscribes its own channel, that's the
+  // overlapping-join symptom in the bug report. Bumping this on every
+  // effect run and checking it after every await lets a stale run
+  // detect it's stale *after each async step*, not just before calling
+  // setState, and bail before ever touching the socket.
+  const generationRef = useRef(0);
+
+  useEffect(() => {
+    if (!supabase) {
+      console.warn(
+        "RealtimeProvider: NEXT_PUBLIC_SUPABASE_URL/NEXT_PUBLIC_SUPABASE_ANON_KEY not set — realtime disabled.",
+      );
+      return;
+    }
+
+    generationRef.current += 1;
+    const myGeneration = generationRef.current;
+    const isStale = () => myGeneration !== generationRef.current;
+
+    let channel: RealtimeChannel | null = null;
+    let refreshInterval: ReturnType<typeof setInterval> | null = null;
+
+    const authenticateAndSubscribe = async () => {
+      try {
+        const token = await getRealtimeTokenAction();
+        if (isStale()) return;
+
+        // setAuth() MUST complete before subscribe() is called.
+        // Realtime Authorization checks the socket's current JWT at
+        // phx_join time; subscribing first and authenticating after
+        // means the join goes out unauthenticated (RLS has nothing to
+        // match org_id against), draws a CHANNEL_ERROR, and only
+        // succeeds on the rejoin that setAuth() triggers afterwards —
+        // which is exactly the "ok and error mixed together, plus a
+        // phx_leave" pattern in the bug report. Sequencing this, and
+        // only building/subscribing the channel afterward, removes
+        // that race entirely rather than just narrowing it.
+        await supabase.realtime.setAuth(token);
+        if (isStale()) return;
+
+        channel = supabase
+          .channel(`org:${orgId}`, { config: { private: true } })
+          .on("broadcast", { event: "ticket.updated" }, ({ payload }) => {
+            if (isStale()) return;
+            if (payload?.id) {
+              queryClient.invalidateQueries({
+                queryKey: ["tickets", payload.id],
+              });
+            }
+            queryClient.invalidateQueries({ queryKey: ["tickets", "list"] });
+          })
+          .subscribe((status) => {
+            if (isStale()) return;
+
+            if (status === "SUBSCRIBED") {
+              setConnected(true);
+              queryClient.invalidateQueries();
+            } else {
+              setConnected(false);
+            }
+          });
+
+        channelRef.current = channel;
+
+        // Re-authing an already-joined channel doesn't trigger a
+        // rejoin the way the pre-auth initial join above did —
+        // supabase-js just pushes the refreshed token to the socket —
+        // so this interval doesn't reproduce the race, only the
+        // isStale() guard is needed to stop it after teardown.
+        refreshInterval = setInterval(async () => {
+          if (isStale()) return;
+          try {
+            const freshToken = await getRealtimeTokenAction();
+            if (isStale()) return;
+            await supabase.realtime.setAuth(freshToken);
+          } catch (error) {
+            console.error(
+              "RealtimeProvider: failed to refresh auth token",
+              error,
+            );
+          }
+        }, TOKEN_REFRESH_INTERVAL_MS);
+      } catch (error) {
+        if (!isStale()) {
+          console.error(
+            "RealtimeProvider: failed to authenticate realtime session",
+            error,
+          );
+          setConnected(false);
+        }
+      }
+    };
+
+    void authenticateAndSubscribe();
+
+    return () => {
+      // This cleanup can run *before* authenticateAndSubscribe's awaits
+      // resolve (that's precisely the Strict Mode case). The isStale()
+      // checks sprinkled after every await are what actually stop a
+      // torn-down run from creating/subscribing a channel — this
+      // cleanup only tears down whatever *this* run had already made
+      // by the time it runs.
+      if (refreshInterval) clearInterval(refreshInterval);
+      if (channel) {
+        supabase.removeChannel(channel);
+      }
+      if (channelRef.current === channel) {
+        channelRef.current = null;
+      }
+    };
+  }, [orgId, queryClient]);
+
+  return (
+    <RealtimeStatusContext.Provider value={connected}>
+      {children}
+    </RealtimeStatusContext.Provider>
+  );
+}
+</file>
+
 <file path="components/shared/Sparkline.tsx">
 interface SparklineProps {
   values: number[];
@@ -2142,222 +1373,6 @@ export function useToast(): ToastContextValue {
     throw new Error("useToast must be used within a ToastProvider");
   }
   return ctx;
-}
-</file>
-
-<file path="components/tickets/TicketModal.tsx">
-"use client";
-
-import { useState } from "react";
-import { Modal } from "@/components/shared/Modal";
-import { SelectField } from "@/components/shared/SelectField";
-import { TextField } from "@/components/shared/TextField";
-import {
-  createTicketInputSchema,
-  updateTicketInputSchema,
-} from "@/server/validation/tickets";
-import {
-  ticketPriorityMeta,
-  ticketStatusMeta,
-  type Ticket,
-  type TicketPriority,
-  type TicketStatus,
-  type User,
-} from "@/types";
-
-const statusOptions = Object.entries(ticketStatusMeta).map(([value, meta]) => ({
-  value,
-  label: meta.label,
-}));
-const priorityOptions = Object.entries(ticketPriorityMeta).map(
-  ([value, meta]) => ({ value, label: meta.label }),
-);
-
-export interface CreateTicketFields {
-  title: string;
-  description: string;
-  priority: TicketPriority;
-  assigneeId: string | null;
-}
-
-export interface UpdateTicketFields {
-  title: string;
-  description: string;
-  status: TicketStatus;
-  priority: TicketPriority;
-  assigneeId: string | null;
-  expectedVersion: number;
-}
-
-interface TicketModalProps {
-  /** null = create mode. Otherwise the ticket being edited. */
-  ticket: Ticket | null;
-  users: User[];
-  /** True while the create/update mutation is in flight — this is a
-   *  real network round trip now (Milestone 2), not an instant local
-   *  state update, so the Save button needs to say so. */
-  saving?: boolean;
-  onClose: () => void;
-  onCreate: (input: CreateTicketFields) => void;
-  onUpdate: (input: UpdateTicketFields) => void;
-}
-
-/**
- * Create-or-edit form for a single ticket. One component handles both
- * modes since the fields are almost identical — only the starting
- * values and which callback fires differ.
- *
- * This hands the caller (TicketsView) plain input fields, not a
- * fully-formed Ticket: the server is what assigns the real id, version,
- * and timestamps now (Milestone 2), via createTicketAction/
- * updateTicketAction. Building a fake client-side Ticket object here —
- * which the pre-backend version of this file used to do — would just be
- * guessing at values the server is actually responsible for.
- *
- * Validated with the same Zod schemas the server uses
- * (server/validation/tickets.ts) via `.safeParse()` on submit, per the
- * resolved decision in BACKEND_ROADMAP.md not to adopt React Hook Form —
- * one shared definition of "a valid ticket," without a form-library
- * rewrite these ~5 fields don't need.
- */
-export function TicketModal({
-  ticket,
-  users,
-  saving,
-  onClose,
-  onCreate,
-  onUpdate,
-}: TicketModalProps) {
-  const isCreate = ticket === null;
-
-  const [title, setTitle] = useState(ticket?.title ?? "");
-  const [description, setDescription] = useState(ticket?.description ?? "");
-  const [status, setStatus] = useState<TicketStatus>(ticket?.status ?? "OPEN");
-  const [priority, setPriority] = useState<TicketPriority>(
-    ticket?.priority ?? "MEDIUM",
-  );
-  const [assigneeId, setAssigneeId] = useState(ticket?.assigneeId ?? "");
-  const [formError, setFormError] = useState<string | null>(null);
-
-  const handleSave = () => {
-    if (isCreate) {
-      const parsed = createTicketInputSchema.safeParse({
-        title,
-        description,
-        priority,
-        assigneeId: assigneeId || null,
-      });
-      if (!parsed.success) {
-        setFormError(parsed.error.issues[0]?.message ?? "Invalid input.");
-        return;
-      }
-      setFormError(null);
-      onCreate({ ...parsed.data, assigneeId: parsed.data.assigneeId ?? null });
-    } else {
-      const parsed = updateTicketInputSchema.safeParse({
-        title,
-        description,
-        status,
-        priority,
-        assigneeId: assigneeId || null,
-        expectedVersion: ticket.version,
-      });
-      if (!parsed.success) {
-        setFormError(parsed.error.issues[0]?.message ?? "Invalid input.");
-        return;
-      }
-      setFormError(null);
-      onUpdate({
-        title: parsed.data.title ?? title,
-        description: parsed.data.description ?? description,
-        status: parsed.data.status ?? status,
-        priority: parsed.data.priority ?? priority,
-        assigneeId: parsed.data.assigneeId ?? null,
-        expectedVersion: parsed.data.expectedVersion,
-      });
-    }
-  };
-
-  const footer = (
-    <div className="flex flex-col gap-2">
-      {formError && <p className="text-xs text-danger">{formError}</p>}
-      <div className="flex items-center justify-end gap-2">
-        <button
-          type="button"
-          onClick={onClose}
-          disabled={saving}
-          className="rounded-md border border-line px-3 py-1.5 text-sm text-ink-dim transition-colors hover:text-ink disabled:opacity-50"
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={saving}
-          className="rounded-md bg-ink px-3 py-1.5 text-sm font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-50"
-        >
-          {saving ? "Saving…" : isCreate ? "Create ticket" : "Save changes"}
-        </button>
-      </div>
-    </div>
-  );
-
-  return (
-    <Modal
-      title={isCreate ? "New ticket" : "Edit ticket"}
-      onClose={onClose}
-      footer={footer}
-    >
-      <div className="flex flex-col gap-3">
-        <TextField
-          label="Title"
-          autoFocus
-          value={title}
-          onChange={setTitle}
-          placeholder="Short, specific summary"
-        />
-
-        <TextField
-          label="Description"
-          multiline
-          value={description}
-          onChange={setDescription}
-          placeholder="Optional detail"
-        />
-
-        <div
-          className={
-            isCreate ? "grid grid-cols-1 gap-3" : "grid grid-cols-2 gap-3"
-          }
-        >
-          {!isCreate && (
-            <SelectField
-              label="Status"
-              value={status}
-              onChange={(value) => setStatus(value as TicketStatus)}
-              options={statusOptions}
-            />
-          )}
-          <SelectField
-            label="Priority"
-            value={priority}
-            onChange={(value) => setPriority(value as TicketPriority)}
-            options={priorityOptions}
-          />
-        </div>
-
-        <SelectField
-          label="Assignee"
-          value={assigneeId ?? ""}
-          onChange={setAssigneeId}
-          options={[
-            { value: "", label: "Unassigned" },
-            ...users.map((u) => ({ value: u.id, label: u.name })),
-          ]}
-        />
-      </div>
-    </Modal>
-  );
 }
 </file>
 
@@ -2946,6 +1961,301 @@ export async function logout(refreshTokenValue: string | null): Promise<void> {
 }
 </file>
 
+<file path="server/application/errors.ts">
+/**
+ * Typed errors the application layer throws so a Server Action can map
+ * them to a specific client-facing result rather than a generic
+ * failure. Per §8: "the use-case throws a ConflictError. The Server
+ * Action surfaces this as a typed error" — the throwing happens here in
+ * application code; catching and converting to a serializable result
+ * happens at the Server Action boundary (see e.g.
+ * app/(dashboard)/tickets/actions.ts), since a thrown Error doesn't
+ * cross that boundary with its specific type intact.
+ */
+
+/** §8: an update's `expectedVersion` no longer matches the row's current
+ *  version — someone else's write got there first. */
+export class ConflictError extends Error {
+  constructor(message = "This record was changed by someone else.") {
+    super(message);
+    this.name = "ConflictError";
+  }
+}
+
+/** The referenced record doesn't exist, or doesn't belong to this org —
+ *  those two cases are deliberately indistinguishable to the caller
+ *  (§3): a ticket from another org should look identical to a ticket
+ *  that doesn't exist, not leak that it exists elsewhere. */
+export class NotFoundError extends Error {
+  constructor(message = "Not found.") {
+    super(message);
+    this.name = "NotFoundError";
+  }
+}
+
+/** Input failed Zod validation (§11) before it ever reached domain
+ *  logic. */
+export class ValidationError extends Error {
+  constructor(message = "Invalid input.") {
+    super(message);
+    this.name = "ValidationError";
+  }
+}
+
+export interface ActionError {
+  code: "conflict" | "not_found" | "invalid_input" | "unknown";
+  message: string;
+}
+
+/**
+ * Shared catch-and-map for every domain's Server Actions (tickets today;
+ * incidents/services will reuse this in later milestones) — one place
+ * mapping the three typed errors above to a serializable result, rather
+ * than each actions.ts file re-implementing the same three `instanceof`
+ * checks. Anything not one of the three known types becomes "unknown"
+ * with a generic message — an unexpected failure (a DB outage) shouldn't
+ * leak its internals to the client.
+ */
+export function toActionError(error: unknown): ActionError {
+  if (error instanceof ConflictError) {
+    return { code: "conflict", message: error.message };
+  }
+  if (error instanceof NotFoundError) {
+    return { code: "not_found", message: error.message };
+  }
+  if (error instanceof ValidationError) {
+    return { code: "invalid_input", message: error.message };
+  }
+  return { code: "unknown", message: "Something went wrong. Try again." };
+}
+</file>
+
+<file path="server/application/realtime.ts">
+import type { AccessTokenClaims } from "@/server/auth/jwt";
+import { signAccessToken } from "@/server/auth/jwt";
+
+/**
+ * §4: "mint a Realtime-scoped JWT with the same secret and claim shape
+ * Realtime's Authorization policies expect (org_id, role)." That's
+ * exactly signAccessToken's shape already — no separate signing
+ * function needed, just a clearly-named entry point so call sites read
+ * as "get a token for Realtime" rather than looking like a second
+ * app-session token.
+ *
+ * Re-minted on demand rather than only at login/refresh: RealtimeProvider
+ * (the client) calls this periodically to refresh what it hands to
+ * `supabase.realtime.setAuth()`, independent of whether a page
+ * navigation happened to trigger proxy.ts's access-token refresh in the
+ * meantime — a long-lived tab with no navigation wouldn't otherwise get
+ * a fresh one before the ~15 minute expiry.
+ */
+export async function mintRealtimeToken(
+  session: AccessTokenClaims,
+): Promise<string> {
+  return signAccessToken(session);
+}
+</file>
+
+<file path="server/application/tickets.ts">
+import type { Ticket } from "@/types";
+import type { AccessTokenClaims } from "@/server/auth/jwt";
+import {
+  createTicketInputSchema,
+  updateTicketInputSchema,
+} from "@/server/validation/tickets";
+import {
+  createTicket as createTicketRow,
+  findTicketById,
+  findTicketsForOrg,
+  updateTicketConditional,
+} from "@/server/repositories/tickets";
+import { findUserById } from "@/server/repositories/users";
+import {
+  ConflictError,
+  NotFoundError,
+  ValidationError,
+} from "@/server/application/errors";
+import { broadcastToOrg } from "@/server/realtime/broadcast";
+
+function toClientShape(ticket: {
+  id: string;
+  orgId: string;
+  title: string;
+  description: string;
+  status: string;
+  priority: string;
+  assigneeId: string | null;
+  creatorId: string;
+  version: number;
+  createdAt: Date;
+  updatedAt: Date;
+}): Ticket {
+  return {
+    id: ticket.id,
+    orgId: ticket.orgId,
+    title: ticket.title,
+    description: ticket.description,
+    status: ticket.status as Ticket["status"],
+    priority: ticket.priority as Ticket["priority"],
+    assigneeId: ticket.assigneeId,
+    creatorId: ticket.creatorId,
+    version: ticket.version,
+    createdAt: ticket.createdAt.toISOString(),
+    updatedAt: ticket.updatedAt.toISOString(),
+  };
+}
+
+/** WR-05: view. Org-scoped via the verified session — never a
+ *  client-supplied org id (§3, Layer 1). */
+export async function listTickets(
+  session: AccessTokenClaims,
+): Promise<Ticket[]> {
+  const tickets = await findTicketsForOrg(session.orgId);
+  return tickets.map(toClientShape);
+}
+
+/**
+ * Verifies a referenced user actually belongs to this org before a
+ * ticket can point at them — assigning to a user id from a different
+ * org (or one that doesn't exist) would otherwise silently corrupt the
+ * ticket's assignee reference. Shared by create and update below.
+ */
+async function assertAssigneeInOrg(orgId: string, assigneeId: string | null) {
+  if (assigneeId === null) return;
+  const user = await findUserById(orgId, assigneeId);
+  if (!user) {
+    throw new NotFoundError("Assignee not found in this organization.");
+  }
+}
+
+/** WR-01: create. */
+export async function createTicket(
+  session: AccessTokenClaims,
+  input: unknown,
+): Promise<Ticket> {
+  const parsed = createTicketInputSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new ValidationError(
+      parsed.error.issues[0]?.message ?? "Invalid input.",
+    );
+  }
+
+  const assigneeId = parsed.data.assigneeId ?? null;
+  await assertAssigneeInOrg(session.orgId, assigneeId);
+
+  const ticket = await createTicketRow(session.orgId, {
+    title: parsed.data.title,
+    description: parsed.data.description,
+    priority: parsed.data.priority,
+    assigneeId,
+    creatorId: session.sub,
+  });
+
+  // §6's example event name is 'ticket.updated' for both creates and
+  // updates — there's no separate 'ticket.created' event in spec, so
+  // this uses the same one rather than inventing a variant. The payload
+  // is deliberately just the id — an invalidation hint, not the ticket
+  // itself (RT-06).
+  await broadcastToOrg(session.orgId, "ticket.updated", {
+    id: ticket.id,
+    orgId: session.orgId,
+  });
+
+  return toClientShape(ticket);
+}
+
+/**
+ * WR-02/03/04 (assign, status, priority) plus title/description, all
+ * through one version-checked update rather than four near-identical
+ * use-cases — see BACKEND_ROADMAP.md's Milestone 2 notes for why: the
+ * README frames these as separate user-facing capabilities, not
+ * necessarily separate endpoints, and the one place that distinction
+ * would matter (Activity needing to know *which* field changed to pick
+ * TICKET_ASSIGNED vs. TICKET_STATUS_CHANGED) isn't wired up until
+ * Milestone 6 — which can inspect this same diff then.
+ */
+export async function updateTicket(
+  session: AccessTokenClaims,
+  ticketId: string,
+  input: unknown,
+): Promise<Ticket> {
+  const parsed = updateTicketInputSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new ValidationError(
+      parsed.error.issues[0]?.message ?? "Invalid input.",
+    );
+  }
+
+  const existing = await findTicketById(session.orgId, ticketId);
+  if (!existing) {
+    throw new NotFoundError("Ticket not found.");
+  }
+
+  if (parsed.data.assigneeId !== undefined) {
+    await assertAssigneeInOrg(session.orgId, parsed.data.assigneeId);
+  }
+
+  const { expectedVersion, ...fields } = parsed.data;
+
+  const result = await updateTicketConditional(
+    session.orgId,
+    ticketId,
+    expectedVersion,
+    fields,
+  );
+
+  if (result.count === 0) {
+    throw new ConflictError(
+      "This ticket was changed by someone else. Refresh and try again.",
+    );
+  }
+
+  const updated = await findTicketById(session.orgId, ticketId);
+  if (!updated) {
+    // Genuinely shouldn't happen — the row we just updated vanished
+    // between the update and this refetch.
+    throw new NotFoundError("Ticket not found.");
+  }
+
+  await broadcastToOrg(session.orgId, "ticket.updated", {
+    id: updated.id,
+    orgId: session.orgId,
+  });
+
+  return toClientShape(updated);
+}
+</file>
+
+<file path="server/application/users.ts">
+import type { AccessTokenClaims } from "@/server/auth/jwt";
+import { listUsersForOrg } from "@/server/repositories/users";
+import { initialsFor } from "@/lib/initials";
+import type { User } from "@/types";
+
+/**
+ * Real user data for the ticket assignee picker (TicketModal), so
+ * `assigneeId` always references a row that actually exists — the
+ * alternative (mock user ids) would violate the ticket→user foreign key
+ * the moment a real database is behind this. The rest of Team
+ * management is still mock data (that's Milestone 9); this one read is
+ * pulled forward because Milestone 2's ticket assignment needs it to be
+ * real to work at all.
+ */
+export async function listOrgUsers(
+  session: AccessTokenClaims,
+): Promise<User[]> {
+  const users = await listUsersForOrg(session.orgId);
+  return users.map((u) => ({
+    id: u.id,
+    orgId: u.orgId,
+    email: u.email,
+    name: u.name,
+    role: u.role,
+    initials: initialsFor(u.name),
+  }));
+}
+</file>
+
 <file path="server/auth/cookies.ts">
 /**
  * Names and lifetimes for the two session cookies. Actual `cookies().set()`
@@ -2958,95 +2268,6 @@ export const ACCESS_TOKEN_COOKIE = "relay_access_token";
 export const REFRESH_TOKEN_COOKIE = "relay_refresh_token";
 
 export const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
-</file>
-
-<file path="server/auth/jwt.ts">
-import { jwtVerify, SignJWT } from "jose";
-import type { Role } from "@/types";
-
-/**
- * README §4: HS256, short-lived access token carrying `sub` (user id),
- * `org_id`, and our app's role. Every Server Action and Route Handler
- * resolves "who is this" by verifying this token via getSession()
- * (server/auth/session.ts) — never by trusting a client-supplied org id
- * or role directly (AUTH-06).
- *
- * The wire claim for our role is `app_role`, not `role` — `role` is
- * reserved by Supabase/PostgREST, which reads it to decide which
- * *Postgres* role a connection assumes (normally `authenticated`).
- * Setting it to our own value like `"MANAGER"` isn't a role Postgres
- * knows about, so a connection using this token doesn't get the base
- * grants `authenticated` normally has — Realtime Authorization then
- * rejects the whole channel join before the RLS policy's own condition
- * is meaningfully evaluated at all (confirmed against a real project:
- * valid signature, correct org_id, correct policy, still rejected with
- * "Unauthorized... to read from this Channel topic" — this collision
- * was the actual cause). `AccessTokenClaims.role` keeps its name
- * everywhere else in the app; only the JWT payload's key changed.
- */
-export const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
-
-export interface AccessTokenClaims {
-  sub: string;
-  orgId: string;
-  role: Role;
-}
-
-function secretKey(): Uint8Array {
-  const secret = process.env.JWT_SECRET;
-  if (!secret) {
-    throw new Error(
-      "JWT_SECRET is not set — see .env.example. Required to sign and verify access tokens.",
-    );
-  }
-  return new TextEncoder().encode(secret);
-}
-
-export async function signAccessToken(
-  claims: AccessTokenClaims,
-): Promise<string> {
-  return new SignJWT({
-    org_id: claims.orgId,
-    app_role: claims.role,
-    // Satisfies Supabase/PostgREST's reserved `role` claim — see the
-    // block comment above for why this can't be our own MEMBER/MANAGER
-    // value.
-    role: "authenticated",
-  })
-    .setProtectedHeader({ alg: "HS256" })
-    .setSubject(claims.sub)
-    .setIssuedAt()
-    .setExpirationTime(`${ACCESS_TOKEN_TTL_SECONDS}s`)
-    .sign(secretKey());
-}
-
-/**
- * Returns null for anything that isn't a currently-valid access token —
- * expired, malformed, wrong signature, or missing/mistyped claims — all
- * treated identically: no session. Callers don't get to distinguish
- * "expired" from "forged," which is the point.
- */
-export async function verifyAccessToken(
-  token: string,
-): Promise<AccessTokenClaims | null> {
-  try {
-    const { payload } = await jwtVerify(token, secretKey(), {
-      algorithms: ["HS256"],
-    });
-
-    if (
-      typeof payload.sub !== "string" ||
-      typeof payload.org_id !== "string" ||
-      (payload.app_role !== "MEMBER" && payload.app_role !== "MANAGER")
-    ) {
-      return null;
-    }
-
-    return { sub: payload.sub, orgId: payload.org_id, role: payload.app_role };
-  } catch {
-    return null;
-  }
-}
 </file>
 
 <file path="server/auth/password.ts">
@@ -3183,6 +2404,36 @@ export function hashRefreshToken(token: string): string {
 }
 </file>
 
+<file path="server/domain/ticket.ts">
+import type { TicketPriority, TicketStatus } from "@/types";
+
+export const TICKET_STATUSES: TicketStatus[] = [
+  "OPEN",
+  "IN_PROGRESS",
+  "BLOCKED",
+  "RESOLVED",
+];
+
+export const TICKET_PRIORITIES: TicketPriority[] = [
+  "LOW",
+  "MEDIUM",
+  "HIGH",
+  "URGENT",
+];
+
+/**
+ * README §4.1 describes a loose lifecycle — "OPEN → IN_PROGRESS →
+ * RESOLVED, the MVP may also support BLOCKED where appropriate" — not a
+ * strict adjacency matrix with rejected transitions. That wording ("may
+ * also support," "where appropriate") is deliberately permissive, not
+ * an oversight: real ops work reopens resolved tickets and resolves
+ * things immediately without ever touching IN_PROGRESS. So there is no
+ * transition-validation function here — any status may move to any
+ * other status. If a real business rule requiring otherwise emerges
+ * later, it belongs here, not scattered into the application layer.
+ */
+</file>
+
 <file path="server/repositories/refresh-tokens.ts">
 import { prisma } from "@/lib/prisma";
 
@@ -3217,6 +2468,69 @@ export async function revokeAllRefreshTokensForUser(userId: string) {
   await prisma.refreshToken.updateMany({
     where: { userId, revokedAt: null },
     data: { revokedAt: new Date() },
+  });
+}
+</file>
+
+<file path="server/repositories/tickets.ts">
+import { prisma } from "@/lib/prisma";
+import type { TicketPriority, TicketStatus } from "@/types";
+
+export async function findTicketsForOrg(orgId: string) {
+  return prisma.ticket.findMany({
+    where: { orgId },
+    orderBy: { updatedAt: "desc" },
+  });
+}
+
+export async function findTicketById(orgId: string, id: string) {
+  return prisma.ticket.findFirst({ where: { id, orgId } });
+}
+
+export interface CreateTicketData {
+  title: string;
+  description: string;
+  priority: TicketPriority;
+  assigneeId: string | null;
+  creatorId: string;
+}
+
+export async function createTicket(orgId: string, data: CreateTicketData) {
+  return prisma.ticket.create({ data: { ...data, orgId } });
+}
+
+export interface TicketUpdateFields {
+  title?: string;
+  description?: string;
+  status?: TicketStatus;
+  priority?: TicketPriority;
+  assigneeId?: string | null;
+}
+
+/**
+ * §8's conditional update, via Prisma: `updateMany` (not `update`, which
+ * only accepts a unique where-clause) so `version` can sit in the where
+ * clause alongside `id`/`orgId`. `count === 0` means either the row
+ * didn't exist in this org, or — the case that actually matters here —
+ * `expectedVersion` was stale, i.e. someone else's write already moved
+ * it. Prisma's `{ increment: 1 }` compiles to the same atomic
+ * `version = version + 1` the README's raw SQL shows; `updatedAt` is
+ * `@updatedAt` in the schema, so Prisma sets it automatically.
+ *
+ * Returning the bare count (not throwing here) is deliberate — deciding
+ * that zero rows means a conflict, specifically, is what the calling
+ * use-case in server/application/tickets.ts does. This function only
+ * knows "how many rows changed," not what that means.
+ */
+export async function updateTicketConditional(
+  orgId: string,
+  id: string,
+  expectedVersion: number,
+  fields: TicketUpdateFields,
+) {
+  return prisma.ticket.updateMany({
+    where: { id, orgId, version: expectedVersion },
+    data: { ...fields, version: { increment: 1 } },
   });
 }
 </file>
@@ -3287,6 +2601,52 @@ export const loginInputSchema = z.object({
 });
 
 export type LoginInput = z.infer<typeof loginInputSchema>;
+</file>
+
+<file path="server/validation/tickets.ts">
+import { z } from "zod";
+import { TICKET_PRIORITIES, TICKET_STATUSES } from "@/server/domain/ticket";
+
+/**
+ * §11: the single source of truth for "is this input valid," checked
+ * here before anything reaches application logic. Per the resolved
+ * decision in BACKEND_ROADMAP.md, the client doesn't get React Hook
+ * Form + zodResolver — TicketModal's existing `useState`-based form
+ * runs this same schema through `.safeParse()` on submit instead, so
+ * there's still exactly one definition of "a valid ticket."
+ */
+
+const uuid = z.string().uuid();
+
+export const createTicketInputSchema = z.object({
+  title: z.string().trim().min(1, "Title is required"),
+  description: z.string().trim().default(""),
+  priority: z.enum(TICKET_PRIORITIES).default("MEDIUM"),
+  assigneeId: uuid.nullable().optional(),
+});
+
+export type CreateTicketInput = z.infer<typeof createTicketInputSchema>;
+
+export const updateTicketInputSchema = z
+  .object({
+    expectedVersion: z.number().int().positive(),
+    title: z.string().trim().min(1, "Title is required").optional(),
+    description: z.string().trim().optional(),
+    status: z.enum(TICKET_STATUSES).optional(),
+    priority: z.enum(TICKET_PRIORITIES).optional(),
+    assigneeId: uuid.nullable().optional(),
+  })
+  .refine(
+    (input) =>
+      input.title !== undefined ||
+      input.description !== undefined ||
+      input.status !== undefined ||
+      input.priority !== undefined ||
+      input.assigneeId !== undefined,
+    { message: "At least one field must change." },
+  );
+
+export type UpdateTicketInput = z.infer<typeof updateTicketInputSchema>;
 </file>
 
 <file path=".gitignore">
@@ -3368,6 +2728,48 @@ const nextConfig: NextConfig = {
 };
 
 export default nextConfig;
+</file>
+
+<file path="playwright.config.ts">
+import { defineConfig, devices } from "@playwright/test";
+
+/**
+ * README §12/§41: the two-browser-context acceptance test is the actual
+ * definition of done, not a final-phase checkbox — written at Milestone
+ * 3 and extended as each later milestone's slice of it becomes coverable
+ * (e2e/ticket-realtime.spec.ts currently covers Tests 1 & 2 only).
+ *
+ * Requires a running dev server with real Postgres + Supabase Realtime
+ * configured (DATABASE_URL, JWT_SECRET, NEXT_PUBLIC_SUPABASE_URL,
+ * NEXT_PUBLIC_SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY — see
+ * .env.example) and a seeded database (`npm run db:seed` — see
+ * prisma/seed.ts for the demo password). None of that exists in the
+ * sandbox this was written in, so this config and the spec file next to
+ * it are correct-by-construction, not verified-by-execution — see this
+ * session's notes on that limitation.
+ */
+export default defineConfig({
+  testDir: "./e2e",
+  fullyParallel: false,
+  retries: 0,
+  reporter: "list",
+  use: {
+    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000",
+    trace: "on-first-retry",
+  },
+  projects: [
+    {
+      name: "chromium",
+      use: { ...devices["Desktop Chrome"] },
+    },
+  ],
+  webServer: {
+    command: "npm run build && npm run start",
+    url: "http://localhost:3000",
+    reuseExistingServer: !process.env.CI,
+    timeout: 120_000,
+  },
+});
 </file>
 
 <file path="postcss.config.mjs">
@@ -4423,6 +3825,324 @@ export function TeamView({ users, self }: TeamViewProps) {
 }
 </file>
 
+<file path="components/tickets/TicketModal.tsx">
+"use client";
+
+import { useState } from "react";
+import { Modal } from "@/components/shared/Modal";
+import { SelectField } from "@/components/shared/SelectField";
+import { TextField } from "@/components/shared/TextField";
+import {
+  createTicketInputSchema,
+  updateTicketInputSchema,
+} from "@/server/validation/tickets";
+import {
+  ticketPriorityMeta,
+  ticketStatusMeta,
+  type Ticket,
+  type TicketPriority,
+  type TicketStatus,
+  type User,
+} from "@/types";
+
+const statusOptions = Object.entries(ticketStatusMeta).map(([value, meta]) => ({
+  value,
+  label: meta.label,
+}));
+const priorityOptions = Object.entries(ticketPriorityMeta).map(
+  ([value, meta]) => ({ value, label: meta.label }),
+);
+
+export interface CreateTicketFields {
+  title: string;
+  description: string;
+  priority: TicketPriority;
+  assigneeId: string | null;
+}
+
+export interface UpdateTicketFields {
+  title: string;
+  description: string;
+  status: TicketStatus;
+  priority: TicketPriority;
+  assigneeId: string | null;
+  expectedVersion: number;
+}
+
+interface TicketModalProps {
+  /** null = create mode. Otherwise the ticket being edited. */
+  ticket: Ticket | null;
+  users: User[];
+  /** True while the create/update mutation is in flight — this is a
+   *  real network round trip now (Milestone 2), not an instant local
+   *  state update, so the Save button needs to say so. */
+  saving?: boolean;
+  onClose: () => void;
+  onCreate: (input: CreateTicketFields) => void;
+  onUpdate: (input: UpdateTicketFields) => void;
+}
+
+/**
+ * Create-or-edit form for a single ticket. One component handles both
+ * modes since the fields are almost identical — only the starting
+ * values and which callback fires differ.
+ *
+ * This hands the caller (TicketsView) plain input fields, not a
+ * fully-formed Ticket: the server is what assigns the real id, version,
+ * and timestamps now (Milestone 2), via createTicketAction/
+ * updateTicketAction. Building a fake client-side Ticket object here —
+ * which the pre-backend version of this file used to do — would just be
+ * guessing at values the server is actually responsible for.
+ *
+ * Validated with the same Zod schemas the server uses
+ * (server/validation/tickets.ts) via `.safeParse()` on submit, per the
+ * resolved decision in BACKEND_ROADMAP.md not to adopt React Hook Form —
+ * one shared definition of "a valid ticket," without a form-library
+ * rewrite these ~5 fields don't need.
+ */
+export function TicketModal({
+  ticket,
+  users,
+  saving,
+  onClose,
+  onCreate,
+  onUpdate,
+}: TicketModalProps) {
+  const isCreate = ticket === null;
+
+  const [title, setTitle] = useState(ticket?.title ?? "");
+  const [description, setDescription] = useState(ticket?.description ?? "");
+  const [status, setStatus] = useState<TicketStatus>(ticket?.status ?? "OPEN");
+  const [priority, setPriority] = useState<TicketPriority>(
+    ticket?.priority ?? "MEDIUM",
+  );
+  const [assigneeId, setAssigneeId] = useState(ticket?.assigneeId ?? "");
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const handleSave = () => {
+    if (isCreate) {
+      const parsed = createTicketInputSchema.safeParse({
+        title,
+        description,
+        priority,
+        assigneeId: assigneeId || null,
+      });
+      if (!parsed.success) {
+        setFormError(parsed.error.issues[0]?.message ?? "Invalid input.");
+        return;
+      }
+      setFormError(null);
+      onCreate({ ...parsed.data, assigneeId: parsed.data.assigneeId ?? null });
+    } else {
+      const parsed = updateTicketInputSchema.safeParse({
+        title,
+        description,
+        status,
+        priority,
+        assigneeId: assigneeId || null,
+        expectedVersion: ticket.version,
+      });
+      if (!parsed.success) {
+        setFormError(parsed.error.issues[0]?.message ?? "Invalid input.");
+        return;
+      }
+      setFormError(null);
+      onUpdate({
+        title: parsed.data.title ?? title,
+        description: parsed.data.description ?? description,
+        status: parsed.data.status ?? status,
+        priority: parsed.data.priority ?? priority,
+        assigneeId: parsed.data.assigneeId ?? null,
+        expectedVersion: parsed.data.expectedVersion,
+      });
+    }
+  };
+
+  const footer = (
+    <div className="flex flex-col gap-2">
+      {formError && <p className="text-xs text-danger">{formError}</p>}
+      <div className="flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={saving}
+          className="rounded-md border border-line px-3 py-1.5 text-sm text-ink-dim transition-colors hover:text-ink disabled:opacity-50"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving}
+          className="rounded-md bg-ink px-3 py-1.5 text-sm font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-50"
+        >
+          {saving ? "Saving…" : isCreate ? "Create ticket" : "Save changes"}
+        </button>
+      </div>
+    </div>
+  );
+
+  return (
+    <Modal
+      title={isCreate ? "New ticket" : "Edit ticket"}
+      onClose={onClose}
+      footer={footer}
+    >
+      <div className="flex flex-col gap-3">
+        <TextField
+          label="Title"
+          autoFocus
+          value={title}
+          onChange={setTitle}
+          placeholder="Short, specific summary"
+        />
+
+        <TextField
+          label="Description"
+          multiline
+          value={description}
+          onChange={setDescription}
+          placeholder="Optional detail"
+        />
+
+        <div
+          className={
+            isCreate ? "grid grid-cols-1 gap-3" : "grid grid-cols-2 gap-3"
+          }
+        >
+          {!isCreate && (
+            <SelectField
+              label="Status"
+              value={status}
+              onChange={(value) => setStatus(value as TicketStatus)}
+              options={statusOptions}
+            />
+          )}
+          <SelectField
+            label="Priority"
+            value={priority}
+            onChange={(value) => setPriority(value as TicketPriority)}
+            options={priorityOptions}
+          />
+        </div>
+
+        <SelectField
+          label="Assignee"
+          value={assigneeId ?? ""}
+          onChange={setAssigneeId}
+          options={[
+            { value: "", label: "Unassigned" },
+            ...users.map((u) => ({ value: u.id, label: u.name })),
+          ]}
+        />
+      </div>
+    </Modal>
+  );
+}
+</file>
+
+<file path="e2e/ticket-realtime.spec.ts">
+import { test, expect, type Page } from "@playwright/test";
+
+/**
+ * §41's actual definition of done — this file currently covers only
+ * this milestone's slice (Tests 1 & 2: ticket creation and assignment
+ * propagating between two browser contexts with no reload). Tests 3–8
+ * get added here as Milestones 4/5/8 make them coverable, per §12's
+ * instruction to keep this file red rather than write eight tests up
+ * front against features that don't exist yet.
+ *
+ * Password must match prisma/seed.ts's DEMO_PASSWORD — there's no
+ * shared import between the seed script and this test file, so if one
+ * changes, the other needs to change too.
+ */
+const DEMO_PASSWORD = "relay-dev-1234";
+
+const USER_A = { email: "maya@kestrel.dev", name: "Maya Reyes" };
+const USER_B = { email: "josh@kestrel.dev", name: "Josh Dietrich" };
+
+async function loginAs(page: Page, email: string) {
+  await page.goto("/login");
+  await page.getByLabel("Email").fill(email);
+  await page.getByLabel("Password").fill(DEMO_PASSWORD);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page).toHaveURL(/\/dashboard/);
+}
+
+test.describe("§41 Test 1 & 2 — ticket creation and assignment propagate live", () => {
+  test("a ticket created by one user appears for another without a reload", async ({
+    browser,
+  }) => {
+    const contextA = await browser.newContext();
+    const contextB = await browser.newContext();
+    const pageA = await contextA.newPage();
+    const pageB = await contextB.newPage();
+
+    await loginAs(pageA, USER_A.email);
+    await loginAs(pageB, USER_B.email);
+
+    await pageA.goto("/tickets");
+    await pageB.goto("/tickets");
+
+    const title = `Realtime test ticket ${Date.now()}`;
+
+    // Test 1 (§41): create in Browser A.
+    await pageA.getByRole("button", { name: "New ticket" }).click();
+    await pageA.getByLabel("Title").fill(title);
+    await pageA.getByRole("button", { name: "Create ticket" }).click();
+
+    // Check Browser A first — this does NOT depend on realtime at all
+    // (its own mutation invalidates its own query on success), so a
+    // failure here means ticket creation itself is broken, not
+    // propagation. Splitting this out turns "Browser B never sees it"
+    // from one failure into two, so a red run actually points at which
+    // half is broken instead of leaving both as suspects.
+    await expect(pageA.getByText(title)).toBeVisible({ timeout: 10_000 });
+
+    // The real assertion: Browser B never reloads or navigates. If this
+    // only passes after a manual pageB.reload(), the realtime wiring
+    // (broadcast → RLS-authorized subscription → invalidateQueries)
+    // isn't actually working — a passing test with a reload added would
+    // be testing the wrong thing.
+    await expect(pageB.getByText(title)).toBeVisible({ timeout: 10_000 });
+
+    // Test 2 (§41): assign it to Browser B's user, from Browser A.
+    await pageA.getByText(title).click();
+    await pageA.getByLabel("Assignee").selectOption({ label: USER_B.name });
+    await pageA.getByRole("button", { name: "Save changes" }).click();
+
+    // Same split as Test 1: confirm the update itself succeeded on
+    // Browser A before blaming propagation. TicketsView's
+    // updateMutation.onSuccess only shows this toast (and closes the
+    // modal) on the ok:true branch — a ConflictError/ValidationError/
+    // NotFoundError from updateTicket() surfaces as an error toast
+    // instead and never reaches broadcastToOrg(), which would make
+    // Browser B's failure below a red herring pointing at realtime when
+    // the actual bug is in the mutation itself.
+    await expect(pageA.getByText("Ticket updated")).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // The modal closing is the same signal from a different angle —
+    // onSuccess's ok:true branch is also what calls setModalState(null).
+    await expect(
+      pageA.getByRole("heading", { name: "Edit ticket" }),
+    ).toBeHidden({ timeout: 5_000 });
+
+    // Browser B should see itself assigned without any reload either —
+    // the avatar/assignment indicator replacing "Assign to me" on that
+    // row is the visible signal.
+    const rowB = pageB.locator("li", { hasText: title });
+    await expect(rowB.getByTitle(USER_B.name)).toBeVisible({
+      timeout: 10_000,
+    });
+
+    await contextA.close();
+    await contextB.close();
+  });
+});
+</file>
+
 <file path="prisma/schema.prisma">
 generator client {
   provider        = "prisma-client"
@@ -4712,6 +4432,252 @@ model Activity {
 
   @@index([orgId, createdAt(sort: Desc)])
   @@map("activities")
+}
+</file>
+
+<file path="server/auth/jwt.ts">
+import { jwtVerify, SignJWT } from "jose";
+import type { Role } from "@/types";
+
+/**
+ * README §4: HS256, short-lived access token carrying `sub` (user id),
+ * `org_id`, and our app's role. Every Server Action and Route Handler
+ * resolves "who is this" by verifying this token via getSession()
+ * (server/auth/session.ts) — never by trusting a client-supplied org id
+ * or role directly (AUTH-06).
+ *
+ * The wire claim for our role is `app_role`, not `role` — `role` is
+ * reserved by Supabase/PostgREST, which reads it to decide which
+ * *Postgres* role a connection assumes (normally `authenticated`).
+ * Setting it to our own value like `"MANAGER"` isn't a role Postgres
+ * knows about, so a connection using this token doesn't get the base
+ * grants `authenticated` normally has — Realtime Authorization then
+ * rejects the whole channel join before the RLS policy's own condition
+ * is meaningfully evaluated at all (confirmed against a real project:
+ * valid signature, correct org_id, correct policy, still rejected with
+ * "Unauthorized... to read from this Channel topic" — this collision
+ * was the actual cause). `AccessTokenClaims.role` keeps its name
+ * everywhere else in the app; only the JWT payload's key changed.
+ */
+export const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
+
+export interface AccessTokenClaims {
+  sub: string;
+  orgId: string;
+  role: Role;
+}
+
+function secretKey(): Uint8Array {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    throw new Error(
+      "JWT_SECRET is not set — see .env.example. Required to sign and verify access tokens.",
+    );
+  }
+  return new TextEncoder().encode(secret);
+}
+
+export async function signAccessToken(
+  claims: AccessTokenClaims,
+): Promise<string> {
+  return new SignJWT({
+    org_id: claims.orgId,
+    app_role: claims.role,
+    // Satisfies Supabase/PostgREST's reserved `role` claim — see the
+    // block comment above for why this can't be our own MEMBER/MANAGER
+    // value.
+    role: "authenticated",
+  })
+    .setProtectedHeader({ alg: "HS256" })
+    .setSubject(claims.sub)
+    .setIssuedAt()
+    .setExpirationTime(`${ACCESS_TOKEN_TTL_SECONDS}s`)
+    .sign(secretKey());
+}
+
+/**
+ * Returns null for anything that isn't a currently-valid access token —
+ * expired, malformed, wrong signature, or missing/mistyped claims — all
+ * treated identically: no session. Callers don't get to distinguish
+ * "expired" from "forged," which is the point.
+ */
+export async function verifyAccessToken(
+  token: string,
+): Promise<AccessTokenClaims | null> {
+  try {
+    const { payload } = await jwtVerify(token, secretKey(), {
+      algorithms: ["HS256"],
+    });
+
+    if (
+      typeof payload.sub !== "string" ||
+      typeof payload.org_id !== "string" ||
+      (payload.app_role !== "MEMBER" && payload.app_role !== "MANAGER")
+    ) {
+      return null;
+    }
+
+    return { sub: payload.sub, orgId: payload.org_id, role: payload.app_role };
+  } catch {
+    return null;
+  }
+}
+</file>
+
+<file path="server/realtime/broadcast.ts">
+/**
+ * Broadcasts a small invalidation hint to an org's Realtime channel
+ * after a mutation commits (§0/§6/§7) — never the resource itself, per
+ * RT-06 ("Realtime is not authoritative"): clients treat this as a
+ * signal to refetch through the normal, authorized path, not as data.
+ *
+ * Sent via Supabase's REST broadcast endpoint (a single HTTP POST), not
+ * the `channel.send()` client-library method. That method sends over an
+ * *established WebSocket* — from a short-lived Server Action there
+ * isn't one, and asking supabase-js to open and tear down a socket per
+ * mutation just to send one message is exactly the kind of thing that
+ * fails silently in practice (a real, filed issue: supabase/realtime#774
+ * reports channel.send() from a Node backend returning an opaque
+ * "error" with no explanation when no socket is connected). The REST
+ * endpoint is the documented, supported way to broadcast from a backend
+ * with no persistent connection.
+ *
+ * External setup this depends on (Supabase dashboard/SQL — not
+ * something this file can do): the project's Realtime Authorization
+ * must be configured to trust this app's JWT_SECRET for custom JWT
+ * verification, and the RLS policy from README §6 must exist on
+ * realtime.messages. Both are one-time project configuration, not code.
+ */
+
+const BROADCAST_URL_PATH = "/realtime/v1/api/broadcast";
+
+/**
+ * True for a transport-level failure — the connection was reset/closed
+ * out from under the request, as opposed to the server actually
+ * responding with a rejection. Confirmed via real diagnosis (not
+ * guessed): Node's fetch (undici) pools keep-alive connections, and
+ * Supabase's edge closes idle sockets on its own timeout. A broadcast
+ * sent shortly after a previous one (a fast create-then-verify cycle)
+ * reuses a live pooled connection and succeeds; one sent ~15-20s later
+ * (a slower create-then-edit cycle, like assigning a ticket after
+ * reading it) can hit a socket the remote side already closed, which
+ * surfaces as `TypeError: fetch failed` wrapping `ECONNRESET` — a stale
+ * pooled connection, not an auth or RLS rejection. This is exactly what
+ * happened here: the create broadcast (fast) succeeded; the update
+ * broadcast (slower, same code, same org, same everything else) reset.
+ *
+ * Only this class of error is safe to retry blind: a retry naturally
+ * opens a new connection instead of reusing the dead pooled one. An
+ * actual non-ok HTTP response (bad auth, malformed payload, RLS
+ * misconfiguration) means the server received and rejected the
+ * request — retrying that changes nothing and would just mask a real
+ * problem behind a delay, so that path is deliberately NOT retried.
+ */
+function isStaleConnectionError(error: unknown): boolean {
+  if (!(error instanceof TypeError)) return false;
+  const cause = (error as { cause?: unknown }).cause;
+  if (!cause || typeof cause !== "object") return false;
+  const code = (cause as { code?: unknown }).code;
+  return (
+    code === "ECONNRESET" ||
+    code === "ECONNREFUSED" ||
+    code === "EPIPE" ||
+    code === "UND_ERR_SOCKET"
+  );
+}
+
+async function sendBroadcast(
+  url: string,
+  serviceRoleKey: string,
+  topic: string,
+  event: string,
+  payload: Record<string, unknown>,
+): Promise<Response> {
+  return fetch(`${url}${BROADCAST_URL_PATH}`, {
+    method: "POST",
+    headers: {
+      apikey: serviceRoleKey,
+      Authorization: `Bearer ${serviceRoleKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      messages: [{ topic, event, payload, private: true }],
+    }),
+  });
+}
+
+export async function broadcastToOrg(
+  orgId: string,
+  event: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!url || !serviceRoleKey) {
+    console.error(
+      "broadcastToOrg: NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not set — skipping broadcast.",
+    );
+    return;
+  }
+
+  const topic = `org:${orgId}`;
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const response = await sendBroadcast(
+        url,
+        serviceRoleKey,
+        topic,
+        event,
+        payload,
+      );
+
+      if (!response.ok) {
+        const body = await response.text().catch(() => "<unreadable body>");
+        console.error(
+          `broadcastToOrg: Realtime REST endpoint returned ${response.status} for topic "${topic}", event "${event}". Body: ${body}`,
+        );
+        return; // A real rejection — retrying won't help.
+      }
+
+      return; // Success.
+    } catch (error) {
+      const staleConnection = isStaleConnectionError(error);
+
+      if (staleConnection && attempt === 1) {
+        // Stale pooled keep-alive connection — retry once, which opens
+        // a fresh connection instead of reusing the dead one. No delay
+        // needed: this isn't backing off from server load, it's just
+        // discarding a socket the pool shouldn't have handed back.
+        console.warn(
+          `broadcastToOrg: stale connection sending "${event}" to topic "${topic}", retrying once`,
+        );
+        continue;
+      }
+
+      // Deliberately swallowed, not re-thrown, once retries are
+      // exhausted: the mutation this follows already committed
+      // successfully. A failed broadcast means clients find out on
+      // their next poll/navigation instead of instantly — a degraded
+      // experience, not a data-integrity problem — so it must never
+      // fail the request that triggered it.
+      console.error(
+        `broadcastToOrg: failed to broadcast "${event}" to topic "${topic}"${
+          staleConnection ? " (retry also failed)" : ""
+        }`,
+        error,
+      );
+      return;
+    }
+  }
+}
+</file>
+
+<file path="test-results/.last-run.json">
+{
+  "status": "passed",
+  "failedTests": []
 }
 </file>
 
@@ -6653,25 +6619,6 @@ export default async function ServicesPage() {
 }
 </file>
 
-<file path="app/(dashboard)/tickets/page.tsx">
-import { redirect } from "next/navigation";
-import { TicketsView } from "@/components/tickets/TicketsView";
-import { getCurrentUser } from "@/server/auth/session";
-import { PATHS } from "@/utils/paths";
-
-// Milestone 2: tickets are real now — TicketsView fetches them itself
-// via TanStack Query (listTicketsAction as the queryFn, §10), so this
-// page no longer needs to fetch or pass ticket data down at all. `self`
-// still comes from the session, same as every other dashboard page.
-
-export default async function TicketsPage() {
-  const self = await getCurrentUser();
-  if (!self) redirect(PATHS.LOGIN);
-
-  return <TicketsView self={self} />;
-}
-</file>
-
 <file path="app/globals.css">
 @import "tailwindcss";
 
@@ -7833,6 +7780,89 @@ export const PATHS = {
 };
 </file>
 
+<file path="app/(dashboard)/tickets/page.tsx">
+import { redirect } from "next/navigation";
+import { TicketsView } from "@/components/tickets/TicketsView";
+import { getCurrentUser } from "@/server/auth/session";
+import { PATHS } from "@/utils/paths";
+
+// Milestone 2: tickets are real now — TicketsView fetches them itself
+// via TanStack Query (listTicketsAction as the queryFn, §10), so this
+// page no longer needs to fetch or pass ticket data down at all. `self`
+// still comes from the session, same as every other dashboard page.
+
+export default async function TicketsPage() {
+  const self = await getCurrentUser();
+  if (!self) redirect(PATHS.LOGIN);
+
+  return <TicketsView self={self} />;
+}
+</file>
+
+<file path="components/dashboard/ServiceHealthGrid.tsx">
+import { Sparkline } from "@/components/shared/Sparkline";
+import { serviceStatusMeta, type Service } from "@/types";
+import {
+  formatErrorRate,
+  relativeTime,
+  statusDot,
+  statusText,
+} from "@/lib/style";
+
+export function ServiceHealthGrid({ services }: { services: Service[] }) {
+  return (
+    <div className="rounded-lg border border-line bg-panel">
+      <div className="flex items-center justify-between border-b border-line px-4 py-3">
+        <h2 className="text-sm font-medium text-ink">Service health</h2>
+        <span className="text-xs text-ink-faint">Trend is since page load</span>
+      </div>
+
+      <div className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2 lg:grid-cols-3">
+        {services.map((service) => {
+          const meta = serviceStatusMeta[service.status];
+          const warn = service.status !== "OPERATIONAL";
+
+          return (
+            <div key={service.id} className="bg-panel p-3.5">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-ink">{service.name}</span>
+                <span
+                  className={`size-1.5 rounded-full ${statusDot[meta.color]}`}
+                />
+              </div>
+              <div className={`mt-0.5 text-xs ${statusText[meta.color]}`}>
+                {meta.label}
+              </div>
+
+              <div className="mt-3 flex items-end justify-between">
+                <div className="font-mono text-xs text-ink-dim tabular-nums space-y-1">
+                  <div>
+                    {service.status === "OUTAGE"
+                      ? "—"
+                      : `${service.latencyMs}ms`}
+                  </div>
+                  <div className={service.errorRate > 1 ? "text-warning" : ""}>
+                    {formatErrorRate(service.errorRate)} err
+                  </div>
+                </div>
+                <Sparkline values={service.sessionLatencyTrend} warn={warn} />
+              </div>
+
+              <div className="mt-2 text-[11px] text-ink-faint">
+                {/* Server Component (no "use client") — this never
+                    hydrates/re-executes on the client, so a plain
+                    `new Date()` here is safe and doesn't need useNow(). */}
+                Updated {relativeTime(service.updatedAt, new Date())}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+</file>
+
 <file path="package.json">
 {
   "name": "relay",
@@ -7926,227 +7956,6 @@ export default async function DashboardLayout({
         </ToastProvider>
       </RealtimeProvider>
     </QueryProvider>
-  );
-}
-</file>
-
-<file path="components/dashboard/ServiceHealthGrid.tsx">
-import { Sparkline } from "@/components/shared/Sparkline";
-import { serviceStatusMeta, type Service } from "@/types";
-import {
-  formatErrorRate,
-  relativeTime,
-  statusDot,
-  statusText,
-} from "@/lib/style";
-
-export function ServiceHealthGrid({ services }: { services: Service[] }) {
-  return (
-    <div className="rounded-lg border border-line bg-panel">
-      <div className="flex items-center justify-between border-b border-line px-4 py-3">
-        <h2 className="text-sm font-medium text-ink">Service health</h2>
-        <span className="text-xs text-ink-faint">Trend is since page load</span>
-      </div>
-
-      <div className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2 lg:grid-cols-3">
-        {services.map((service) => {
-          const meta = serviceStatusMeta[service.status];
-          const warn = service.status !== "OPERATIONAL";
-
-          return (
-            <div key={service.id} className="bg-panel p-3.5">
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-ink">{service.name}</span>
-                <span
-                  className={`size-1.5 rounded-full ${statusDot[meta.color]}`}
-                />
-              </div>
-              <div className={`mt-0.5 text-xs ${statusText[meta.color]}`}>
-                {meta.label}
-              </div>
-
-              <div className="mt-3 flex items-end justify-between">
-                <div className="font-mono text-xs text-ink-dim tabular-nums space-y-1">
-                  <div>
-                    {service.status === "OUTAGE"
-                      ? "—"
-                      : `${service.latencyMs}ms`}
-                  </div>
-                  <div className={service.errorRate > 1 ? "text-warning" : ""}>
-                    {formatErrorRate(service.errorRate)} err
-                  </div>
-                </div>
-                <Sparkline values={service.sessionLatencyTrend} warn={warn} />
-              </div>
-
-              <div className="mt-2 text-[11px] text-ink-faint">
-                {/* Server Component (no "use client") — this never
-                    hydrates/re-executes on the client, so a plain
-                    `new Date()` here is safe and doesn't need useNow(). */}
-                Updated {relativeTime(service.updatedAt, new Date())}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-</file>
-
-<file path="components/shared/TopBar.tsx">
-"use client";
-
-import { useState } from "react";
-import Image from "next/image";
-import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { ListIcon, SignOutIcon, XIcon } from "@phosphor-icons/react";
-import { Avatar } from "@/components/dashboard/Avatar";
-import { LiveIndicator } from "@/components/dashboard/LiveIndicator";
-import { useRealtimeConnected } from "@/components/shared/RealtimeProvider";
-import type { User } from "@/types";
-import { canManageTeam } from "@/lib/permissions";
-import { logoutAction } from "@/app/login/actions";
-import { PATHS } from "@/utils/paths";
-
-const baseNavItems = [
-  { label: "Dashboard", href: PATHS.DASHBOARD },
-  { label: "Tickets", href: PATHS.TICKETS },
-  { label: "Incidents", href: PATHS.INCIDENTS },
-  { label: "Services", href: PATHS.SERVICES },
-  { label: "Activity", href: PATHS.ACTIVITY },
-];
-
-export function TopBar({ orgName, self }: { orgName: string; self: User }) {
-  const pathname = usePathname();
-  const [menuOpen, setMenuOpen] = useState(false);
-  const realtimeConnected = useRealtimeConnected();
-
-  // Team is the one nav-level permission boundary (README §3 / MVP RBAC
-  // — see ROADMAP_ROLES.md): Manager-only, hidden entirely for Member
-  // rather than shown disabled. The /team page itself also redirects a
-  // Member who visits it directly, so hiding the link is a UX nicety,
-  // not the actual enforcement.
-  const navItems = canManageTeam(self.role)
-    ? [...baseNavItems, { label: "Team", href: PATHS.TEAM }]
-    : baseNavItems;
-
-  const isActive = (href: string) =>
-    pathname === href || pathname.startsWith(`${href}/`);
-  const activeLabel =
-    navItems.find((item) => isActive(item.href))?.label ?? "Menu";
-
-  return (
-    <header className="relative flex h-14 shrink-0 items-center justify-between gap-3 border-b border-line px-3 sm:px-6">
-      <div className="flex min-w-0 items-center gap-3 sm:gap-6">
-        <div className="flex shrink-0 items-center gap-2">
-          <span className="flex items-center justify-center size-5">
-            <Image
-              src="/assets/logo.png"
-              alt="Logo"
-              width={20}
-              height={20}
-              priority
-              className="size-5"
-            />
-          </span>
-          <span className="hidden text-sm font-medium text-ink sm:inline">
-            {orgName}
-          </span>
-        </div>
-
-        {/* Tablet and up: room for all five tabs side by side. */}
-        <nav className="hidden items-center gap-1 md:flex">
-          {navItems.map((item) => {
-            const active = isActive(item.href);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={
-                  active
-                    ? "rounded-md px-3 py-1.5 text-sm font-medium text-ink bg-panel-raised"
-                    : "rounded-md px-3 py-1.5 text-sm text-ink-dim hover:text-ink transition-colors"
-                }
-              >
-                {item.label}
-              </Link>
-            );
-          })}
-        </nav>
-
-        {/* Phone: one button naming the page you're on. Tap it to see the
-            other four — nothing to scroll to find, nothing squeezed. */}
-        <button
-          type="button"
-          onClick={() => setMenuOpen((open) => !open)}
-          aria-expanded={menuOpen}
-          aria-label="Open navigation menu"
-          className="flex items-center gap-1.5 rounded-md bg-panel-raised px-2.5 py-1.5 text-sm font-medium text-ink md:hidden"
-        >
-          {menuOpen ? (
-            <XIcon size={14} weight="bold" />
-          ) : (
-            <ListIcon size={14} weight="bold" />
-          )}
-          {activeLabel}
-        </button>
-      </div>
-
-      <div className="flex shrink-0 items-center gap-2 sm:gap-4">
-        <LiveIndicator connected={realtimeConnected} />
-
-        <Avatar
-          initials={self.initials}
-          seed={self.id}
-          online
-          size="sm"
-          title={self.name}
-        />
-
-        <form action={logoutAction}>
-          <button
-            type="submit"
-            title="Sign out"
-            aria-label="Sign out"
-            className="flex items-center justify-center rounded-md p-1.5 text-ink-faint transition-colors hover:text-ink"
-          >
-            <SignOutIcon size={16} />
-          </button>
-        </form>
-      </div>
-
-      {menuOpen && (
-        <>
-          {/* Invisible tap-outside-to-close catcher, not a page-darkening
-              overlay — this is a small menu, not a full mobile drawer. */}
-          <div
-            className="fixed inset-0 z-10 md:hidden"
-            onClick={() => setMenuOpen(false)}
-          />
-          <div className="absolute left-3 top-full z-20 mt-1.5 flex w-44 flex-col gap-0.5 rounded-lg border border-line bg-panel-raised p-1 shadow-lg md:hidden">
-            {navItems.map((item) => {
-              const active = isActive(item.href);
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  onClick={() => setMenuOpen(false)}
-                  className={
-                    active
-                      ? "rounded-md bg-panel px-3 py-2 text-left text-sm font-medium text-ink"
-                      : "rounded-md px-3 py-2 text-left text-sm text-ink-dim hover:text-ink"
-                  }
-                >
-                  {item.label}
-                </Link>
-              );
-            })}
-          </div>
-        </>
-      )}
-    </header>
   );
 }
 </file>
@@ -9023,6 +8832,163 @@ export function ServicesView({ services, incidents, self }: ServicesViewProps) {
         />
       )}
     </div>
+  );
+}
+</file>
+
+<file path="components/shared/TopBar.tsx">
+"use client";
+
+import { useState } from "react";
+import Image from "next/image";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { ListIcon, SignOutIcon, XIcon } from "@phosphor-icons/react";
+import { Avatar } from "@/components/dashboard/Avatar";
+import { LiveIndicator } from "@/components/dashboard/LiveIndicator";
+import { useRealtimeConnected } from "@/components/shared/RealtimeProvider";
+import type { User } from "@/types";
+import { canManageTeam } from "@/lib/permissions";
+import { logoutAction } from "@/app/login/actions";
+import { PATHS } from "@/utils/paths";
+
+const baseNavItems = [
+  { label: "Dashboard", href: PATHS.DASHBOARD },
+  { label: "Tickets", href: PATHS.TICKETS },
+  { label: "Incidents", href: PATHS.INCIDENTS },
+  { label: "Services", href: PATHS.SERVICES },
+  { label: "Activity", href: PATHS.ACTIVITY },
+];
+
+export function TopBar({ orgName, self }: { orgName: string; self: User }) {
+  const pathname = usePathname();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const realtimeConnected = useRealtimeConnected();
+
+  // Team is the one nav-level permission boundary (README §3 / MVP RBAC
+  // — see ROADMAP_ROLES.md): Manager-only, hidden entirely for Member
+  // rather than shown disabled. The /team page itself also redirects a
+  // Member who visits it directly, so hiding the link is a UX nicety,
+  // not the actual enforcement.
+  const navItems = canManageTeam(self.role)
+    ? [...baseNavItems, { label: "Team", href: PATHS.TEAM }]
+    : baseNavItems;
+
+  const isActive = (href: string) =>
+    pathname === href || pathname.startsWith(`${href}/`);
+  const activeLabel =
+    navItems.find((item) => isActive(item.href))?.label ?? "Menu";
+
+  return (
+    <header className="relative flex h-14 shrink-0 items-center justify-between gap-3 border-b border-line px-3 sm:px-6">
+      <div className="flex min-w-0 items-center gap-3 sm:gap-6">
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="flex items-center justify-center size-5">
+            <Image
+              src="/assets/logo.png"
+              alt="Logo"
+              width={20}
+              height={20}
+              priority
+              className="size-5"
+            />
+          </span>
+          <span className="hidden text-sm font-medium text-ink sm:inline">
+            {orgName}
+          </span>
+        </div>
+
+        {/* Tablet and up: room for all five tabs side by side. */}
+        <nav className="hidden items-center gap-1 md:flex">
+          {navItems.map((item) => {
+            const active = isActive(item.href);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={
+                  active
+                    ? "rounded-md px-3 py-1.5 text-sm font-medium text-ink bg-panel-raised"
+                    : "rounded-md px-3 py-1.5 text-sm text-ink-dim hover:text-ink transition-colors"
+                }
+              >
+                {item.label}
+              </Link>
+            );
+          })}
+        </nav>
+
+        {/* Phone: one button naming the page you're on. Tap it to see the
+            other four — nothing to scroll to find, nothing squeezed. */}
+        <button
+          type="button"
+          onClick={() => setMenuOpen((open) => !open)}
+          aria-expanded={menuOpen}
+          aria-label="Open navigation menu"
+          className="flex items-center gap-1.5 rounded-md bg-panel-raised px-2.5 py-1.5 text-sm font-medium text-ink md:hidden"
+        >
+          {menuOpen ? (
+            <XIcon size={14} weight="bold" />
+          ) : (
+            <ListIcon size={14} weight="bold" />
+          )}
+          {activeLabel}
+        </button>
+      </div>
+
+      <div className="flex shrink-0 items-center gap-2 sm:gap-4">
+        <LiveIndicator connected={realtimeConnected} />
+
+        <Avatar
+          initials={self.initials}
+          seed={self.id}
+          online
+          size="sm"
+          title={self.name}
+        />
+
+        <form action={logoutAction}>
+          <button
+            type="submit"
+            title="Sign out"
+            aria-label="Sign out"
+            className="flex items-center justify-center rounded-md p-1.5 text-ink-faint transition-colors hover:text-ink"
+          >
+            <SignOutIcon size={16} />
+          </button>
+        </form>
+      </div>
+
+      {menuOpen && (
+        <>
+          {/* Invisible tap-outside-to-close catcher, not a page-darkening
+              overlay — this is a small menu, not a full mobile drawer. */}
+          <div
+            className="fixed inset-0 z-10 md:hidden"
+            onClick={() => setMenuOpen(false)}
+          />
+          <div className="absolute left-3 top-full z-20 mt-1.5 flex w-44 flex-col gap-0.5 rounded-lg border border-line bg-panel-raised p-1 shadow-lg md:hidden">
+            {navItems.map((item) => {
+              const active = isActive(item.href);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={() => setMenuOpen(false)}
+                  className={
+                    active
+                      ? "rounded-md bg-panel px-3 py-2 text-left text-sm font-medium text-ink"
+                      : "rounded-md px-3 py-2 text-left text-sm text-ink-dim hover:text-ink"
+                  }
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </header>
   );
 }
 </file>

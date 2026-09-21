@@ -39,13 +39,13 @@ export async function proxy(request: NextRequest) {
   }
 
   const result = await refreshSession(refreshToken);
-  const response = NextResponse.next();
 
   if (!result.ok) {
     // Refresh token invalid, expired, or already used — clear both
     // cookies rather than leave a stale, unusable pair sitting there.
     // The dashboard layout's own session check sends the request to
     // /login from here.
+    const response = NextResponse.next();
     response.cookies.delete(ACCESS_TOKEN_COOKIE);
     response.cookies.delete(REFRESH_TOKEN_COOKIE);
     return response;
@@ -57,6 +57,24 @@ export async function proxy(request: NextRequest) {
     sameSite: "lax" as const,
     secure: process.env.NODE_ENV === "production",
   };
+
+  // Setting only response.cookies here would leave *this* request's own
+  // downstream Server Components/Actions reading the Cookie header the
+  // browser originally sent — the still-expired access token — since
+  // response.cookies.set() only reaches the browser (and so only takes
+  // effect) on its *next* request. That's invisible for a normal
+  // navigation (the next page load picks it up), but a Server Action
+  // invoked right around the ~15 minute mark — e.g. RealtimeProvider's
+  // background token-refresh poll, which has no page load to piggyback
+  // on — would run getSession() in the *same* request that just
+  // refreshed the cookie, see the old token, and fail as if there were
+  // no session at all. Writing the refreshed values onto request.cookies
+  // too, and rebuilding NextResponse.next({ request }) from it, is what
+  // actually forwards them into this request's own downstream render.
+  request.cookies.set(ACCESS_TOKEN_COOKIE, result.session.accessToken);
+  request.cookies.set(REFRESH_TOKEN_COOKIE, result.session.refreshToken);
+
+  const response = NextResponse.next({ request });
 
   response.cookies.set(ACCESS_TOKEN_COOKIE, result.session.accessToken, {
     ...cookieOptions,
