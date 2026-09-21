@@ -9,7 +9,11 @@ import {
   type ReactNode,
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { createClient, type RealtimeChannel } from "@supabase/supabase-js";
+import {
+  createClient,
+  type RealtimeChannel,
+  type SupabaseClient,
+} from "@supabase/supabase-js";
 import { getRealtimeTokenAction } from "@/app/(dashboard)/actions";
 
 const RealtimeStatusContext = createContext(false);
@@ -27,39 +31,43 @@ const RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 15_000];
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-const supabase =
-  supabaseUrl && supabaseAnonKey
-    ? createClient(supabaseUrl, supabaseAnonKey, {
-        // This is the actual fix for the "reconnects on its own after a
-        // while" bug — not something a retry loop can paper over.
-        //
-        // createClient()'s default wiring gives the RealtimeClient an
-        // accessToken callback that resolves to
-        // `supabase.auth`'s session token, or the anon key if there's no
-        // session. This app never signs in via supabase.auth (custom
-        // cookie-based auth instead), so that callback always resolves
-        // to the anon key. And it isn't just called once: supabase-js
-        // calls it on every heartbeat (~every 30s) to keep the socket
-        // authorized — a manual `setAuth(customToken)` call sends our
-        // org-scoped JWT for that one message, but does NOT stop the
-        // next heartbeat from overwriting it with the anon key, since
-        // "a callback is configured" always wins over "someone called
-        // setAuth() by hand" (see @supabase/realtime-js's
-        // RealtimeClient._performAuth). The anon key carries no
-        // org_id/app_role claims, so the Realtime Authorization RLS
-        // policy correctly rejects it — that's the CHANNEL_ERROR this
-        // produces every ~30 seconds, forever, regardless of anything
-        // this component does.
-        //
-        // Passing accessToken here makes our own token-minting Server
-        // Action the callback, so it's what every heartbeat and
-        // reconnect actually refreshes from — a real, valid, org-scoped
-        // token every time, not the anon key. This also disables
-        // `supabase.auth` on this client (throws if touched), which is
-        // fine: nothing in this app uses it.
-        accessToken: () => getRealtimeTokenAction(),
-      })
-    : null;
+// Built lazily, on first use inside useEffect — NOT at module scope.
+//
+// A module-level createClient() runs while Next evaluates this file for
+// server-side rendering of the "use client" tree, and supabase-js can
+// invoke the accessToken callback below while constructing the client.
+// That callback is a Server Action, and Next refuses Server Action calls
+// made during render ("Server Functions cannot be called during initial
+// render"). Effects never run on the server, so creating the client
+// there guarantees the Server Action is only ever called from the
+// browser, from an event/async context — never mid-render.
+//
+// Cached in a module variable so every effect run (Strict Mode's
+// mount→cleanup→mount included) shares one client and one socket.
+let supabaseClient: SupabaseClient | null = null;
+
+function getSupabase(): SupabaseClient | null {
+  if (typeof window === "undefined") return null;
+  if (supabaseClient) return supabaseClient;
+  if (!supabaseUrl || !supabaseAnonKey) return null;
+
+  supabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
+    // Why accessToken is passed at all: createClient()'s default wiring
+    // resolves to `supabase.auth`'s session token, or the anon key when
+    // there's no session. This app never signs in via supabase.auth
+    // (custom cookie-based auth), so the default is always the anon
+    // key — and supabase-js calls this callback on every heartbeat
+    // (~30s), overwriting anything a manual setAuth(token) sent. The
+    // anon key has no org_id/app_role claims, so the Realtime
+    // Authorization RLS policy rejects it: a CHANNEL_ERROR every ~30s.
+    // Making our token-minting Server Action the callback means every
+    // heartbeat and reconnect refreshes from a real, org-scoped token.
+    // This also disables `supabase.auth` on this client (throws if
+    // touched), which is fine: nothing in this app uses it.
+    accessToken: () => getRealtimeTokenAction(),
+  });
+  return supabaseClient;
+}
 
 interface RealtimeProviderProps {
   orgId: string;
@@ -89,6 +97,7 @@ export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    const supabase = getSupabase();
     if (!supabase) {
       console.warn(
         "RealtimeProvider: NEXT_PUBLIC_SUPABASE_URL/NEXT_PUBLIC_SUPABASE_ANON_KEY not set — realtime disabled.",

@@ -1027,172 +1027,6 @@ export function QueryProvider({ children }: { children: ReactNode }) {
 }
 </file>
 
-<file path="components/shared/RealtimeProvider.tsx">
-"use client";
-
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { createClient, type RealtimeChannel } from "@supabase/supabase-js";
-import { getRealtimeTokenAction } from "@/app/(dashboard)/actions";
-
-const RealtimeStatusContext = createContext(false);
-
-export function useRealtimeConnected(): boolean {
-  return useContext(RealtimeStatusContext);
-}
-
-const TOKEN_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-const supabase =
-  supabaseUrl && supabaseAnonKey
-    ? createClient(supabaseUrl, supabaseAnonKey)
-    : null;
-
-interface RealtimeProviderProps {
-  orgId: string;
-  children: ReactNode;
-}
-
-export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
-  const queryClient = useQueryClient();
-  const [connected, setConnected] = useState(false);
-  const channelRef = useRef<RealtimeChannel | null>(null);
-
-  // Generation counter, not just a `cancelled` boolean. A boolean stops
-  // a stale run's own setState calls but does nothing about async work
-  // already in flight: under Strict Mode's mount→cleanup→mount, the
-  // first run's getRealtimeTokenAction()/setAuth() call can still be on
-  // the wire when the second run starts. If both runs eventually
-  // resolve and each subscribes its own channel, that's the
-  // overlapping-join symptom in the bug report. Bumping this on every
-  // effect run and checking it after every await lets a stale run
-  // detect it's stale *after each async step*, not just before calling
-  // setState, and bail before ever touching the socket.
-  const generationRef = useRef(0);
-
-  useEffect(() => {
-    if (!supabase) {
-      console.warn(
-        "RealtimeProvider: NEXT_PUBLIC_SUPABASE_URL/NEXT_PUBLIC_SUPABASE_ANON_KEY not set — realtime disabled.",
-      );
-      return;
-    }
-
-    generationRef.current += 1;
-    const myGeneration = generationRef.current;
-    const isStale = () => myGeneration !== generationRef.current;
-
-    let channel: RealtimeChannel | null = null;
-    let refreshInterval: ReturnType<typeof setInterval> | null = null;
-
-    const authenticateAndSubscribe = async () => {
-      try {
-        const token = await getRealtimeTokenAction();
-        if (isStale()) return;
-
-        // setAuth() MUST complete before subscribe() is called.
-        // Realtime Authorization checks the socket's current JWT at
-        // phx_join time; subscribing first and authenticating after
-        // means the join goes out unauthenticated (RLS has nothing to
-        // match org_id against), draws a CHANNEL_ERROR, and only
-        // succeeds on the rejoin that setAuth() triggers afterwards —
-        // which is exactly the "ok and error mixed together, plus a
-        // phx_leave" pattern in the bug report. Sequencing this, and
-        // only building/subscribing the channel afterward, removes
-        // that race entirely rather than just narrowing it.
-        await supabase.realtime.setAuth(token);
-        if (isStale()) return;
-
-        channel = supabase
-          .channel(`org:${orgId}`, { config: { private: true } })
-          .on("broadcast", { event: "ticket.updated" }, ({ payload }) => {
-            if (isStale()) return;
-            if (payload?.id) {
-              queryClient.invalidateQueries({
-                queryKey: ["tickets", payload.id],
-              });
-            }
-            queryClient.invalidateQueries({ queryKey: ["tickets", "list"] });
-          })
-          .subscribe((status) => {
-            if (isStale()) return;
-
-            if (status === "SUBSCRIBED") {
-              setConnected(true);
-              queryClient.invalidateQueries();
-            } else {
-              setConnected(false);
-            }
-          });
-
-        channelRef.current = channel;
-
-        // Re-authing an already-joined channel doesn't trigger a
-        // rejoin the way the pre-auth initial join above did —
-        // supabase-js just pushes the refreshed token to the socket —
-        // so this interval doesn't reproduce the race, only the
-        // isStale() guard is needed to stop it after teardown.
-        refreshInterval = setInterval(async () => {
-          if (isStale()) return;
-          try {
-            const freshToken = await getRealtimeTokenAction();
-            if (isStale()) return;
-            await supabase.realtime.setAuth(freshToken);
-          } catch (error) {
-            console.error(
-              "RealtimeProvider: failed to refresh auth token",
-              error,
-            );
-          }
-        }, TOKEN_REFRESH_INTERVAL_MS);
-      } catch (error) {
-        if (!isStale()) {
-          console.error(
-            "RealtimeProvider: failed to authenticate realtime session",
-            error,
-          );
-          setConnected(false);
-        }
-      }
-    };
-
-    void authenticateAndSubscribe();
-
-    return () => {
-      // This cleanup can run *before* authenticateAndSubscribe's awaits
-      // resolve (that's precisely the Strict Mode case). The isStale()
-      // checks sprinkled after every await are what actually stop a
-      // torn-down run from creating/subscribing a channel — this
-      // cleanup only tears down whatever *this* run had already made
-      // by the time it runs.
-      if (refreshInterval) clearInterval(refreshInterval);
-      if (channel) {
-        supabase.removeChannel(channel);
-      }
-      if (channelRef.current === channel) {
-        channelRef.current = null;
-      }
-    };
-  }, [orgId, queryClient]);
-
-  return (
-    <RealtimeStatusContext.Provider value={connected}>
-      {children}
-    </RealtimeStatusContext.Provider>
-  );
-}
-</file>
-
 <file path="components/shared/Sparkline.tsx">
 interface SparklineProps {
   values: number[];
@@ -2782,84 +2616,6 @@ const config = {
 export default config;
 </file>
 
-<file path="proxy.ts">
-import { NextResponse, type NextRequest } from "next/server";
-import { verifyAccessToken, ACCESS_TOKEN_TTL_SECONDS } from "@/server/auth/jwt";
-import { refreshSession } from "@/server/application/auth";
-import {
-  ACCESS_TOKEN_COOKIE,
-  REFRESH_TOKEN_COOKIE,
-  REFRESH_TOKEN_TTL_SECONDS,
-} from "@/server/auth/cookies";
-
-/**
- * Runs on every request. A Server Component's getSession() (server/auth/
- * session.ts) can only *read* cookies — only Proxy, Server Actions, and
- * Route Handlers can *set* them — so silently refreshing an expired
- * access token before a page ever renders has to happen here. Without
- * this, README §4's "access + refresh" pair would only mean "get logged
- * out every 15 minutes" — the refresh half has to actually run somewhere
- * unattended.
- *
- * This file is named `proxy.ts`, not `middleware.ts` — Next.js 16
- * renamed the convention (the old name is deprecated and will be
- * removed in a future version). Nothing else changes in what this does;
- * it's the same request-interception point under a new name. One thing
- * that *did* get simpler: Proxy's runtime is unconditionally Node.js,
- * not configurable the way Middleware's was — which happens to be
- * exactly what this needs anyway, since refreshSession() goes through
- * Prisma (via @prisma/adapter-pg, real Node TCP sockets) and Node's
- * `crypto` module, neither of which works on the old Edge default.
- */
-export async function proxy(request: NextRequest) {
-  const accessToken = request.cookies.get(ACCESS_TOKEN_COOKIE)?.value;
-
-  if (accessToken && (await verifyAccessToken(accessToken))) {
-    return NextResponse.next();
-  }
-
-  const refreshToken = request.cookies.get(REFRESH_TOKEN_COOKIE)?.value;
-  if (!refreshToken) {
-    return NextResponse.next();
-  }
-
-  const result = await refreshSession(refreshToken);
-  const response = NextResponse.next();
-
-  if (!result.ok) {
-    // Refresh token invalid, expired, or already used — clear both
-    // cookies rather than leave a stale, unusable pair sitting there.
-    // The dashboard layout's own session check sends the request to
-    // /login from here.
-    response.cookies.delete(ACCESS_TOKEN_COOKIE);
-    response.cookies.delete(REFRESH_TOKEN_COOKIE);
-    return response;
-  }
-
-  const cookieOptions = {
-    path: "/",
-    httpOnly: true,
-    sameSite: "lax" as const,
-    secure: process.env.NODE_ENV === "production",
-  };
-
-  response.cookies.set(ACCESS_TOKEN_COOKIE, result.session.accessToken, {
-    ...cookieOptions,
-    maxAge: ACCESS_TOKEN_TTL_SECONDS,
-  });
-  response.cookies.set(REFRESH_TOKEN_COOKIE, result.session.refreshToken, {
-    ...cookieOptions,
-    maxAge: REFRESH_TOKEN_TTL_SECONDS,
-  });
-
-  return response;
-}
-
-export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
-};
-</file>
-
 <file path="README.md">
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
@@ -3383,6 +3139,260 @@ export function Modal({ title, onClose, children, footer }: ModalProps) {
         )}
       </div>
     </div>
+  );
+}
+</file>
+
+<file path="components/shared/RealtimeProvider.tsx">
+"use client";
+
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { createClient, type RealtimeChannel } from "@supabase/supabase-js";
+import { getRealtimeTokenAction } from "@/app/(dashboard)/actions";
+
+const RealtimeStatusContext = createContext(false);
+
+export function useRealtimeConnected(): boolean {
+  return useContext(RealtimeStatusContext);
+}
+
+// Backoff for reconnect attempts after a CHANNEL_ERROR/TIMED_OUT/CLOSED —
+// capped so a run of failures doesn't turn into a tight retry loop against
+// the token endpoint and the socket. Resets to the first entry as soon as
+// a connect attempt actually reaches SUBSCRIBED.
+const RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 15_000];
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+const supabase =
+  supabaseUrl && supabaseAnonKey
+    ? createClient(supabaseUrl, supabaseAnonKey, {
+        // This is the actual fix for the "reconnects on its own after a
+        // while" bug — not something a retry loop can paper over.
+        //
+        // createClient()'s default wiring gives the RealtimeClient an
+        // accessToken callback that resolves to
+        // `supabase.auth`'s session token, or the anon key if there's no
+        // session. This app never signs in via supabase.auth (custom
+        // cookie-based auth instead), so that callback always resolves
+        // to the anon key. And it isn't just called once: supabase-js
+        // calls it on every heartbeat (~every 30s) to keep the socket
+        // authorized — a manual `setAuth(customToken)` call sends our
+        // org-scoped JWT for that one message, but does NOT stop the
+        // next heartbeat from overwriting it with the anon key, since
+        // "a callback is configured" always wins over "someone called
+        // setAuth() by hand" (see @supabase/realtime-js's
+        // RealtimeClient._performAuth). The anon key carries no
+        // org_id/app_role claims, so the Realtime Authorization RLS
+        // policy correctly rejects it — that's the CHANNEL_ERROR this
+        // produces every ~30 seconds, forever, regardless of anything
+        // this component does.
+        //
+        // Passing accessToken here makes our own token-minting Server
+        // Action the callback, so it's what every heartbeat and
+        // reconnect actually refreshes from — a real, valid, org-scoped
+        // token every time, not the anon key. This also disables
+        // `supabase.auth` on this client (throws if touched), which is
+        // fine: nothing in this app uses it.
+        accessToken: () => getRealtimeTokenAction(),
+      })
+    : null;
+
+interface RealtimeProviderProps {
+  orgId: string;
+  children: ReactNode;
+}
+
+export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
+  const queryClient = useQueryClient();
+  const [connected, setConnected] = useState(false);
+  const channelRef = useRef<RealtimeChannel | null>(null);
+
+  // Generation counter, not just a `cancelled` boolean. A boolean stops
+  // a stale run's own setState calls but does nothing about async work
+  // already in flight: under Strict Mode's mount→cleanup→mount, the
+  // first run's getRealtimeTokenAction()/setAuth() call can still be on
+  // the wire when the second run starts. If both runs eventually
+  // resolve and each subscribes its own channel, that's the
+  // overlapping-join symptom in the bug report. Bumping this on every
+  // effect run and checking it after every await lets a stale run
+  // detect it's stale *after each async step*, not just before calling
+  // setState, and bail before ever touching the socket.
+  const generationRef = useRef(0);
+
+  // How many reconnect attempts have failed in a row since the last
+  // successful SUBSCRIBED, for RECONNECT_DELAYS_MS backoff.
+  const retryCountRef = useRef(0);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!supabase) {
+      console.warn(
+        "RealtimeProvider: NEXT_PUBLIC_SUPABASE_URL/NEXT_PUBLIC_SUPABASE_ANON_KEY not set — realtime disabled.",
+      );
+      return;
+    }
+
+    generationRef.current += 1;
+    const myGeneration = generationRef.current;
+    const isStale = () => myGeneration !== generationRef.current;
+
+    const clearRetryTimer = () => {
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
+    };
+
+    const teardown = () => {
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
+    };
+
+    const scheduleReconnect = () => {
+      if (isStale()) return;
+      clearRetryTimer();
+      const delay =
+        RECONNECT_DELAYS_MS[
+          Math.min(retryCountRef.current, RECONNECT_DELAYS_MS.length - 1)
+        ];
+      retryCountRef.current += 1;
+      retryTimerRef.current = setTimeout(() => {
+        if (isStale()) return;
+        void connect();
+      }, delay);
+    };
+
+    const connect = async () => {
+      // Idempotent teardown first: this runs both for the very first
+      // connect and for every later reconnect (backoff timer, 'online'
+      // event, tab foregrounded), so there's never a moment with two
+      // live channels or two overlapping refresh intervals.
+      teardown();
+
+      try {
+        // setAuth() with no argument pulls a fresh token from the
+        // accessToken callback configured above (our own
+        // getRealtimeTokenAction, not the anon key) and MUST complete
+        // before subscribe() is called. Realtime Authorization checks
+        // the socket's current JWT at phx_join time; subscribing first
+        // and authenticating after means the join goes out
+        // unauthenticated (RLS has nothing to match org_id against),
+        // draws a CHANNEL_ERROR, and only succeeds on the rejoin that
+        // setAuth() triggers afterwards — which is exactly the "ok and
+        // error mixed together, plus a phx_leave" pattern in the bug
+        // report. Sequencing this, and only building/subscribing the
+        // channel afterward, removes that race entirely rather than
+        // just narrowing it.
+        await supabase.realtime.setAuth();
+        if (isStale()) return;
+
+        const channel = supabase
+          .channel(`org:${orgId}`, { config: { private: true } })
+          .on("broadcast", { event: "ticket.updated" }, ({ payload }) => {
+            if (isStale()) return;
+            if (payload?.id) {
+              queryClient.invalidateQueries({
+                queryKey: ["tickets", payload.id],
+              });
+            }
+            queryClient.invalidateQueries({ queryKey: ["tickets", "list"] });
+          })
+          .subscribe((status) => {
+            if (isStale()) return;
+
+            if (status === "SUBSCRIBED") {
+              retryCountRef.current = 0;
+              clearRetryTimer();
+              setConnected(true);
+              queryClient.invalidateQueries();
+            } else {
+              // CHANNEL_ERROR / TIMED_OUT / CLOSED. supabase-js's socket
+              // does auto-reconnect at the transport level, but a
+              // *private* channel's own rejoin still gets rejected if
+              // the realtime JWT it's carrying has since expired — a
+              // very likely state after being offline, backgrounded, or
+              // asleep for a while (the socket has no way to fetch a
+              // new one on its own; that requires our
+              // getRealtimeTokenAction() Server Action). Left alone,
+              // that rejection just sits here forever, which is exactly
+              // "came back online and it never went back to Live."
+              // Reconnecting from scratch with a fresh token is what
+              // actually resolves it.
+              setConnected(false);
+              scheduleReconnect();
+            }
+          });
+
+        channelRef.current = channel;
+      } catch (error) {
+        if (!isStale()) {
+          console.error(
+            "RealtimeProvider: failed to authenticate realtime session",
+            error,
+          );
+          setConnected(false);
+          scheduleReconnect();
+        }
+      }
+    };
+
+    void connect();
+
+    const handleOnline = () => {
+      // The browser regained connectivity. Don't wait out whatever
+      // backoff delay happens to be queued — reconnect immediately with
+      // a fresh token rather than trusting the socket's own reconnect,
+      // which can get stuck retrying with the now-expired token it had
+      // when connectivity dropped (see the CHANNEL_ERROR branch above).
+      if (isStale()) return;
+      retryCountRef.current = 0;
+      clearRetryTimer();
+      void connect();
+    };
+
+    const handleVisibility = () => {
+      // A backgrounded tab throttles timers, including the socket's own
+      // heartbeat — a laptop that slept through several missed
+      // heartbeats can come back to a channel the client still thinks
+      // is fine but the server dropped long ago. Re-verifying on
+      // foreground catches that without waiting on a heartbeat timeout.
+      if (document.visibilityState === "visible") {
+        handleOnline();
+      }
+    };
+
+    window.addEventListener("online", handleOnline);
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      // This cleanup can run *before* connect()'s awaits resolve (that's
+      // precisely the Strict Mode case). The isStale() checks sprinkled
+      // after every await are what actually stop a torn-down run from
+      // creating/subscribing a channel — this cleanup only tears down
+      // whatever *this* run had already made by the time it runs.
+      window.removeEventListener("online", handleOnline);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      clearRetryTimer();
+      teardown();
+    };
+  }, [orgId, queryClient]);
+
+  return (
+    <RealtimeStatusContext.Provider value={connected}>
+      {children}
+    </RealtimeStatusContext.Provider>
   );
 }
 </file>
@@ -4853,6 +4863,102 @@ export default defineConfig({
     url: process.env["DATABASE_URL"],
   },
 });
+</file>
+
+<file path="proxy.ts">
+import { NextResponse, type NextRequest } from "next/server";
+import { verifyAccessToken, ACCESS_TOKEN_TTL_SECONDS } from "@/server/auth/jwt";
+import { refreshSession } from "@/server/application/auth";
+import {
+  ACCESS_TOKEN_COOKIE,
+  REFRESH_TOKEN_COOKIE,
+  REFRESH_TOKEN_TTL_SECONDS,
+} from "@/server/auth/cookies";
+
+/**
+ * Runs on every request. A Server Component's getSession() (server/auth/
+ * session.ts) can only *read* cookies — only Proxy, Server Actions, and
+ * Route Handlers can *set* them — so silently refreshing an expired
+ * access token before a page ever renders has to happen here. Without
+ * this, README §4's "access + refresh" pair would only mean "get logged
+ * out every 15 minutes" — the refresh half has to actually run somewhere
+ * unattended.
+ *
+ * This file is named `proxy.ts`, not `middleware.ts` — Next.js 16
+ * renamed the convention (the old name is deprecated and will be
+ * removed in a future version). Nothing else changes in what this does;
+ * it's the same request-interception point under a new name. One thing
+ * that *did* get simpler: Proxy's runtime is unconditionally Node.js,
+ * not configurable the way Middleware's was — which happens to be
+ * exactly what this needs anyway, since refreshSession() goes through
+ * Prisma (via @prisma/adapter-pg, real Node TCP sockets) and Node's
+ * `crypto` module, neither of which works on the old Edge default.
+ */
+export async function proxy(request: NextRequest) {
+  const accessToken = request.cookies.get(ACCESS_TOKEN_COOKIE)?.value;
+
+  if (accessToken && (await verifyAccessToken(accessToken))) {
+    return NextResponse.next();
+  }
+
+  const refreshToken = request.cookies.get(REFRESH_TOKEN_COOKIE)?.value;
+  if (!refreshToken) {
+    return NextResponse.next();
+  }
+
+  const result = await refreshSession(refreshToken);
+
+  if (!result.ok) {
+    // Refresh token invalid, expired, or already used — clear both
+    // cookies rather than leave a stale, unusable pair sitting there.
+    // The dashboard layout's own session check sends the request to
+    // /login from here.
+    const response = NextResponse.next();
+    response.cookies.delete(ACCESS_TOKEN_COOKIE);
+    response.cookies.delete(REFRESH_TOKEN_COOKIE);
+    return response;
+  }
+
+  const cookieOptions = {
+    path: "/",
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: process.env.NODE_ENV === "production",
+  };
+
+  // Setting only response.cookies here would leave *this* request's own
+  // downstream Server Components/Actions reading the Cookie header the
+  // browser originally sent — the still-expired access token — since
+  // response.cookies.set() only reaches the browser (and so only takes
+  // effect) on its *next* request. That's invisible for a normal
+  // navigation (the next page load picks it up), but a Server Action
+  // invoked right around the ~15 minute mark — e.g. RealtimeProvider's
+  // background token-refresh poll, which has no page load to piggyback
+  // on — would run getSession() in the *same* request that just
+  // refreshed the cookie, see the old token, and fail as if there were
+  // no session at all. Writing the refreshed values onto request.cookies
+  // too, and rebuilding NextResponse.next({ request }) from it, is what
+  // actually forwards them into this request's own downstream render.
+  request.cookies.set(ACCESS_TOKEN_COOKIE, result.session.accessToken);
+  request.cookies.set(REFRESH_TOKEN_COOKIE, result.session.refreshToken);
+
+  const response = NextResponse.next({ request });
+
+  response.cookies.set(ACCESS_TOKEN_COOKIE, result.session.accessToken, {
+    ...cookieOptions,
+    maxAge: ACCESS_TOKEN_TTL_SECONDS,
+  });
+  response.cookies.set(REFRESH_TOKEN_COOKIE, result.session.refreshToken, {
+    ...cookieOptions,
+    maxAge: REFRESH_TOKEN_TTL_SECONDS,
+  });
+
+  return response;
+}
+
+export const config = {
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+};
 </file>
 
 <file path="RELAY_README.md">
