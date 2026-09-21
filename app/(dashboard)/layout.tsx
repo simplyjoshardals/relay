@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
 import { TopBar } from "@/components/shared/TopBar";
 import { ToastProvider } from "@/components/shared/Toast";
+import { QueryProvider } from "@/components/shared/QueryProvider";
+import { RealtimeProvider } from "@/components/shared/RealtimeProvider";
 import { currentOrgName } from "@/lib/mock-data";
 import { getCurrentUser } from "@/server/auth/session";
 import { PATHS } from "@/utils/paths";
@@ -27,18 +29,22 @@ export default async function DashboardLayout({
   }
 
   return (
-    <ToastProvider>
-      <div className="flex h-full flex-col">
-        <TopBar orgName={currentOrgName} self={self} />
+    <QueryProvider>
+      <RealtimeProvider orgId={self.orgId}>
+        <ToastProvider>
+          <div className="flex h-full flex-col">
+            <TopBar orgName={currentOrgName} self={self} />
 
-        {/* Only this content area scrolls — the TopBar above stays put.
-            Shared by every route in this group (dashboard, tickets,
-            incidents, services, activity) so each page only owns its own
-            content. */}
-        <main className="mx-auto flex w-full max-w-350 flex-1 flex-col gap-4 overflow-y-auto px-3 py-4 sm:px-6 sm:py-5">
-          {children}
-        </main>
-      </div>
-    </ToastProvider>
+            {/* Only this content area scrolls — the TopBar above stays put.
+                Shared by every route in this group (dashboard, tickets,
+                incidents, services, activity) so each page only owns its own
+                content. */}
+            <main className="mx-auto flex w-full max-w-350 flex-1 flex-col gap-4 overflow-y-auto px-3 py-4 sm:px-6 sm:py-5">
+              {children}
+            </main>
+          </div>
+        </ToastProvider>
+      </RealtimeProvider>
+    </QueryProvider>
   );
 }

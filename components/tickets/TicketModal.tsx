@@ -5,6 +5,10 @@ import { Modal } from "@/components/shared/Modal";
 import { SelectField } from "@/components/shared/SelectField";
 import { TextField } from "@/components/shared/TextField";
 import {
+  createTicketInputSchema,
+  updateTicketInputSchema,
+} from "@/server/validation/tickets";
+import {
   ticketPriorityMeta,
   ticketStatusMeta,
   type Ticket,
@@ -21,32 +25,60 @@ const priorityOptions = Object.entries(ticketPriorityMeta).map(
   ([value, meta]) => ({ value, label: meta.label }),
 );
 
+export interface CreateTicketFields {
+  title: string;
+  description: string;
+  priority: TicketPriority;
+  assigneeId: string | null;
+}
+
+export interface UpdateTicketFields {
+  title: string;
+  description: string;
+  status: TicketStatus;
+  priority: TicketPriority;
+  assigneeId: string | null;
+  expectedVersion: number;
+}
+
 interface TicketModalProps {
   /** null = create mode. Otherwise the ticket being edited. */
   ticket: Ticket | null;
   users: User[];
-  self: User;
+  /** True while the create/update mutation is in flight — this is a
+   *  real network round trip now (Milestone 2), not an instant local
+   *  state update, so the Save button needs to say so. */
+  saving?: boolean;
   onClose: () => void;
-  onSave: (ticket: Ticket) => void;
+  onCreate: (input: CreateTicketFields) => void;
+  onUpdate: (input: UpdateTicketFields) => void;
 }
 
-/** Create-or-edit form for a single ticket. One component handles both
- *  modes (rather than a separate create form) since the fields are
- *  identical — only the starting values and what onSave does with the id
- *  differ, and that's the caller's job (TicketsView), not this form's.
+/**
+ * Create-or-edit form for a single ticket. One component handles both
+ * modes since the fields are almost identical — only the starting
+ * values and which callback fires differ.
  *
- *  Note: this only updates the caller's local ticket list — there's no
- *  backend yet (see ROADMAP_ROLES.md Phase 2), so it deliberately does
- *  NOT also append to the Activity feed. Activity's mock data lives on a
- *  separate route with its own fetch, and there's no shared client store
- *  wiring the two together; building one just for mock data would be
- *  thrown away once real Server Actions + a query cache land anyway. */
+ * This hands the caller (TicketsView) plain input fields, not a
+ * fully-formed Ticket: the server is what assigns the real id, version,
+ * and timestamps now (Milestone 2), via createTicketAction/
+ * updateTicketAction. Building a fake client-side Ticket object here —
+ * which the pre-backend version of this file used to do — would just be
+ * guessing at values the server is actually responsible for.
+ *
+ * Validated with the same Zod schemas the server uses
+ * (server/validation/tickets.ts) via `.safeParse()` on submit, per the
+ * resolved decision in BACKEND_ROADMAP.md not to adopt React Hook Form —
+ * one shared definition of "a valid ticket," without a form-library
+ * rewrite these ~5 fields don't need.
+ */
 export function TicketModal({
   ticket,
   users,
-  self,
+  saving,
   onClose,
-  onSave,
+  onCreate,
+  onUpdate,
 }: TicketModalProps) {
   const isCreate = ticket === null;
 
@@ -57,59 +89,68 @@ export function TicketModal({
     ticket?.priority ?? "MEDIUM",
   );
   const [assigneeId, setAssigneeId] = useState(ticket?.assigneeId ?? "");
-
-  const canSave = title.trim().length > 0;
+  const [formError, setFormError] = useState<string | null>(null);
 
   const handleSave = () => {
-    if (!canSave) return;
-    const now = new Date().toISOString();
-
-    onSave(
-      isCreate
-        ? {
-            id: `t_${crypto.randomUUID()}`,
-            orgId: self.orgId,
-            title: title.trim(),
-            description: description.trim(),
-            status,
-            priority,
-            assigneeId: assigneeId || null,
-            creatorId: self.id,
-            version: 1,
-            createdAt: now,
-            updatedAt: now,
-          }
-        : {
-            ...ticket,
-            title: title.trim(),
-            description: description.trim(),
-            status,
-            priority,
-            assigneeId: assigneeId || null,
-            version: ticket.version + 1,
-            updatedAt: now,
-          },
-    );
-    onClose();
+    if (isCreate) {
+      const parsed = createTicketInputSchema.safeParse({
+        title,
+        description,
+        priority,
+        assigneeId: assigneeId || null,
+      });
+      if (!parsed.success) {
+        setFormError(parsed.error.issues[0]?.message ?? "Invalid input.");
+        return;
+      }
+      setFormError(null);
+      onCreate({ ...parsed.data, assigneeId: parsed.data.assigneeId ?? null });
+    } else {
+      const parsed = updateTicketInputSchema.safeParse({
+        title,
+        description,
+        status,
+        priority,
+        assigneeId: assigneeId || null,
+        expectedVersion: ticket.version,
+      });
+      if (!parsed.success) {
+        setFormError(parsed.error.issues[0]?.message ?? "Invalid input.");
+        return;
+      }
+      setFormError(null);
+      onUpdate({
+        title: parsed.data.title ?? title,
+        description: parsed.data.description ?? description,
+        status: parsed.data.status ?? status,
+        priority: parsed.data.priority ?? priority,
+        assigneeId: parsed.data.assigneeId ?? null,
+        expectedVersion: parsed.data.expectedVersion,
+      });
+    }
   };
 
   const footer = (
-    <div className="flex items-center justify-end gap-2">
-      <button
-        type="button"
-        onClick={onClose}
-        className="rounded-md border border-line px-3 py-1.5 text-sm text-ink-dim transition-colors hover:text-ink"
-      >
-        Cancel
-      </button>
-      <button
-        type="button"
-        onClick={handleSave}
-        disabled={!canSave}
-        className="rounded-md bg-ink px-3 py-1.5 text-sm font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-50"
-      >
-        {isCreate ? "Create ticket" : "Save changes"}
-      </button>
+    <div className="flex flex-col gap-2">
+      {formError && <p className="text-xs text-danger">{formError}</p>}
+      <div className="flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={saving}
+          className="rounded-md border border-line px-3 py-1.5 text-sm text-ink-dim transition-colors hover:text-ink disabled:opacity-50"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving}
+          className="rounded-md bg-ink px-3 py-1.5 text-sm font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-50"
+        >
+          {saving ? "Saving…" : isCreate ? "Create ticket" : "Save changes"}
+        </button>
+      </div>
     </div>
   );
 
@@ -136,13 +177,19 @@ export function TicketModal({
           placeholder="Optional detail"
         />
 
-        <div className="grid grid-cols-2 gap-3">
-          <SelectField
-            label="Status"
-            value={status}
-            onChange={(value) => setStatus(value as TicketStatus)}
-            options={statusOptions}
-          />
+        <div
+          className={
+            isCreate ? "grid grid-cols-1 gap-3" : "grid grid-cols-2 gap-3"
+          }
+        >
+          {!isCreate && (
+            <SelectField
+              label="Status"
+              value={status}
+              onChange={(value) => setStatus(value as TicketStatus)}
+              options={statusOptions}
+            />
+          )}
           <SelectField
             label="Priority"
             value={priority}

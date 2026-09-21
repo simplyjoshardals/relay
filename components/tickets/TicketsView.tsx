@@ -1,12 +1,23 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { PlusIcon } from "@phosphor-icons/react";
 import { Avatar } from "@/components/dashboard/Avatar";
 import { FilterPill } from "@/components/shared/FilterPill";
 import { SearchInput } from "@/components/shared/SearchInput";
-import { TicketModal } from "@/components/tickets/TicketModal";
+import {
+  TicketModal,
+  type CreateTicketFields,
+  type UpdateTicketFields,
+} from "@/components/tickets/TicketModal";
 import { useToast } from "@/components/shared/Toast";
+import {
+  createTicketAction,
+  listOrgUsersAction,
+  listTicketsAction,
+  updateTicketAction,
+} from "@/app/(dashboard)/tickets/actions";
 import {
   ticketPriorityMeta,
   ticketStatusMeta,
@@ -24,36 +35,130 @@ const statusColumns: TicketStatus[] = [
   "RESOLVED",
 ];
 
+// Stable references for the "not loaded yet" fallback — `?? []` inline
+// would create a new array every render, which then defeats the
+// useMemo()s below that depend on `users`/`ticketList` (a fresh []
+// reference each time looks like a real change).
+const EMPTY_TICKETS: Ticket[] = [];
+const EMPTY_USERS: User[] = [];
+
 interface TicketsViewProps {
-  tickets: Ticket[];
-  users: User[];
   self: User;
 }
 
 type ModalState = { mode: "create" } | { mode: "edit"; ticket: Ticket } | null;
 
-export function TicketsView({ tickets, users, self }: TicketsViewProps) {
+/**
+ * Milestone 2: tickets are real now. This component owns its own data —
+ * `useQuery`/`useMutation` against the Server Actions in
+ * app/(dashboard)/tickets/actions.ts — rather than receiving `tickets`
+ * as a prop and mirroring it into local state, which is how this looked
+ * before the backend existed.
+ *
+ * Mutations here are "mutate, then invalidate and refetch" (via
+ * onSuccess), not true client-side optimistic updates with rollback —
+ * that refinement is explicitly Milestone 8's job (BACKEND_ROADMAP.md),
+ * once there's a real reason to roll something back visibly rather than
+ * just re-showing server state a moment later.
+ */
+export function TicketsView({ self }: TicketsViewProps) {
   const now = useNow();
   const toast = useToast();
-
-  // Built locally from `users` rather than taken as a `resolveUser`
-  // function prop: this component's parent page is a Server Component
-  // (it needs to read the session), and a plain function can't
-  // be passed across the server/client boundary — only serializable data
-  // like `users` can. Same reasoning applies to IncidentsView.
-  const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
-  const resolveUser = (id: string | null): User | null =>
-    id ? (userById.get(id) ?? null) : null;
+  const queryClient = useQueryClient();
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<TicketStatus | "ALL">("ALL");
   const [modalState, setModalState] = useState<ModalState>(null);
 
-  // Local-only, optimistic state — there's no backend yet (README §15 /
-  // ROADMAP_ROLES.md Phase 2), so mutations live here and reset on
-  // reload. The `tickets` prop still seeds the initial list from
-  // mock-data so a hard navigation looks the same as before.
-  const [ticketList, setTicketList] = useState(tickets);
+  const ticketsQuery = useQuery({
+    queryKey: ["tickets", "list"],
+    queryFn: listTicketsAction,
+  });
+
+  const usersQuery = useQuery({
+    queryKey: ["org-users", "list"],
+    queryFn: listOrgUsersAction,
+  });
+
+  const users = usersQuery.data ?? EMPTY_USERS;
+  const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
+  const resolveUser = (id: string | null): User | null =>
+    id ? (userById.get(id) ?? null) : null;
+
+  // §7's exact invalidation pattern: invalidate the list and the
+  // single-ticket key together. There's no separate `useQuery(['tickets',
+  // id])` cached anywhere yet, so the second call is a no-op today — it's
+  // here so this already matches what Milestone 3's realtime handler
+  // will do on a `ticket.updated` broadcast, rather than needing a
+  // rewrite then.
+  const invalidateTickets = (id?: string) => {
+    queryClient.invalidateQueries({ queryKey: ["tickets", "list"] });
+    if (id) queryClient.invalidateQueries({ queryKey: ["tickets", id] });
+  };
+
+  const createMutation = useMutation({
+    mutationFn: (input: CreateTicketFields) => createTicketAction(input),
+    onSuccess: (result) => {
+      if (!result.ok) {
+        toast.show(result.error.message, "error");
+        return;
+      }
+      invalidateTickets();
+      toast.show("Ticket created");
+      setModalState(null);
+    },
+    onError: () =>
+      toast.show("Couldn't create the ticket. Try again.", "error"),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({
+      ticketId,
+      input,
+    }: {
+      ticketId: string;
+      input: UpdateTicketFields;
+    }) => updateTicketAction(ticketId, input),
+    onSuccess: (result, variables) => {
+      if (!result.ok) {
+        // A conflict means someone else's write landed first — there's
+        // nothing client-side to roll back (no optimistic update was
+        // applied), but the stale data on screen needs replacing with
+        // whatever's actually current now, which invalidating triggers.
+        toast.show(result.error.message, "error");
+        invalidateTickets(variables.ticketId);
+        return;
+      }
+      invalidateTickets(variables.ticketId);
+      toast.show("Ticket updated");
+      setModalState(null);
+    },
+    onError: () =>
+      toast.show("Couldn't update the ticket. Try again.", "error"),
+  });
+
+  const assignToMe = (ticket: Ticket) => {
+    updateMutation.mutate(
+      {
+        ticketId: ticket.id,
+        input: {
+          title: ticket.title,
+          description: ticket.description,
+          status: ticket.status,
+          priority: ticket.priority,
+          assigneeId: self.id,
+          expectedVersion: ticket.version,
+        },
+      },
+      {
+        onSuccess: (result) => {
+          if (result.ok) toast.show("Assigned to you");
+        },
+      },
+    );
+  };
+
+  const ticketList = ticketsQuery.data ?? EMPTY_TICKETS;
 
   const searched = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -74,31 +179,6 @@ export function TicketsView({ tickets, users, self }: TicketsViewProps) {
         new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
     );
   }, [searched, statusFilter]);
-
-  const applyTicket = (saved: Ticket) => {
-    setTicketList((prev) => {
-      const exists = prev.some((t) => t.id === saved.id);
-      return exists
-        ? prev.map((t) => (t.id === saved.id ? saved : t))
-        : [saved, ...prev];
-    });
-  };
-
-  const upsertTicket = (saved: Ticket) => {
-    const isNew = !ticketList.some((t) => t.id === saved.id);
-    applyTicket(saved);
-    toast.show(isNew ? "Ticket created" : "Ticket updated");
-  };
-
-  const assignToMe = (ticket: Ticket) => {
-    applyTicket({
-      ...ticket,
-      assigneeId: self.id,
-      version: ticket.version + 1,
-      updatedAt: new Date().toISOString(),
-    });
-    toast.show("Assigned to you");
-  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
@@ -150,7 +230,22 @@ export function TicketsView({ tickets, users, self }: TicketsViewProps) {
           </div>
         </div>
 
-        {filtered.length === 0 ? (
+        {ticketsQuery.isLoading ? (
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-8 text-center text-sm text-ink-dim">
+            Loading tickets…
+          </div>
+        ) : ticketsQuery.isError ? (
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-8 text-center text-sm text-danger">
+            Couldn&apos;t load tickets.{" "}
+            <button
+              type="button"
+              onClick={() => ticketsQuery.refetch()}
+              className="underline hover:text-ink"
+            >
+              Try again
+            </button>
+          </div>
+        ) : filtered.length === 0 ? (
           <div className="min-h-0 flex-1 overflow-y-auto px-4 py-8 text-center text-sm text-ink-dim">
             No tickets match your filters.
           </div>
@@ -233,9 +328,13 @@ export function TicketsView({ tickets, users, self }: TicketsViewProps) {
         <TicketModal
           ticket={modalState.mode === "edit" ? modalState.ticket : null}
           users={users}
-          self={self}
+          saving={createMutation.isPending || updateMutation.isPending}
           onClose={() => setModalState(null)}
-          onSave={upsertTicket}
+          onCreate={(input) => createMutation.mutate(input)}
+          onUpdate={(input) => {
+            if (modalState.mode !== "edit") return;
+            updateMutation.mutate({ ticketId: modalState.ticket.id, input });
+          }}
         />
       )}
     </div>
