@@ -12,6 +12,7 @@ import {
   type UpdateTicketFields,
 } from "@/components/tickets/TicketModal";
 import { useToast } from "@/components/shared/Toast";
+import { ActionFailure, failureMessage, unwrap } from "@/lib/action-result";
 import {
   createTicketAction,
   listOrgUsersAction,
@@ -48,18 +49,18 @@ interface TicketsViewProps {
 
 type ModalState = { mode: "create" } | { mode: "edit"; ticket: Ticket } | null;
 
+const TICKET_LIST_KEY = ["tickets", "list"] as const;
+
 /**
- * Milestone 2: tickets are real now. This component owns its own data —
- * `useQuery`/`useMutation` against the Server Actions in
- * app/(dashboard)/tickets/actions.ts — rather than receiving `tickets`
- * as a prop and mirroring it into local state, which is how this looked
- * before the backend existed.
+ * Tickets are real (Milestone 2) and reliable (Milestone 8): this owns its
+ * own data via `useQuery`/`useMutation` against the Server Actions in
+ * app/(dashboard)/tickets/actions.ts.
  *
- * Mutations here are "mutate, then invalidate and refetch" (via
- * onSuccess), not true client-side optimistic updates with rollback —
- * that refinement is explicitly Milestone 8's job (BACKEND_ROADMAP.md),
- * once there's a real reason to roll something back visibly rather than
- * just re-showing server state a moment later.
+ * Updates are optimistic (§8/§18): the list is patched immediately, and
+ * if the write fails — conflict, validation, network — the snapshot taken
+ * in `onMutate` is restored and the list refetched. Optimistic state is
+ * never authoritative, so `onSettled` always invalidates and the server's
+ * version wins. Creates aren't optimistic: the server assigns the id.
  */
 export function TicketsView({ self }: TicketsViewProps) {
   const now = useNow();
@@ -97,44 +98,73 @@ export function TicketsView({ self }: TicketsViewProps) {
   };
 
   const createMutation = useMutation({
-    mutationFn: (input: CreateTicketFields) => createTicketAction(input),
-    onSuccess: (result) => {
-      if (!result.ok) {
-        toast.show(result.error.message, "error");
-        return;
-      }
+    mutationFn: async (input: CreateTicketFields) =>
+      unwrap(await createTicketAction(input)),
+    onSuccess: () => {
       invalidateTickets();
       toast.show("Ticket created");
       setModalState(null);
     },
-    onError: () =>
-      toast.show("Couldn't create the ticket. Try again.", "error"),
+    onError: (error) => toast.show(failureMessage(error, "created"), "error"),
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({
+    mutationFn: async ({
       ticketId,
       input,
     }: {
       ticketId: string;
       input: UpdateTicketFields;
-    }) => updateTicketAction(ticketId, input),
-    onSuccess: (result, variables) => {
-      if (!result.ok) {
-        // A conflict means someone else's write landed first — there's
-        // nothing client-side to roll back (no optimistic update was
-        // applied), but the stale data on screen needs replacing with
-        // whatever's actually current now, which invalidating triggers.
-        toast.show(result.error.message, "error");
-        invalidateTickets(variables.ticketId);
+    }) => unwrap(await updateTicketAction(ticketId, input)),
+
+    onMutate: async ({ ticketId, input }) => {
+      // Stop an in-flight refetch (e.g. from a realtime invalidation)
+      // from landing on top of the optimistic patch and undoing it.
+      await queryClient.cancelQueries({ queryKey: TICKET_LIST_KEY });
+      const previous = queryClient.getQueryData<Ticket[]>(TICKET_LIST_KEY);
+
+      queryClient.setQueryData<Ticket[]>(TICKET_LIST_KEY, (old) =>
+        old?.map((t) =>
+          t.id === ticketId
+            ? {
+                ...t,
+                title: input.title,
+                description: input.description,
+                status: input.status,
+                priority: input.priority,
+                assigneeId: input.assigneeId,
+                updatedAt: new Date().toISOString(),
+                // `version` deliberately untouched: only the server
+                // gets to say what the new version is.
+              }
+            : t,
+        ),
+      );
+
+      return { previous };
+    },
+
+    onError: (error, _variables, context) => {
+      // Roll back to exactly what was on screen before the optimistic
+      // patch. The onSettled refetch below then replaces it with
+      // whatever the server actually has.
+      if (context?.previous) {
+        queryClient.setQueryData(TICKET_LIST_KEY, context.previous);
+      }
+
+      if (error instanceof ActionFailure && error.error.code === "conflict") {
+        toast.show(
+          "Someone else changed this ticket first, so your change wasn't saved.",
+          "error",
+        );
         return;
       }
-      invalidateTickets(variables.ticketId);
-      toast.show("Ticket updated");
-      setModalState(null);
+      toast.show(failureMessage(error, "updated"), "error");
     },
-    onError: () =>
-      toast.show("Couldn't update the ticket. Try again.", "error"),
+
+    onSettled: (_data, _error, variables) => {
+      invalidateTickets(variables.ticketId);
+    },
   });
 
   const assignToMe = (ticket: Ticket) => {
@@ -150,15 +180,21 @@ export function TicketsView({ self }: TicketsViewProps) {
           expectedVersion: ticket.version,
         },
       },
-      {
-        onSuccess: (result) => {
-          if (result.ok) toast.show("Assigned to you");
-        },
-      },
+      { onSuccess: () => toast.show("Assigned to you") },
     );
   };
 
   const ticketList = ticketsQuery.data ?? EMPTY_TICKETS;
+
+  // The modal gets the *live* row from the cache, not the snapshot taken
+  // when it was opened — that's how it notices someone else changed the
+  // ticket underneath an open edit form (version-conflict UX). The
+  // snapshot is only a fallback for the moment the row isn't in cache.
+  const editingTicket =
+    modalState?.mode === "edit"
+      ? (ticketList.find((t) => t.id === modalState.ticket.id) ??
+        modalState.ticket)
+      : null;
 
   const searched = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -326,14 +362,22 @@ export function TicketsView({ self }: TicketsViewProps) {
 
       {modalState && (
         <TicketModal
-          ticket={modalState.mode === "edit" ? modalState.ticket : null}
+          ticket={editingTicket}
           users={users}
           saving={createMutation.isPending || updateMutation.isPending}
           onClose={() => setModalState(null)}
           onCreate={(input) => createMutation.mutate(input)}
           onUpdate={(input) => {
             if (modalState.mode !== "edit") return;
-            updateMutation.mutate({ ticketId: modalState.ticket.id, input });
+            updateMutation.mutate(
+              { ticketId: modalState.ticket.id, input },
+              {
+                onSuccess: () => {
+                  toast.show("Ticket updated");
+                  setModalState(null);
+                },
+              },
+            );
           }}
         />
       )}

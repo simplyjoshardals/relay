@@ -42,7 +42,9 @@ export interface UpdateTicketFields {
 }
 
 interface TicketModalProps {
-  /** null = create mode. Otherwise the ticket being edited. */
+  /** null = create mode. Otherwise the ticket being edited — the *live*
+   *  row from the query cache, so a change made by someone else while
+   *  this form is open shows up here as a new `version`. */
   ticket: Ticket | null;
   users: User[];
   /** True while the create/update mutation is in flight — this is a
@@ -91,6 +93,24 @@ export function TicketModal({
   const [assigneeId, setAssigneeId] = useState(ticket?.assigneeId ?? "");
   const [formError, setFormError] = useState<string | null>(null);
 
+  // The version this form's fields were loaded from. Saves are sent
+  // against *this*, never the live `ticket.version` — otherwise a
+  // remote change would silently rebase our stale edits onto the new
+  // version and overwrite someone else's work (§8).
+  const [baseVersion, setBaseVersion] = useState(ticket?.version ?? 0);
+  const isStale = ticket !== null && ticket.version !== baseVersion;
+
+  const loadLatest = () => {
+    if (!ticket) return;
+    setTitle(ticket.title);
+    setDescription(ticket.description);
+    setStatus(ticket.status);
+    setPriority(ticket.priority);
+    setAssigneeId(ticket.assigneeId ?? "");
+    setBaseVersion(ticket.version);
+    setFormError(null);
+  };
+
   const handleSave = () => {
     if (isCreate) {
       const parsed = createTicketInputSchema.safeParse({
@@ -112,7 +132,7 @@ export function TicketModal({
         status,
         priority,
         assigneeId: assigneeId || null,
-        expectedVersion: ticket.version,
+        expectedVersion: baseVersion,
       });
       if (!parsed.success) {
         setFormError(parsed.error.issues[0]?.message ?? "Invalid input.");
@@ -132,6 +152,21 @@ export function TicketModal({
 
   const footer = (
     <div className="flex flex-col gap-2">
+      {isStale && (
+        <div className="flex items-center justify-between gap-3 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-ink">
+          <span>
+            Someone else updated this ticket while you were editing. Load their
+            version to keep going — your unsaved edits here will be replaced.
+          </span>
+          <button
+            type="button"
+            onClick={loadLatest}
+            className="shrink-0 rounded-md border border-line-strong px-2 py-1 font-medium text-ink transition-colors hover:bg-panel-raised"
+          >
+            Load latest
+          </button>
+        </div>
+      )}
       {formError && <p className="text-xs text-danger">{formError}</p>}
       <div className="flex items-center justify-end gap-2">
         <button
@@ -145,7 +180,7 @@ export function TicketModal({
         <button
           type="button"
           onClick={handleSave}
-          disabled={saving}
+          disabled={saving || isStale}
           className="rounded-md bg-ink px-3 py-1.5 text-sm font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-50"
         >
           {saving ? "Saving…" : isCreate ? "Create ticket" : "Save changes"}

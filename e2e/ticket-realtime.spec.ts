@@ -1,10 +1,10 @@
 import { test, expect, type Page } from "@playwright/test";
 
 /**
- * §41's actual definition of done — this file currently covers only
- * this milestone's slice (Tests 1 & 2: ticket creation and assignment
- * propagating between two browser contexts with no reload). Tests 3–8
- * get added here as Milestones 4/5/8 make them coverable, per §12's
+ * §41's actual definition of done — currently Tests 1 & 2 (ticket
+ * creation and assignment propagating between two browser contexts with
+ * no reload) and Test 8 (disconnect / reconnect / reconcile). Tests 3–7
+ * get added here as Milestones 4/5 make them coverable, per §12's
  * instruction to keep this file red rather than write eight tests up
  * front against features that don't exist yet.
  *
@@ -92,6 +92,68 @@ test.describe("§41 Test 1 & 2 — ticket creation and assignment propagate live
     await expect(rowB.getByTitle(USER_B.name)).toBeVisible({
       timeout: 10_000,
     });
+
+    await contextA.close();
+    await contextB.close();
+  });
+});
+
+test.describe("§41 Test 8 — disconnect, then reconnect and reconcile", () => {
+  test("shows a clear connection-lost state, then reconciles on reconnect", async ({
+    browser,
+  }) => {
+    const contextA = await browser.newContext();
+    const contextB = await browser.newContext();
+    const pageA = await contextA.newPage();
+    const pageB = await contextB.newPage();
+
+    await loginAs(pageA, USER_A.email);
+    await loginAs(pageB, USER_B.email);
+    await pageA.goto("/tickets");
+    await pageB.goto("/tickets");
+
+    // Browser B starts live.
+    await expect(
+      pageB.getByRole("status").filter({ hasText: "Live" }),
+    ).toBeVisible({ timeout: 15_000 });
+
+    // "Kill the network connection" (§41 Test 8) on Browser B only.
+    await contextB.setOffline(true);
+
+    // A clear connection-lost state: the indicator flips and the page
+    // says its data may be stale. This is driven by the browser's
+    // 'offline' event, so it holds even though Playwright's offline
+    // emulation doesn't reliably sever an already-open WebSocket.
+    await expect(
+      pageB.getByRole("status").filter({ hasText: "Offline" }),
+    ).toBeVisible({ timeout: 5_000 });
+    // Filtered by text: Next.js's own route announcer is also
+    // role="alert" on every page, so a bare getByRole("alert") matches
+    // two elements and trips Playwright's strict mode.
+    const staleBanner = pageB
+      .getByRole("alert")
+      .filter({ hasText: "out of date" });
+    await expect(staleBanner).toBeVisible();
+
+    // Meanwhile Browser A (still online) makes a change B can't have
+    // received through a healthy connection.
+    const title = `Reconnect test ticket ${Date.now()}`;
+    await pageA.getByRole("button", { name: "New ticket" }).click();
+    await pageA.getByLabel("Title").fill(title);
+    await pageA.getByRole("button", { name: "Create ticket" }).click();
+    await expect(pageA.getByText(title)).toBeVisible({ timeout: 10_000 });
+
+    // Restore the connection. B must reconnect on its own — no reload —
+    // return to Live, drop the warning, and reconcile with server state
+    // (§35: invalidate everything on SUBSCRIBED), which is where the
+    // ticket created during the outage shows up.
+    await contextB.setOffline(false);
+
+    await expect(
+      pageB.getByRole("status").filter({ hasText: "Live" }),
+    ).toBeVisible({ timeout: 20_000 });
+    await expect(staleBanner).toBeHidden();
+    await expect(pageB.getByText(title)).toBeVisible({ timeout: 10_000 });
 
     await contextA.close();
     await contextB.close();

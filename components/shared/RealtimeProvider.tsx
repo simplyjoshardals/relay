@@ -16,10 +16,29 @@ import {
 } from "@supabase/supabase-js";
 import { getRealtimeTokenAction } from "@/app/(dashboard)/actions";
 
-const RealtimeStatusContext = createContext(false);
+/**
+ * RT-02/RT-03: the connection state has to be visible, and "never
+ * connected yet", "lost the socket", and "the browser has no network at
+ * all" are three different situations for the person looking at it:
+ *   connecting   — first connect, nothing wrong
+ *   connected    — subscribed; data on screen is live
+ *   reconnecting — was live (or tried to be), socket/auth dropped, retrying
+ *   offline      — browser reports no network; nothing to retry until it's back
+ */
+export type RealtimeStatus =
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "offline";
+
+const RealtimeStatusContext = createContext<RealtimeStatus>("connecting");
+
+export function useRealtimeStatus(): RealtimeStatus {
+  return useContext(RealtimeStatusContext);
+}
 
 export function useRealtimeConnected(): boolean {
-  return useContext(RealtimeStatusContext);
+  return useContext(RealtimeStatusContext) === "connected";
 }
 
 // Backoff for reconnect attempts after a CHANNEL_ERROR/TIMED_OUT/CLOSED —
@@ -27,6 +46,13 @@ export function useRealtimeConnected(): boolean {
 // the token endpoint and the socket. Resets to the first entry as soon as
 // a connect attempt actually reaches SUBSCRIBED.
 const RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 15_000];
+
+// Coming back to a tab that was hidden for less than this, with the
+// channel still joined, needs no reconnect — the socket's own heartbeat
+// wouldn't have missed enough beats for the server to drop it. Longer
+// than this (or a channel that isn't joined) and we re-verify from
+// scratch with a fresh token.
+const VISIBILITY_RECHECK_AFTER_MS = 60_000;
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -76,7 +102,10 @@ interface RealtimeProviderProps {
 
 export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
   const queryClient = useQueryClient();
-  const [connected, setConnected] = useState(false);
+  const [status, setStatus] = useState<RealtimeStatus>("connecting");
+  // Whether this provider has ever reached SUBSCRIBED — distinguishes a
+  // first "connecting" from a "reconnecting" after a drop.
+  const hasConnectedRef = useRef(false);
   const channelRef = useRef<RealtimeChannel | null>(null);
 
   // Generation counter, not just a `cancelled` boolean. A boolean stops
@@ -144,6 +173,15 @@ export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
       // live channels or two overlapping refresh intervals.
       teardown();
 
+      // No network at all: nothing to attempt. The 'online' listener
+      // below calls connect() again the moment it's back — retrying on a
+      // backoff timer while offline would just burn failed token calls.
+      if (!navigator.onLine) {
+        setStatus("offline");
+        return;
+      }
+      setStatus(hasConnectedRef.current ? "reconnecting" : "connecting");
+
       try {
         // setAuth() with no argument pulls a fresh token from the
         // accessToken callback configured above (our own
@@ -178,7 +216,10 @@ export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
             if (status === "SUBSCRIBED") {
               retryCountRef.current = 0;
               clearRetryTimer();
-              setConnected(true);
+              hasConnectedRef.current = true;
+              setStatus("connected");
+              // §35: after (re)connecting, refetch everything active
+              // unconditionally rather than diffing what was missed.
               queryClient.invalidateQueries();
             } else {
               // CHANNEL_ERROR / TIMED_OUT / CLOSED. supabase-js's socket
@@ -193,7 +234,13 @@ export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
               // "came back online and it never went back to Live."
               // Reconnecting from scratch with a fresh token is what
               // actually resolves it.
-              setConnected(false);
+              if (!navigator.onLine) {
+                // The drop is because there's no network; the 'online'
+                // listener reconnects once it's back.
+                setStatus("offline");
+                return;
+              }
+              setStatus("reconnecting");
               scheduleReconnect();
             }
           });
@@ -205,8 +252,8 @@ export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
             "RealtimeProvider: failed to authenticate realtime session",
             error,
           );
-          setConnected(false);
-          scheduleReconnect();
+          setStatus(navigator.onLine ? "reconnecting" : "offline");
+          if (navigator.onLine) scheduleReconnect();
         }
       }
     };
@@ -225,18 +272,40 @@ export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
       void connect();
     };
 
+    const handleOffline = () => {
+      // Stop any queued retry and say so plainly. Don't tear the channel
+      // down here: if the outage is a blip the socket may resume by
+      // itself, and if not, handleOnline() rebuilds everything.
+      if (isStale()) return;
+      clearRetryTimer();
+      setStatus("offline");
+    };
+
+    let hiddenAt: number | null = null;
+
     const handleVisibility = () => {
       // A backgrounded tab throttles timers, including the socket's own
       // heartbeat — a laptop that slept through several missed
       // heartbeats can come back to a channel the client still thinks
-      // is fine but the server dropped long ago. Re-verifying on
-      // foreground catches that without waiting on a heartbeat timeout.
-      if (document.visibilityState === "visible") {
-        handleOnline();
+      // is fine but the server dropped long ago. Re-verify on foreground
+      // — but only when that's plausible: a quick tab switch with the
+      // channel still joined doesn't need a teardown/reconnect (and the
+      // "Reconnecting" flicker that comes with it).
+      if (document.visibilityState === "hidden") {
+        hiddenAt = Date.now();
+        return;
       }
+      const awayMs = hiddenAt === null ? Infinity : Date.now() - hiddenAt;
+      hiddenAt = null;
+
+      const joined = String(channelRef.current?.state) === "joined";
+      if (joined && awayMs < VISIBILITY_RECHECK_AFTER_MS) return;
+
+      handleOnline();
     };
 
     window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
     document.addEventListener("visibilitychange", handleVisibility);
 
     return () => {
@@ -246,6 +315,7 @@ export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
       // creating/subscribing a channel — this cleanup only tears down
       // whatever *this* run had already made by the time it runs.
       window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
       document.removeEventListener("visibilitychange", handleVisibility);
       clearRetryTimer();
       teardown();
@@ -253,7 +323,7 @@ export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
   }, [orgId, queryClient]);
 
   return (
-    <RealtimeStatusContext.Provider value={connected}>
+    <RealtimeStatusContext.Provider value={status}>
       {children}
     </RealtimeStatusContext.Provider>
   );

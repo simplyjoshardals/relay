@@ -4,6 +4,7 @@ import { TopBar } from "@/components/shared/TopBar";
 import { ToastProvider } from "@/components/shared/Toast";
 import { QueryProvider } from "@/components/shared/QueryProvider";
 import { RealtimeProvider } from "@/components/shared/RealtimeProvider";
+import { ConnectionBanner } from "@/components/shared/ConnectionBanner";
 import { currentOrgName } from "@/lib/mock-data";
 import { getCurrentUser } from "@/server/auth/session";
 import { PATHS } from "@/utils/paths";
@@ -40,6 +41,7 @@ export default async function DashboardLayout({
                 incidents, services, activity) so each page only owns its own
                 content. */}
             <main className="mx-auto flex w-full max-w-350 flex-1 flex-col gap-4 overflow-y-auto px-3 py-4 sm:px-6 sm:py-5">
+              <ConnectionBanner />
               {children}
             </main>
           </div>

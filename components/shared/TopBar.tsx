@@ -7,7 +7,7 @@ import { usePathname } from "next/navigation";
 import { ListIcon, SignOutIcon, XIcon } from "@phosphor-icons/react";
 import { Avatar } from "@/components/dashboard/Avatar";
 import { LiveIndicator } from "@/components/dashboard/LiveIndicator";
-import { useRealtimeConnected } from "@/components/shared/RealtimeProvider";
+import { useRealtimeStatus } from "@/components/shared/RealtimeProvider";
 import type { User } from "@/types";
 import { canManageTeam } from "@/lib/permissions";
 import { logoutAction } from "@/app/login/actions";
@@ -24,7 +24,7 @@ const baseNavItems = [
 export function TopBar({ orgName, self }: { orgName: string; self: User }) {
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
-  const realtimeConnected = useRealtimeConnected();
+  const realtimeStatus = useRealtimeStatus();
 
   // Team is the one nav-level permission boundary (README §3 / MVP RBAC
   // — see ROADMAP_ROLES.md): Manager-only, hidden entirely for Member
@@ -98,7 +98,7 @@ export function TopBar({ orgName, self }: { orgName: string; self: User }) {
       </div>
 
       <div className="flex shrink-0 items-center gap-2 sm:gap-4">
-        <LiveIndicator connected={realtimeConnected} />
+        <LiveIndicator status={realtimeStatus} />
 
         <Avatar
           initials={self.initials}

@@ -16,7 +16,22 @@ import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
  * client (and lose all cached data) on every render.
  */
 export function QueryProvider({ children }: { children: ReactNode }) {
-  const [queryClient] = useState(() => new QueryClient());
+  const [queryClient] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          // TanStack's default ("online") *pauses* a mutation while the
+          // browser is offline and fires it whenever connectivity comes
+          // back — so a Save clicked offline would sit on "Saving…"
+          // indefinitely, then land later against a `version` that may
+          // have moved on. "always" makes it attempt immediately and
+          // fail fast, which puts the failure through onError (rollback
+          // + an honest toast) instead of hiding it. Queries keep the
+          // default: paused while offline, refetched on reconnect.
+          mutations: { networkMode: "always" },
+        },
+      }),
+  );
 
   return (
     <QueryClientProvider client={queryClient}>

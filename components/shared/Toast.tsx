@@ -31,16 +31,11 @@ const ToastContext = createContext<ToastContextValue | null>(null);
 const AUTO_DISMISS_MS = 4000;
 
 /**
- * README §18 requires the app to "show meaningful errors" and "avoid
- * silently losing changes" on a failed mutation — this is that delivery
- * mechanism. Right now every mutation across Tickets/Incidents/Services/
- * Team is pure local state (no network call exists yet), so there is
- * nothing that can genuinely fail — `variant: "error"` has nowhere to be
- * called from yet. What's wired up today is the success path, so actions
- * stop closing silently with no confirmation. Once real Server Actions
- * (and the §12 version-conflict check they'll return) exist, that failure
- * handler calls the same `show(message, "error")` — same mechanism, nothing
- * about this provider changes.
+ * README §18: "show meaningful errors" and "avoid silently losing
+ * changes" on a failed mutation — this is that delivery mechanism.
+ * `variant: "error"` is called from TicketsView's mutation `onError`
+ * handlers (version conflicts, validation/not-found rejections, and
+ * network failures, after any optimistic update has been rolled back).
  */
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
