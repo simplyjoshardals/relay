@@ -67,6 +67,24 @@ test.describe("§41 Test 1 & 2 — ticket creation and assignment propagate live
     await pageA.getByLabel("Assignee").selectOption({ label: USER_B.name });
     await pageA.getByRole("button", { name: "Save changes" }).click();
 
+    // Same split as Test 1: confirm the update itself succeeded on
+    // Browser A before blaming propagation. TicketsView's
+    // updateMutation.onSuccess only shows this toast (and closes the
+    // modal) on the ok:true branch — a ConflictError/ValidationError/
+    // NotFoundError from updateTicket() surfaces as an error toast
+    // instead and never reaches broadcastToOrg(), which would make
+    // Browser B's failure below a red herring pointing at realtime when
+    // the actual bug is in the mutation itself.
+    await expect(pageA.getByText("Ticket updated")).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // The modal closing is the same signal from a different angle —
+    // onSuccess's ok:true branch is also what calls setModalState(null).
+    await expect(
+      pageA.getByRole("heading", { name: "Edit ticket" }),
+    ).toBeHidden({ timeout: 5_000 });
+
     // Browser B should see itself assigned without any reload either —
     // the avatar/assignment indicator replacing "Assign to me" on that
     // row is the visible signal.
