@@ -300,6 +300,21 @@ export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
             if (isStale()) return;
             if (payload?.id) scheduleServiceInvalidation(payload.id);
           })
+          // Milestone 5: incidents are low-frequency, human-driven
+          // changes (§9: "a human decides") — nothing like the
+          // telemetry worker's multi-second tick cadence — so this
+          // invalidates immediately, same as ticket.updated above,
+          // rather than going through the §7 debounce that's reserved
+          // for service.updated specifically.
+          .on("broadcast", { event: "incident.updated" }, ({ payload }) => {
+            if (isStale()) return;
+            if (payload?.id) {
+              queryClient.invalidateQueries({
+                queryKey: ["incidents", payload.id],
+              });
+            }
+            queryClient.invalidateQueries({ queryKey: ["incidents", "list"] });
+          })
           .subscribe((status) => {
             if (isSuperseded()) return;
 

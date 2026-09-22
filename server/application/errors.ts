@@ -53,8 +53,33 @@ export class ForbiddenError extends Error {
   }
 }
 
+/**
+ * §2/§8.1: the ticket a caller tried to actively link to an incident is
+ * already actively linked to a *different* one — the partial unique
+ * index (`one_active_incident_per_ticket`) rejected it. Kept distinct
+ * from ConflictError: this isn't a stale `expectedVersion` (the
+ * incident's own version may be perfectly current), it's a business
+ * rule about a *different* row, so it needs its own code and message
+ * per BACKEND_ROADMAP.md's Milestone 8 note ("Incident↔ticket link
+ * conflicts... need their own error code and message").
+ */
+export class TicketAlreadyLinkedError extends Error {
+  constructor(
+    message = "One of these tickets is already linked to another active incident.",
+  ) {
+    super(message);
+    this.name = "TicketAlreadyLinkedError";
+  }
+}
+
 export interface ActionError {
-  code: "conflict" | "not_found" | "invalid_input" | "forbidden" | "unknown";
+  code:
+    | "conflict"
+    | "not_found"
+    | "invalid_input"
+    | "forbidden"
+    | "ticket_conflict"
+    | "unknown";
   message: string;
 }
 
@@ -78,6 +103,9 @@ export function toActionError(error: unknown): ActionError {
   }
   if (error instanceof ForbiddenError) {
     return { code: "forbidden", message: error.message };
+  }
+  if (error instanceof TicketAlreadyLinkedError) {
+    return { code: "ticket_conflict", message: error.message };
   }
   return { code: "unknown", message: "Something went wrong. Try again." };
 }

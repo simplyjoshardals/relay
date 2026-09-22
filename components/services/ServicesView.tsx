@@ -19,6 +19,7 @@ import {
   listServicesAction,
   updateServiceAction,
 } from "@/app/(dashboard)/services/actions";
+import { listIncidentsAction } from "@/app/(dashboard)/incidents/actions";
 import {
   incidentSeverityMeta,
   serviceStatusMeta,
@@ -50,17 +51,15 @@ const statusFilters: ServiceStatus[] = ["OPERATIONAL", "DEGRADED", "OUTAGE"];
 // trend line since this tab was opened.
 const MAX_TREND_POINTS = 20;
 
-// Stable reference for the "not loaded yet" fallback, same reasoning as
+// Stable references for the "not loaded yet" fallback, same reasoning as
 // TicketsView's EMPTY_TICKETS: a fresh `?? []` every render would defeat
 // the useMemo()s below.
 const EMPTY_SERVICES: Service[] = [];
+const EMPTY_INCIDENTS: Incident[] = [];
 
 const SERVICE_LIST_KEY = ["services", "list"] as const;
 
 interface ServicesViewProps {
-  /** Still mock data (Milestone 5 hasn't landed) — see
-   *  app/(dashboard)/services/page.tsx. Services themselves are real. */
-  incidents: Incident[];
   self: User;
 }
 
@@ -81,8 +80,13 @@ type ModalState =
  * mutations — those are telemetry-owned (§13) and arrive via the
  * `service.updated` realtime invalidation the telemetry worker
  * triggers, debounced client-side (RealtimeProvider, §7).
+ *
+ * Incidents are real as of Milestone 5 — fetched here directly (rather
+ * than threaded down as a prop from services/page.tsx, which is how
+ * this looked while M5 was still mock data) purely to drive the
+ * "affecting incidents" list on each service card below.
  */
-export function ServicesView({ incidents, self }: ServicesViewProps) {
+export function ServicesView({ self }: ServicesViewProps) {
   const now = useNow();
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -101,7 +105,13 @@ export function ServicesView({ incidents, self }: ServicesViewProps) {
     queryFn: listServicesAction,
   });
 
+  const incidentsQuery = useQuery({
+    queryKey: ["incidents", "list"],
+    queryFn: listIncidentsAction,
+  });
+
   const serviceList = servicesQuery.data ?? EMPTY_SERVICES;
+  const incidents = incidentsQuery.data ?? EMPTY_INCIDENTS;
 
   // README §19/types/index.ts: sessionLatencyTrend is never persisted —
   // buffered client-side from updates received since the page loaded, so

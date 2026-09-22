@@ -1,12 +1,28 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { PlusIcon } from "@phosphor-icons/react";
 import { Avatar } from "@/components/dashboard/Avatar";
 import { FilterPill } from "@/components/shared/FilterPill";
 import { SearchInput } from "@/components/shared/SearchInput";
-import { IncidentModal } from "@/components/incidents/IncidentModal";
+import {
+  IncidentModal,
+  type CreateIncidentFields,
+  type UpdateIncidentFields,
+} from "@/components/incidents/IncidentModal";
 import { useToast } from "@/components/shared/Toast";
+import { ActionFailure, failureMessage, unwrap } from "@/lib/action-result";
+import {
+  createIncidentAction,
+  listIncidentsAction,
+  updateIncidentAction,
+} from "@/app/(dashboard)/incidents/actions";
+import { listServicesAction } from "@/app/(dashboard)/services/actions";
+import {
+  listOrgUsersAction,
+  listTicketsAction,
+} from "@/app/(dashboard)/tickets/actions";
 import {
   incidentSeverityMeta,
   incidentStatusMeta,
@@ -21,6 +37,7 @@ import {
   relativeTime,
   statusBorderLeft,
   statusChipBg,
+  statusDot,
   statusText,
 } from "@/lib/style";
 import { useNow } from "@/lib/use-now";
@@ -39,11 +56,17 @@ const statusFilters: IncidentStatus[] = [
   "RESOLVED",
 ];
 
+// Stable references for the "not loaded yet" fallback, same reasoning
+// as TicketsView's EMPTY_TICKETS: a fresh `?? []` every render would
+// defeat the useMemo()s below that depend on these.
+const EMPTY_INCIDENTS: Incident[] = [];
+const EMPTY_SERVICES: Service[] = [];
+const EMPTY_TICKETS: Ticket[] = [];
+const EMPTY_USERS: User[] = [];
+
+const INCIDENT_LIST_KEY = ["incidents", "list"] as const;
+
 interface IncidentsViewProps {
-  incidents: Incident[];
-  services: Service[];
-  tickets: Ticket[];
-  users: User[];
   self: User;
 }
 
@@ -52,23 +75,23 @@ type ModalState =
   | { mode: "edit"; incident: Incident }
   | null;
 
-export function IncidentsView({
-  incidents,
-  services,
-  tickets,
-  users,
-  self,
-}: IncidentsViewProps) {
+/**
+ * Incidents are real (Milestone 5) and follow the same reliability
+ * pattern tickets/services got in Milestone 8 (see TicketsView's doc
+ * comment, and BACKEND_ROADMAP.md's M8 "Still to do" note this closes
+ * out): optimistic patch on `onMutate`, rollback on `onError`, always
+ * invalidate on `onSettled` so the server's version wins. Creates
+ * aren't optimistic — the server assigns the id.
+ *
+ * Services, tickets, and users are all real by this point too (M2/M4),
+ * so this fetches them itself for the checklist/responder pickers
+ * rather than taking them as props — a mock ticket/service id in a
+ * checklist wouldn't reference a real foreign key at all.
+ */
+export function IncidentsView({ self }: IncidentsViewProps) {
   const now = useNow();
   const toast = useToast();
-
-  // Built locally from `users` rather than taken as a `resolveUser`
-  // function prop — see the same comment in TicketsView for why (this
-  // page is a Server Component, and functions can't cross that boundary
-  // to a Client Component).
-  const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
-  const resolveUser = (id: string | null): User | null =>
-    id ? (userById.get(id) ?? null) : null;
+  const queryClient = useQueryClient();
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<IncidentStatus | "ALL">(
@@ -76,15 +99,162 @@ export function IncidentsView({
   );
   const [modalState, setModalState] = useState<ModalState>(null);
 
-  // Local-only, optimistic state — same reasoning as TicketsView: no
-  // backend yet (README §15 / ROADMAP_ROLES.md Phase 2), so mutations
-  // live here and reset on reload.
-  const [incidentList, setIncidentList] = useState(incidents);
+  const incidentsQuery = useQuery({
+    queryKey: INCIDENT_LIST_KEY,
+    queryFn: listIncidentsAction,
+  });
+
+  const servicesQuery = useQuery({
+    queryKey: ["services", "list"],
+    queryFn: listServicesAction,
+  });
+
+  const ticketsQuery = useQuery({
+    queryKey: ["tickets", "list"],
+    queryFn: listTicketsAction,
+  });
+
+  const usersQuery = useQuery({
+    queryKey: ["org-users", "list"],
+    queryFn: listOrgUsersAction,
+  });
+
+  const services = servicesQuery.data ?? EMPTY_SERVICES;
+  const tickets = ticketsQuery.data ?? EMPTY_TICKETS;
+  const users = usersQuery.data ?? EMPTY_USERS;
+
+  const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
+  const resolveUser = (id: string | null): User | null =>
+    id ? (userById.get(id) ?? null) : null;
 
   const serviceById = useMemo(
-    () => Object.fromEntries(services.map((s) => [s.id, s])),
+    () => new Map(services.map((s) => [s.id, s])),
     [services],
   );
+
+  // §7's exact invalidation pattern — same reasoning TicketsView's
+  // invalidateTickets documents.
+  const invalidateIncidents = (id?: string) => {
+    queryClient.invalidateQueries({ queryKey: INCIDENT_LIST_KEY });
+    if (id) queryClient.invalidateQueries({ queryKey: ["incidents", id] });
+  };
+
+  const createMutation = useMutation({
+    mutationFn: async (input: CreateIncidentFields) =>
+      unwrap(await createIncidentAction(input)),
+    onSuccess: () => {
+      invalidateIncidents();
+      toast.show("Incident created");
+      setModalState(null);
+    },
+    onError: (error) =>
+      toast.show(failureMessage(error, "created", "incident"), "error"),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({
+      incidentId,
+      input,
+    }: {
+      incidentId: string;
+      input: UpdateIncidentFields;
+    }) => unwrap(await updateIncidentAction(incidentId, input)),
+
+    onMutate: async ({ incidentId, input }) => {
+      // Stop an in-flight refetch (e.g. from a realtime invalidation)
+      // from landing on top of the optimistic patch and undoing it —
+      // same reasoning as TicketsView/ServicesView's updateMutation.
+      await queryClient.cancelQueries({ queryKey: INCIDENT_LIST_KEY });
+      const previous = queryClient.getQueryData<Incident[]>(INCIDENT_LIST_KEY);
+
+      queryClient.setQueryData<Incident[]>(INCIDENT_LIST_KEY, (old) =>
+        old?.map((i) =>
+          i.id === incidentId
+            ? {
+                ...i,
+                title: input.title,
+                description: input.description,
+                status: input.status,
+                severity: input.severity,
+                responderId: input.responderId,
+                serviceIds: input.serviceIds,
+                ticketIds: input.ticketIds,
+                // `version`/`resolvedAt` deliberately untouched — only
+                // the server gets to say what those are (resolvedAt in
+                // particular depends on the *previous* status, which
+                // this optimistic patch doesn't have enough context to
+                // recompute correctly).
+              }
+            : i,
+        ),
+      );
+
+      return { previous };
+    },
+
+    onError: (error, _variables, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(INCIDENT_LIST_KEY, context.previous);
+      }
+
+      if (error instanceof ActionFailure && error.error.code === "conflict") {
+        toast.show(
+          "Someone else changed this incident first, so your change wasn't saved.",
+          "error",
+        );
+        return;
+      }
+
+      // §2/§8.1's partial-unique-index conflict — a linked ticket is
+      // already actively linked to a different incident. Distinct
+      // message from the plain version conflict above, per
+      // BACKEND_ROADMAP.md's M8 note that this needs its own copy.
+      if (
+        error instanceof ActionFailure &&
+        error.error.code === "ticket_conflict"
+      ) {
+        toast.show(error.error.message, "error");
+        return;
+      }
+
+      toast.show(failureMessage(error, "updated", "incident"), "error");
+    },
+
+    onSettled: (_data, _error, variables) => {
+      invalidateIncidents(variables.incidentId);
+    },
+  });
+
+  const respond = (incident: Incident) => {
+    updateMutation.mutate(
+      {
+        incidentId: incident.id,
+        input: {
+          title: incident.title,
+          description: incident.description,
+          status: incident.status,
+          severity: incident.severity,
+          responderId: self.id,
+          serviceIds: incident.serviceIds,
+          ticketIds: incident.ticketIds,
+          expectedVersion: incident.version,
+        },
+      },
+      { onSuccess: () => toast.show("You're responding") },
+    );
+  };
+
+  const incidentList = incidentsQuery.data ?? EMPTY_INCIDENTS;
+
+  // Same reasoning as TicketsView's editingTicket: the modal gets the
+  // *live* row from the cache, not the snapshot taken when it was
+  // opened, so it notices someone else changed the incident underneath
+  // an open edit form (version-conflict UX).
+  const editingIncident =
+    modalState?.mode === "edit"
+      ? (incidentList.find((i) => i.id === modalState.incident.id) ??
+        modalState.incident)
+      : null;
 
   const searched = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -129,30 +299,6 @@ export function IncidentsView({
   const activeCount = incidentList.filter(
     (i) => i.status !== "RESOLVED",
   ).length;
-
-  const applyIncident = (saved: Incident) => {
-    setIncidentList((prev) => {
-      const exists = prev.some((i) => i.id === saved.id);
-      return exists
-        ? prev.map((i) => (i.id === saved.id ? saved : i))
-        : [saved, ...prev];
-    });
-  };
-
-  const upsertIncident = (saved: Incident) => {
-    const isNew = !incidentList.some((i) => i.id === saved.id);
-    applyIncident(saved);
-    toast.show(isNew ? "Incident created" : "Incident updated");
-  };
-
-  const respond = (incident: Incident) => {
-    applyIncident({
-      ...incident,
-      responderId: self.id,
-      version: incident.version + 1,
-    });
-    toast.show("You're responding");
-  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
@@ -204,7 +350,22 @@ export function IncidentsView({
           </div>
         </div>
 
-        {filtered.length === 0 ? (
+        {incidentsQuery.isLoading ? (
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-8 text-center text-sm text-ink-dim">
+            Loading incidents…
+          </div>
+        ) : incidentsQuery.isError ? (
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-8 text-center text-sm text-danger">
+            Couldn&apos;t load incidents.{" "}
+            <button
+              type="button"
+              onClick={() => incidentsQuery.refetch()}
+              className="underline hover:text-ink"
+            >
+              Try again
+            </button>
+          </div>
+        ) : filtered.length === 0 ? (
           <div className="min-h-0 flex-1 overflow-y-auto px-4 py-8 text-center text-sm text-ink-dim">
             No incidents match your filters.
           </div>
@@ -220,7 +381,7 @@ export function IncidentsView({
               const resolved = incident.status === "RESOLVED";
 
               const affectedServices = incident.serviceIds
-                .map((id) => serviceById[id])
+                .map((id) => serviceById.get(id))
                 .filter((s): s is Service => Boolean(s));
 
               const duration = resolved
@@ -252,7 +413,7 @@ export function IncidentsView({
                   </span>
 
                   <span
-                    className={`size-1.5 shrink-0 rounded-full sm:hidden ${statusChipBg[sevMeta.color]} ${statusText[sevMeta.color]}`}
+                    className={`size-1.5 shrink-0 rounded-full sm:hidden ${statusDot[sevMeta.color]}`}
                   />
 
                   <div className="min-w-0 flex-1">
@@ -339,13 +500,25 @@ export function IncidentsView({
 
       {modalState && (
         <IncidentModal
-          incident={modalState.mode === "edit" ? modalState.incident : null}
+          incident={modalState.mode === "edit" ? editingIncident : null}
           services={services}
           tickets={tickets}
           users={users}
-          self={self}
+          saving={createMutation.isPending || updateMutation.isPending}
           onClose={() => setModalState(null)}
-          onSave={upsertIncident}
+          onCreate={(input) => createMutation.mutate(input)}
+          onUpdate={(input) => {
+            if (modalState.mode !== "edit") return;
+            updateMutation.mutate(
+              { incidentId: modalState.incident.id, input },
+              {
+                onSuccess: () => {
+                  toast.show("Incident updated");
+                  setModalState(null);
+                },
+              },
+            );
+          }}
         />
       )}
     </div>

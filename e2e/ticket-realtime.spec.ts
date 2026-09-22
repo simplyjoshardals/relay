@@ -3,27 +3,30 @@ import { test, expect, type Page } from "@playwright/test";
 import { updateServiceTelemetry } from "@/server/application/services";
 
 /**
- * §41's actual definition of done — currently Tests 1, 2 (ticket
- * creation and assignment propagating between two browser contexts with
- * no reload), 6 (service degradation), and 8 (disconnect / reconnect /
- * reconcile). Tests 3–5, 7 get added here as Milestone 5 makes them
- * coverable, per §12's instruction to keep this file red rather than
- * write eight tests up front against features that don't exist yet.
+ * §41's actual definition of done — all eight tests now covered: 1, 2
+ * (ticket creation and assignment), 3, 4, 5, 7 (incident creation,
+ * ticket-linked impact, response assignment, and recovery — added here
+ * as Milestone 5 made them coverable, per §12's instruction to keep this
+ * file red rather than write eight tests up front against features that
+ * don't exist yet), 6 (service degradation), and 8 (disconnect /
+ * reconnect / reconcile) — every one propagating between two browser
+ * contexts with no reload.
  *
  * Password must match prisma/seed.ts's DEMO_PASSWORD — there's no
  * shared import between the seed script and this test file, so if one
- * changes, the other needs to change too. Test 6 below duplicates
+ * changes, the other needs to change too. Tests 6 and 7 below duplicate
  * PAYMENTS_SERVICE_ID for the same reason.
  *
  * Playwright Test resolves tsconfig `paths` for spec files itself, so
- * Test 6's `@/*` import of the application layer needs no relative-path
- * workaround. That's a separate concern from env loading, though: like
- * workers/telemetry.ts, this file is a standalone Node process pulling
- * in `/server/application` directly rather than going through Next.js
- * (which loads `.env` on its own) — the new `prisma-client` generator
- * doesn't load `.env` at runtime, so the explicit `import
- * "dotenv/config"` above is required for `@/lib/prisma`'s
- * `process.env.DATABASE_URL` to be defined when Test 6 runs.
+ * Test 6/7's `@/*` import of the application layer needs no
+ * relative-path workaround. That's a separate concern from env loading,
+ * though: like workers/telemetry.ts, this file is a standalone Node
+ * process pulling in `/server/application` directly rather than going
+ * through Next.js (which loads `.env` on its own) — the new
+ * `prisma-client` generator doesn't load `.env` at runtime, so the
+ * explicit `import "dotenv/config"` above is required for
+ * `@/lib/prisma`'s `process.env.DATABASE_URL` to be defined when Test
+ * 6/7 run.
  */
 const DEMO_PASSWORD = "relay-dev-1234";
 
@@ -111,6 +114,106 @@ test.describe("§41 Test 1 & 2 — ticket creation and assignment propagate live
   });
 });
 
+test.describe("§41 Test 3, 4 & 5 — incident creation, ticket-linked impact, and response propagate live", () => {
+  test("an incident, its linked tickets, and its responder all appear for another browser without a reload", async ({
+    browser,
+  }) => {
+    const contextA = await browser.newContext();
+    const contextB = await browser.newContext();
+    const pageA = await contextA.newPage();
+    const pageB = await contextB.newPage();
+
+    await loginAs(pageA, USER_A.email);
+    await loginAs(pageB, USER_B.email);
+
+    // Test 4 ("associate multiple tickets with the incident") needs
+    // real tickets to link against — IncidentModal's checklist lists
+    // actual org tickets (Milestone 5), not placeholder rows, so two
+    // get created here first.
+    const ts = Date.now();
+    const ticketATitle = `Impact test ticket A ${ts}`;
+    const ticketBTitle = `Impact test ticket B ${ts}`;
+
+    await pageA.goto("/tickets");
+    for (const title of [ticketATitle, ticketBTitle]) {
+      await pageA.getByRole("button", { name: "New ticket" }).click();
+      await pageA.getByLabel("Title").fill(title);
+      await pageA.getByRole("button", { name: "Create ticket" }).click();
+      await expect(pageA.getByText(title)).toBeVisible({ timeout: 10_000 });
+    }
+
+    await pageA.goto("/incidents");
+    await pageB.goto("/incidents");
+
+    // Test 3 (§41): create an incident affecting a service, from
+    // Browser A.
+    const incidentTitle = `Realtime test incident ${ts}`;
+
+    await pageA.getByRole("button", { name: "New incident" }).click();
+    await pageA.getByLabel("Title").fill(incidentTitle);
+    // Seeded by prisma/seed.ts — same service Test 6 below exercises.
+    await pageA.getByRole("checkbox", { name: "Payments API" }).check();
+    await pageA.getByRole("checkbox", { name: ticketATitle }).check();
+    await pageA.getByRole("checkbox", { name: ticketBTitle }).check();
+    await pageA.getByRole("button", { name: "Create incident" }).click();
+
+    // Same split as Test 1: confirm the create itself succeeded on
+    // Browser A before blaming propagation.
+    await expect(pageA.getByText(incidentTitle)).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // The real assertion for Test 3: Browser B never reloads or
+    // navigates.
+    await expect(pageB.getByText(incidentTitle)).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // Test 4 (§41): "the incident displays its operational impact" —
+    // both linked tickets showing up as a count on the row, on both
+    // browsers.
+    const rowA = pageA.locator("li", { hasText: incidentTitle });
+    const rowB = pageB.locator("li", { hasText: incidentTitle });
+    await expect(rowA.getByText("2 tickets")).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(rowB.getByText("2 tickets")).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // Test 5 (§41): assign the incident to Browser B's user, from
+    // Browser A.
+    await pageA.getByText(incidentTitle).click();
+    await pageA.getByLabel("Responder").selectOption({ label: USER_B.name });
+    await pageA.getByRole("button", { name: "Save changes" }).click();
+
+    // Confirm the update itself succeeded on Browser A first, same
+    // reasoning as Test 2 above — a rejected update never reaches
+    // broadcastToOrg(), which would make Browser B's check below a
+    // red herring pointing at realtime when the actual bug is in the
+    // mutation itself.
+    await expect(pageA.getByText("Incident updated")).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(
+      pageA.getByRole("heading", { name: "Edit incident" }),
+    ).toBeHidden({ timeout: 5_000 });
+
+    // "A sees B as the responder immediately" (§41 Test 5) is the
+    // named assertion, but B seeing itself reflected back without a
+    // reload is the same realtime path and worth checking too.
+    await expect(rowA.getByTitle(`${USER_B.name} responding`)).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(rowB.getByTitle(`${USER_B.name} responding`)).toBeVisible({
+      timeout: 10_000,
+    });
+
+    await contextA.close();
+    await contextB.close();
+  });
+});
+
 test.describe("§41 Test 6 — service degradation propagates live", () => {
   test("a degraded reading is visible on both dashboards without a reload", async ({
     browser,
@@ -179,6 +282,84 @@ test.describe("§41 Test 6 — service degradation propagates live", () => {
       latencyMs: 110,
       errorRate: 0.3,
       status: "OPERATIONAL",
+    });
+
+    await contextA.close();
+    await contextB.close();
+  });
+});
+
+test.describe("§41 Test 7 — recovery: service restore and incident resolution converge", () => {
+  test("both browsers converge on Operational/Resolved without a reload", async ({
+    browser,
+  }) => {
+    const contextA = await browser.newContext();
+    const contextB = await browser.newContext();
+    const pageA = await contextA.newPage();
+    const pageB = await contextB.newPage();
+
+    await loginAs(pageA, USER_A.email);
+    await loginAs(pageB, USER_B.email);
+    await pageA.goto("/incidents");
+    await pageB.goto("/incidents");
+
+    // A fresh incident for this test rather than reusing Test 3/4/5's
+    // (a separate Playwright test file/run has no ordering guarantee
+    // against it) — affecting the same seeded service Test 6 degrades,
+    // so restoring that service below is the same "the affected
+    // service" §41 Test 7 describes, not an unrelated one.
+    const PAYMENTS_SERVICE_ID = "00000000-0000-0000-0000-000000000101";
+    const SEED_ORG_ID = "00000000-0000-0000-0000-000000000001";
+    const incidentTitle = `Recovery test incident ${Date.now()}`;
+
+    await pageA.getByRole("button", { name: "New incident" }).click();
+    await pageA.getByLabel("Title").fill(incidentTitle);
+    await pageA.getByRole("checkbox", { name: "Payments API" }).check();
+    await pageA.getByRole("button", { name: "Create incident" }).click();
+    await expect(pageA.getByText(incidentTitle)).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(pageB.getByText(incidentTitle)).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // The service side of "recovery" — same standing-in-for-a-worker-
+    // tick reasoning Test 6 documents: degrade first (an incident
+    // affecting an already-healthy service wouldn't be much of a
+    // recovery to observe), then restore.
+    await updateServiceTelemetry(SEED_ORG_ID, PAYMENTS_SERVICE_ID, {
+      latencyMs: 420,
+      errorRate: 3.8,
+      status: "DEGRADED",
+    });
+    await updateServiceTelemetry(SEED_ORG_ID, PAYMENTS_SERVICE_ID, {
+      latencyMs: 110,
+      errorRate: 0.3,
+      status: "OPERATIONAL",
+    });
+
+    // The incident side: resolve it from Browser A.
+    await pageA.getByText(incidentTitle).click();
+    await pageA.getByLabel("Status").selectOption({ label: "Resolved" });
+    await pageA.getByRole("button", { name: "Save changes" }).click();
+    await expect(pageA.getByText("Incident updated")).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // "Both clients converge on the same final state" (§41 Test 7):
+    // neither browser reloads, and both end up showing the incident
+    // as Resolved.
+    // Exact match: the row also shows "Resolved 5s ago" as a separate
+    // element (incident.resolvedAt's relative time), which also
+    // contains the substring "Resolved" and would otherwise make this
+    // locator resolve to two elements.
+    const rowA = pageA.locator("li", { hasText: incidentTitle });
+    const rowB = pageB.locator("li", { hasText: incidentTitle });
+    await expect(rowA.getByText("Resolved", { exact: true })).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(rowB.getByText("Resolved", { exact: true })).toBeVisible({
+      timeout: 10_000,
     });
 
     await contextA.close();
