@@ -30,7 +30,26 @@ import {
  * list.
  */
 
-const uuid = z.string().uuid();
+/**
+ * A deliberately loose id shape check — 8-4-4-4-12 hex-dash, not
+ * `z.string().uuid()`'s strict RFC4122 pattern. prisma/seed.ts's fixed
+ * ids (e.g. `00000000-0000-0000-0000-000000000101` for the seeded
+ * "Payments API" service) are syntactically valid hex-dash strings but
+ * not RFC4122-compliant — their version nibble is `0`, not `1`–`5` —
+ * so the strict check rejects a real, existing service the moment a
+ * client links to it. This schema's job is catching malformed input
+ * before it reaches the DB, not re-deriving Postgres's own uuid type
+ * constraint; genuine non-existence/cross-org references still get
+ * caught downstream — the FK constraint on `incident_services`/
+ * `incident_tickets`, and `assertResponderInOrg`'s explicit lookup for
+ * `responderId`.
+ */
+const uuid = z
+  .string()
+  .regex(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    "Invalid id",
+  );
 
 export const createIncidentInputSchema = z.object({
   title: z.string().trim().min(1, "Title is required"),
