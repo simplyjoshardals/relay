@@ -2,6 +2,7 @@ generator client {
   provider        = "prisma-client"
   output          = "../lib/generated/prisma"
   previewFeatures = ["partialIndexes"]
+  moduleFormat    = "cjs"
 }
 
 datasource db {
@@ -189,6 +190,12 @@ model Service {
   errorRate   Decimal       @default(0) @map("error_rate") @db.Decimal(5, 2)
   version     Int           @default(1)
   updatedAt   DateTime      @updatedAt @map("updated_at")
+  // README §19: services are never hard-deleted in the MVP, only
+  // archived — the row (and anything historical referencing it, e.g.
+  // past incident links) stays intact. Archived services are hidden
+  // from the default view and skipped by the telemetry worker (Milestone
+  // 4) — Manager manages which services exist, not their live numbers.
+  archived    Boolean       @default(false)
 
   organization     Organization      @relation(fields: [orgId], references: [id], onDelete: Restrict)
   incidentServices IncidentService[]

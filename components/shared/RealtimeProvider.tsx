@@ -60,6 +60,14 @@ const VISIBILITY_RECHECK_AFTER_MS = 60_000;
 // with nothing to say why.
 const CONNECT_TIMEOUT_MS = 10_000;
 
+// §7's explicit exception for high-frequency telemetry: "debounce
+// service.updated invalidations client-side (max ~once per 1-2s per
+// service) to avoid refetch storms; sub-second precision isn't a
+// product requirement." The telemetry worker (workers/telemetry.ts)
+// ticks every few seconds per service, so without this a busy org would
+// invalidate the services list on nearly every broadcast.
+const SERVICE_UPDATE_DEBOUNCE_MS = 1_500;
+
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -140,6 +148,15 @@ export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
   const attemptRef = useRef(0);
   const connectWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Per-service trailing-edge debounce state for `service.updated` (§7).
+  // Keyed by service id so a busy service doesn't starve invalidation of
+  // a quiet one. Trailing-edge, not leading: the *last* reading in a
+  // debounce window is the one that matters (it's what's in the
+  // database by the time the invalidated refetch runs), not the first.
+  const serviceDebounceTimersRef = useRef<
+    Map<string, ReturnType<typeof setTimeout>>
+  >(new Map());
+
   useEffect(() => {
     const supabase = createSupabase();
     if (!supabase) {
@@ -167,11 +184,45 @@ export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
       }
     };
 
+    const clearServiceDebounceTimers = () => {
+      for (const timer of serviceDebounceTimersRef.current.values()) {
+        clearTimeout(timer);
+      }
+      serviceDebounceTimersRef.current.clear();
+    };
+
     const teardown = () => {
       if (channelRef.current) {
         supabase.removeChannel(channelRef.current);
         channelRef.current = null;
       }
+      // Pending debounced invalidations belong to the channel that
+      // scheduled them — a reconnect already invalidates everything on
+      // SUBSCRIBED (§35), so a leftover timer from before the drop would
+      // be redundant at best.
+      clearServiceDebounceTimers();
+    };
+
+    // Trailing-edge debounce, per service id: the first event for a
+    // given service in a quiet window schedules the invalidation; any
+    // further events for that same service before the timer fires are
+    // absorbed into the same pending timer rather than each scheduling
+    // their own. isStale() is checked when the timer actually fires
+    // (not just at schedule time), since a stale effect run's timers
+    // could otherwise still land after this run's own teardown.
+    const scheduleServiceInvalidation = (serviceId: string) => {
+      if (serviceDebounceTimersRef.current.has(serviceId)) return;
+
+      const timer = setTimeout(() => {
+        serviceDebounceTimersRef.current.delete(serviceId);
+        if (isStale()) return;
+        queryClient.invalidateQueries({
+          queryKey: ["services", serviceId],
+        });
+        queryClient.invalidateQueries({ queryKey: ["services", "list"] });
+      }, SERVICE_UPDATE_DEBOUNCE_MS);
+
+      serviceDebounceTimersRef.current.set(serviceId, timer);
     };
 
     const scheduleReconnect = () => {
@@ -244,6 +295,10 @@ export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
               });
             }
             queryClient.invalidateQueries({ queryKey: ["tickets", "list"] });
+          })
+          .on("broadcast", { event: "service.updated" }, ({ payload }) => {
+            if (isStale()) return;
+            if (payload?.id) scheduleServiceInvalidation(payload.id);
           })
           .subscribe((status) => {
             if (isSuperseded()) return;
@@ -358,7 +413,7 @@ export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
 
       // Mark this run stale *now*. Previously only the next effect run
       // bumped the generation, so on a plain unmount (logout) an
-      // in-flight token call could still resolve, pass isStale(), and
+      // in-flight token call could still resolve, pass isStale(), and`
       // subscribe a channel on a client nobody owns any more.
       generationRef.current += 1;
 

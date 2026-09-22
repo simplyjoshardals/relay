@@ -1,21 +1,20 @@
 import { redirect } from "next/navigation";
 import { ServicesView } from "@/components/services/ServicesView";
-import { incidents, services } from "@/lib/mock-data";
+import { incidents } from "@/lib/mock-data";
 import { getCurrentUser } from "@/server/auth/session";
 import { PATHS } from "@/utils/paths";
 
-// `self` is real now (Milestone 1). The service catalog itself
-// (`incidents`, `services`, from mock-data) is still fake — that's
-// Milestone 4's real query, plus the telemetry worker's realtime
-// updates (README §13) — once auth + the API routes for this domain
-// land. ServicesView already takes its data as props shaped like the
-// query result, so that swap shouldn't touch the JSX here. `self` is
-// what gates the Manager-only "New service" / edit affordances added
-// in Phase 3 (ROADMAP_ROLES.md).
+// Milestone 4: services are real now — ServicesView fetches them itself
+// via TanStack Query (listServicesAction as the queryFn, §10), same as
+// TicketsView, so this page no longer needs to fetch or pass service
+// data down. `incidents` stays mock (Milestone 5's real query) — used
+// only to show which active incidents affect a given service. `self`
+// still comes from the session and gates the Manager-only "New service" /
+// edit affordances (lib/permissions.ts#canManageServices).
 
 export default async function ServicesPage() {
   const self = await getCurrentUser();
   if (!self) redirect(PATHS.LOGIN);
 
-  return <ServicesView services={services} incidents={incidents} self={self} />;
+  return <ServicesView incidents={incidents} self={self} />;
 }

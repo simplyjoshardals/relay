@@ -38,19 +38,33 @@ export class ValidationError extends Error {
   }
 }
 
+/**
+ * The requester is authenticated (a session exists) but their role
+ * doesn't permit this action — e.g. a MEMBER calling a Manager-only
+ * service-catalog mutation (lib/permissions.ts#canManageServices). Kept
+ * distinct from NotFoundError: unlike an org-scoping mismatch, there's
+ * no reason to hide *that* the capability is Manager-only, only to deny
+ * doing it.
+ */
+export class ForbiddenError extends Error {
+  constructor(message = "You don't have permission to do that.") {
+    super(message);
+    this.name = "ForbiddenError";
+  }
+}
+
 export interface ActionError {
-  code: "conflict" | "not_found" | "invalid_input" | "unknown";
+  code: "conflict" | "not_found" | "invalid_input" | "forbidden" | "unknown";
   message: string;
 }
 
 /**
- * Shared catch-and-map for every domain's Server Actions (tickets today;
- * incidents/services will reuse this in later milestones) — one place
- * mapping the three typed errors above to a serializable result, rather
- * than each actions.ts file re-implementing the same three `instanceof`
- * checks. Anything not one of the three known types becomes "unknown"
- * with a generic message — an unexpected failure (a DB outage) shouldn't
- * leak its internals to the client.
+ * Shared catch-and-map for every domain's Server Actions (tickets and,
+ * as of Milestone 4, services) — one place mapping the typed errors
+ * above to a serializable result, rather than each actions.ts file
+ * re-implementing the same `instanceof` checks. Anything not one of the
+ * known types becomes "unknown" with a generic message — an unexpected
+ * failure (a DB outage) shouldn't leak its internals to the client.
  */
 export function toActionError(error: unknown): ActionError {
   if (error instanceof ConflictError) {
@@ -61,6 +75,9 @@ export function toActionError(error: unknown): ActionError {
   }
   if (error instanceof ValidationError) {
     return { code: "invalid_input", message: error.message };
+  }
+  if (error instanceof ForbiddenError) {
+    return { code: "forbidden", message: error.message };
   }
   return { code: "unknown", message: "Something went wrong. Try again." };
 }

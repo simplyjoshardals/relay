@@ -49,6 +49,7 @@ app/
     incidents/
       page.tsx
     services/
+      actions.ts
       page.tsx
     team/
       page.tsx
@@ -86,6 +87,7 @@ components/
   shared/
     ActivityDescription.tsx
     ConfirmDialog.tsx
+    ConnectionBanner.tsx
     FilterPill.tsx
     Modal.tsx
     QueryProvider.tsx
@@ -105,6 +107,7 @@ components/
 e2e/
   ticket-realtime.spec.ts
 lib/
+  action-result.ts
   initials.ts
   mock-data.ts
   permissions.ts
@@ -116,6 +119,8 @@ prisma/
     20260909021348_init/
       migration.sql
     20260920010220_server_side_ids_and_responder_index/
+      migration.sql
+    20260922003327_add_service_archived/
       migration.sql
     migration_lock.toml
   schema.prisma
@@ -133,7 +138,9 @@ server/
   application/
     auth.ts
     errors.ts
+    organizations.ts
     realtime.ts
+    services.ts
     tickets.ts
     users.ts
   auth/
@@ -143,15 +150,20 @@ server/
     session.ts
     tokens.ts
   domain/
+    service.ts
     ticket.ts
   realtime/
     broadcast.ts
   repositories/
+    activities.ts
+    organizations.ts
     refresh-tokens.ts
+    services.ts
     tickets.ts
     users.ts
   validation/
     auth.ts
+    services.ts
     tickets.ts
 test-results/
   .last-run.json
@@ -159,6 +171,8 @@ types/
   index.ts
 utils/
   paths.ts
+workers/
+  telemetry.ts
 .gitignore
 eslint.config.mjs
 next.config.ts
@@ -174,6 +188,752 @@ tsconfig.json
 
 <files>
 This section contains the contents of the repository's files.
+
+<file path="app/(dashboard)/services/actions.ts">
+"use server";
+
+import { requireSession } from "@/server/auth/session";
+import {
+  createService,
+  listServices,
+  updateService,
+} from "@/server/application/services";
+import { toActionError, type ActionError } from "@/server/application/errors";
+import type { Service } from "@/types";
+
+export type ActionResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: ActionError };
+
+/** Used directly as TanStack Query's `queryFn` (§10), same as
+ *  listTicketsAction — a Server Action is an ordinary async function
+ *  from the client's perspective. */
+export async function listServicesAction(): Promise<Service[]> {
+  const session = await requireSession();
+  return listServices(session);
+}
+
+export async function createServiceAction(
+  input: unknown,
+): Promise<ActionResult<Service>> {
+  try {
+    const session = await requireSession();
+    const service = await createService(session, input);
+    return { ok: true, data: service };
+  } catch (error) {
+    return { ok: false, error: toActionError(error) };
+  }
+}
+
+export async function updateServiceAction(
+  serviceId: string,
+  input: unknown,
+): Promise<ActionResult<Service>> {
+  try {
+    const session = await requireSession();
+    const service = await updateService(session, serviceId, input);
+    return { ok: true, data: service };
+  } catch (error) {
+    return { ok: false, error: toActionError(error) };
+  }
+}
+</file>
+
+<file path="prisma/migrations/20260922003327_add_service_archived/migration.sql">
+-- AlterTable
+ALTER TABLE "services" ADD COLUMN     "archived" BOOLEAN NOT NULL DEFAULT false;
+</file>
+
+<file path="server/application/organizations.ts">
+import { listAllOrgIds } from "@/server/repositories/organizations";
+
+/**
+ * §13/§9: the telemetry worker imports from `/server/application` only,
+ * never `/server/repositories` directly — this is the thin pass-through
+ * that boundary requires for org enumeration. No session parameter, for
+ * the same reason updateServiceTelemetry (server/application/services.ts)
+ * has none: the worker isn't acting on behalf of any one authenticated
+ * user, so there's nothing to check a role against here.
+ */
+export async function listOrgIdsForTelemetry(): Promise<string[]> {
+  return listAllOrgIds();
+}
+</file>
+
+<file path="server/application/services.ts">
+import type { Service } from "@/types";
+import type { AccessTokenClaims } from "@/server/auth/jwt";
+import { canManageServices } from "@/lib/permissions";
+import {
+  createServiceInputSchema,
+  updateServiceInputSchema,
+} from "@/server/validation/services";
+import {
+  createService as createServiceRow,
+  findServiceById,
+  findServicesForOrg,
+  updateServiceConditional,
+} from "@/server/repositories/services";
+import { createActivity } from "@/server/repositories/activities";
+import {
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  ValidationError,
+} from "@/server/application/errors";
+import { broadcastToOrg } from "@/server/realtime/broadcast";
+
+function toClientShape(service: {
+  id: string;
+  orgId: string;
+  name: string;
+  description: string;
+  status: string;
+  latencyMs: number;
+  errorRate: unknown;
+  version: number;
+  updatedAt: Date;
+  archived: boolean;
+}): Service {
+  return {
+    id: service.id,
+    orgId: service.orgId,
+    name: service.name,
+    description: service.description,
+    status: service.status as Service["status"],
+    latencyMs: service.latencyMs,
+    // Prisma's Decimal(5,2) comes back as a Decimal-like object, not a
+    // plain number — Number() on it gives the same value `types/index.ts`
+    // declares (`errorRate: number`). A raw `pg` driver would hand back a
+    // string for the same reason; either way this is the one place that
+    // gets normalized before the client shape is built.
+    errorRate: Number(service.errorRate),
+    version: service.version,
+    updatedAt: service.updatedAt.toISOString(),
+    archived: service.archived,
+    // Never persisted — buffered client-side from realtime updates
+    // received since the page loaded (types/index.ts). Always empty
+    // fresh off a query; TanStack's cache is what accumulates it, not
+    // this shape.
+    sessionLatencyTrend: [],
+  };
+}
+
+/** SM-01/SM-02: view. Org-scoped via the verified session, same as
+ *  listTickets — never a client-supplied org id (§3, Layer 1).
+ *  Archived services are included; ServicesView is what filters them out
+ *  of the default view (README §19), same split of responsibility as
+ *  the rest of the UI's search/filter state. */
+export async function listServices(
+  session: AccessTokenClaims,
+): Promise<Service[]> {
+  const services = await findServicesForOrg(session.orgId);
+  return services.map(toClientShape);
+}
+
+/** Catalog create — Manager-only (lib/permissions.ts#canManageServices).
+ *  Unlike tickets, this capability is role-gated, so unlike
+ *  createTicket() this checks the session's role before doing anything
+ *  else: the UI already hides "New service" from a Member, but a Server
+ *  Action must never trust that the caller only ever reaches it through
+ *  that UI (AUTH-06). */
+export async function createService(
+  session: AccessTokenClaims,
+  input: unknown,
+): Promise<Service> {
+  if (!canManageServices(session.role)) {
+    throw new ForbiddenError("Only a Manager can add a service.");
+  }
+
+  const parsed = createServiceInputSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new ValidationError(
+      parsed.error.issues[0]?.message ?? "Invalid input.",
+    );
+  }
+
+  const service = await createServiceRow(session.orgId, parsed.data);
+
+  await broadcastToOrg(session.orgId, "service.updated", {
+    id: service.id,
+    orgId: session.orgId,
+  });
+
+  return toClientShape(service);
+}
+
+/**
+ * Catalog edit — name/description, plus archive/restore (README §19),
+ * all through one version-checked update, same reasoning as
+ * updateTicket() folding status/priority/assignee together. Manager-only,
+ * same check as createService().
+ *
+ * Deliberately does NOT accept status/latencyMs/errorRate — those are
+ * telemetry-owned (§13) and only ever written via
+ * updateServiceTelemetry() below, which the worker calls and which has
+ * no role check at all (it isn't reached from a human session).
+ */
+export async function updateService(
+  session: AccessTokenClaims,
+  serviceId: string,
+  input: unknown,
+): Promise<Service> {
+  if (!canManageServices(session.role)) {
+    throw new ForbiddenError("Only a Manager can edit a service.");
+  }
+
+  const parsed = updateServiceInputSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new ValidationError(
+      parsed.error.issues[0]?.message ?? "Invalid input.",
+    );
+  }
+
+  const existing = await findServiceById(session.orgId, serviceId);
+  if (!existing) {
+    throw new NotFoundError("Service not found.");
+  }
+
+  const { expectedVersion, ...fields } = parsed.data;
+
+  const result = await updateServiceConditional(
+    session.orgId,
+    serviceId,
+    expectedVersion,
+    fields,
+  );
+
+  if (result.count === 0) {
+    throw new ConflictError(
+      "This service was changed by someone else. Refresh and try again.",
+    );
+  }
+
+  const updated = await findServiceById(session.orgId, serviceId);
+  if (!updated) {
+    throw new NotFoundError("Service not found.");
+  }
+
+  await broadcastToOrg(session.orgId, "service.updated", {
+    id: updated.id,
+    orgId: session.orgId,
+  });
+
+  return toClientShape(updated);
+}
+
+/**
+ * §13's per-tick input: the telemetry worker needs "which services exist
+ * and aren't archived" for one org, with no session to check a role
+ * against (same reasoning as updateServiceTelemetry below). This shares
+ * listServices' query and shape via toClientShape — the only difference
+ * is no session/role gate and archived services are filtered out, since
+ * README §19/ServiceModal are explicit an archived service "won't be
+ * monitored going forward."
+ */
+export async function listActiveServicesForTelemetry(
+  orgId: string,
+): Promise<Service[]> {
+  const services = await findServicesForOrg(orgId);
+  return services.filter((s) => !s.archived).map(toClientShape);
+}
+
+export interface TelemetryReading {
+  latencyMs: number;
+  errorRate: number;
+  status: Service["status"];
+}
+
+/**
+ * §13: the one use-case the telemetry worker calls, on every tick, for
+ * every non-archived service. Deliberately takes no `session` — the
+ * worker has no human session to present (§13: "never touches Incidents
+ * ... a human decides", and by the same logic there's no Manager whose
+ * permission this needs, since nothing about *which service to monitor*
+ * is being changed here, only its live numbers). `orgId` and `serviceId`
+ * come from the worker's own org/service enumeration, not from a client
+ * request, so there's no AUTH-06 concern — this is never wired to a
+ * Server Action or Route Handler a browser can call.
+ *
+ * Writes an Activity row only when `status` actually changes (SM-05),
+ * with `actorId: null` (SM-06: distinguishable from human-driven
+ * activity) — a latency/error-rate jiggle that doesn't cross a status
+ * boundary isn't "meaningful" enough to log, matching how tickets only
+ * broadcast on a real committed change, not every keystroke.
+ *
+ * Uses the same version-checked conditional update as the human path
+ * (§8) — not because two callers are likely to race on a single
+ * service's version in practice, but because a second, unconditioned
+ * write path here would be exactly the kind of exception that makes "no
+ * repository function may omit the conditional update" stop being a
+ * rule anyone can rely on. A stale read losing this tick to the next one
+ * is harmless (there's another tick in a few seconds); silently
+ * clobbering a concurrent Manager edit would not be.
+ */
+export async function updateServiceTelemetry(
+  orgId: string,
+  serviceId: string,
+  reading: TelemetryReading,
+): Promise<void> {
+  const existing = await findServiceById(orgId, serviceId);
+  if (!existing || existing.archived) {
+    // Deleted/archived since the worker last listed services for this
+    // org — nothing to update. Not an error: the worker's per-tick
+    // service list is only as fresh as its last poll (see
+    // workers/telemetry.ts), so this is an expected race, not a bug.
+    return;
+  }
+
+  const statusChanged = existing.status !== reading.status;
+
+  const result = await updateServiceConditional(
+    orgId,
+    serviceId,
+    existing.version,
+    {
+      latencyMs: reading.latencyMs,
+      errorRate: reading.errorRate,
+      status: reading.status,
+    },
+  );
+
+  if (result.count === 0) {
+    // Lost the race to a concurrent write (a Manager's edit, or another
+    // tick somehow overlapping). Skip this reading rather than retry —
+    // the next tick supersedes it in a few seconds regardless.
+    return;
+  }
+
+  if (statusChanged) {
+    await createActivity(orgId, {
+      actorId: null,
+      action: "SERVICE_STATUS_CHANGED",
+      targetType: "service",
+      targetId: serviceId,
+      metadata: { from: existing.status, to: reading.status },
+    });
+  }
+
+  await broadcastToOrg(orgId, "service.updated", {
+    id: serviceId,
+    orgId,
+  });
+}
+</file>
+
+<file path="server/domain/service.ts">
+import type { ServiceStatus } from "@/types";
+
+export const SERVICE_STATUSES: ServiceStatus[] = [
+  "OPERATIONAL",
+  "DEGRADED",
+  "OUTAGE",
+];
+
+/**
+ * Unlike ticket status (server/domain/ticket.ts), service status is never
+ * set directly by a human through the catalog form (ServiceModal) — §13
+ * is explicit that health numbers are telemetry-driven, either the
+ * worker's simulated ticks (Milestone 4) or a real monitoring
+ * integration later. So there's no user-facing transition rule to
+ * encode here either; this just centralizes the three valid values so
+ * validation/repositories/worker all reference one list, same reasoning
+ * as the ticket domain module.
+ */
+
+/**
+ * SM-04: "the dashboard must clearly communicate degraded or unavailable
+ * services" — centralizing the OPERATIONAL/DEGRADED/OUTAGE ordering here
+ * (rather than each call site re-deriving it) is what lets the worker
+ * decide whether a telemetry delta crossed a status boundary worth an
+ * Activity row (SM-05) without duplicating the thresholds.
+ */
+export interface TelemetryThresholds {
+  /** latencyMs at or above this, with no error-rate override below, is
+   *  DEGRADED. */
+  degradedLatencyMs: number;
+  /** latencyMs at or above this is OUTAGE regardless of error rate. */
+  outageLatencyMs: number;
+  /** errorRate (percent) at or above this is DEGRADED. */
+  degradedErrorRate: number;
+  /** errorRate (percent) at or above this is OUTAGE. */
+  outageErrorRate: number;
+}
+
+export const DEFAULT_TELEMETRY_THRESHOLDS: TelemetryThresholds = {
+  degradedLatencyMs: 250,
+  outageLatencyMs: 800,
+  degradedErrorRate: 2,
+  outageErrorRate: 8,
+};
+
+/** Pure function: given a latency/error-rate reading, what status does it
+ *  imply? Kept independent of *how* latency/errorRate were produced, so
+ *  the same rule works for the simulated worker (Milestone 4) and a real
+ *  monitoring integration later — only the input numbers change. */
+export function statusForTelemetry(
+  latencyMs: number,
+  errorRate: number,
+  thresholds: TelemetryThresholds = DEFAULT_TELEMETRY_THRESHOLDS,
+): ServiceStatus {
+  if (
+    latencyMs >= thresholds.outageLatencyMs ||
+    errorRate >= thresholds.outageErrorRate
+  ) {
+    return "OUTAGE";
+  }
+  if (
+    latencyMs >= thresholds.degradedLatencyMs ||
+    errorRate >= thresholds.degradedErrorRate
+  ) {
+    return "DEGRADED";
+  }
+  return "OPERATIONAL";
+}
+</file>
+
+<file path="server/repositories/activities.ts">
+import { prisma } from "@/lib/prisma";
+import type { ActivityAction } from "@/types";
+
+/**
+ * Pulled forward from Milestone 6 ("activity generation wired into every
+ * use-case... retrofit is fine") because SM-05 ("changes in service
+ * health must generate system events") is in scope for Milestone 4
+ * itself — the telemetry worker needs somewhere to write to the moment
+ * it exists, rather than silently updating Service rows with no record.
+ * There's no paginated read side yet (that's Milestone 6's `listActivity`
+ * + realtime `activity.created`); this is deliberately just the write
+ * path other use-cases will also call once they're retrofitted.
+ */
+export interface CreateActivityData {
+  /** null = system/telemetry-generated (SM-06: must be distinguishable
+   *  from manually created operational activity) — never a placeholder
+   *  user id. */
+  actorId: string | null;
+  action: ActivityAction;
+  targetType: "ticket" | "service" | "incident";
+  targetId: string;
+  metadata?: Record<string, string | number> | null;
+}
+
+export async function createActivity(orgId: string, data: CreateActivityData) {
+  return prisma.activity.create({
+    data: {
+      orgId,
+      actorId: data.actorId,
+      action: data.action,
+      targetType: data.targetType,
+      targetId: data.targetId,
+      metadata: data.metadata ?? null,
+    },
+  });
+}
+</file>
+
+<file path="server/repositories/organizations.ts">
+import { prisma } from "@/lib/prisma";
+
+/**
+ * The one deliberate exception to "every repository function takes orgId
+ * as its required first parameter" (§3, Layer 1) — there's no orgId to
+ * scope by yet, since the whole point is enumerating orgs. Same
+ * reasoning as findUserByEmailForLogin in repositories/users.ts: this is
+ * only ever called from a context that doesn't have a session, here the
+ * telemetry worker (workers/telemetry.ts) rather than the login flow.
+ * Never call this from a Server Action or Route Handler.
+ */
+export async function listAllOrgIds(): Promise<string[]> {
+  const orgs = await prisma.organization.findMany({ select: { id: true } });
+  return orgs.map((o) => o.id);
+}
+</file>
+
+<file path="server/repositories/services.ts">
+import { prisma } from "@/lib/prisma";
+import type { ServiceStatus } from "@/types";
+
+export async function findServicesForOrg(orgId: string) {
+  return prisma.service.findMany({
+    where: { orgId },
+    orderBy: { name: "asc" },
+  });
+}
+
+export async function findServiceById(orgId: string, id: string) {
+  return prisma.service.findFirst({ where: { id, orgId } });
+}
+
+export interface CreateServiceData {
+  name: string;
+  description: string;
+}
+
+/** A brand-new service starts OPERATIONAL with zeroed metrics — a
+ *  placeholder until the telemetry worker (or real monitoring) reports
+ *  otherwise, per ServiceModal's create-mode copy. */
+export async function createService(orgId: string, data: CreateServiceData) {
+  return prisma.service.create({
+    data: {
+      ...data,
+      orgId,
+      status: "OPERATIONAL",
+      latencyMs: 0,
+      errorRate: 0,
+    },
+  });
+}
+
+export interface ServiceUpdateFields {
+  name?: string;
+  description?: string;
+  archived?: boolean;
+  status?: ServiceStatus;
+  latencyMs?: number;
+  /** Prisma's Decimal(5,2) column accepts a plain `number` on write
+   *  (it's normalized to Decimal internally) — no need to construct a
+   *  Decimal instance from this layer. */
+  errorRate?: number;
+}
+
+/**
+ * §8's conditional update, identical shape to
+ * repositories/tickets.ts#updateTicketConditional — see that function's
+ * comment for why `updateMany` (not `update`) and why returning the bare
+ * count rather than throwing here. Used by both the human catalog-edit
+ * path (name/description/archived) and the telemetry worker's path
+ * (status/latencyMs/errorRate) — same conditional-update primitive
+ * either way, just different field sets.
+ */
+export async function updateServiceConditional(
+  orgId: string,
+  id: string,
+  expectedVersion: number,
+  fields: ServiceUpdateFields,
+) {
+  return prisma.service.updateMany({
+    where: { id, orgId, version: expectedVersion },
+    data: { ...fields, version: { increment: 1 } },
+  });
+}
+</file>
+
+<file path="server/validation/services.ts">
+import { z } from "zod";
+
+/**
+ * §11: single source of truth for "is this input valid," mirroring
+ * server/validation/tickets.ts. Only the catalog fields a human actually
+ * edits (name/description, plus archived/restore) appear here — status,
+ * latencyMs, and errorRate are telemetry-owned (README §13) and never
+ * come from a client-submitted form, so there's no schema field for them
+ * at all; updateServiceTelemetry (server/application/services.ts) takes
+ * those as plain function arguments from the worker, not parsed input.
+ *
+ * Same resolved decision as tickets applies here: ServiceModal keeps its
+ * `useState` form and runs this through `.safeParse()` on submit rather
+ * than adopting React Hook Form.
+ */
+
+export const createServiceInputSchema = z.object({
+  name: z.string().trim().min(1, "Name is required"),
+  description: z.string().trim().default(""),
+});
+
+export type CreateServiceInput = z.infer<typeof createServiceInputSchema>;
+
+export const updateServiceInputSchema = z
+  .object({
+    expectedVersion: z.number().int().positive(),
+    name: z.string().trim().min(1, "Name is required").optional(),
+    description: z.string().trim().optional(),
+    /** Archive/restore (README §19) travels through this same
+     *  version-checked update rather than a separate endpoint — same
+     *  reasoning updateTicketInputSchema documents for status/priority. */
+    archived: z.boolean().optional(),
+  })
+  .refine(
+    (input) =>
+      input.name !== undefined ||
+      input.description !== undefined ||
+      input.archived !== undefined,
+    { message: "At least one field must change." },
+  );
+
+export type UpdateServiceInput = z.infer<typeof updateServiceInputSchema>;
+</file>
+
+<file path="workers/telemetry.ts">
+import "dotenv/config";
+import { listOrgIdsForTelemetry } from "@/server/application/organizations";
+import {
+  listActiveServicesForTelemetry,
+  updateServiceTelemetry,
+} from "@/server/application/services";
+import { statusForTelemetry } from "@/server/domain/service";
+import type { Service } from "@/types";
+
+/**
+ * README §13: a standalone, long-lived Node process — run on its own
+ * (`yarn worker:telemetry`, or as a small always-on process alongside
+ * the Next.js app in production), never as a serverless function or a
+ * cron job, and never reached over HTTP. It imports only from
+ * `/server/application` (never `/server/repositories`/`/db` directly) —
+ * the one exception is `/server/domain`'s `statusForTelemetry`, a pure
+ * function with no database or auth surface of its own, so importing it
+ * directly isn't the kind of repository-layer bypass that boundary is
+ * guarding against.
+ *
+ * This uses `@/*` path aliases, unlike prisma/seed.ts's deliberately
+ * relative imports — seed.ts avoids the alias because it only needs to
+ * reach a couple of files with zero transitive `@/*` imports of their
+ * own (see its comment); that workaround doesn't scale to this worker,
+ * which by design pulls in all of `/server/application/services.ts` and
+ * everything *that* imports. This relies on tsx (already a
+ * devDependency) resolving tsconfig's `paths` the same way it does for
+ * every other server file — confirm with a real `yarn worker:telemetry`
+ * run before treating this as settled, same spirit as the Realtime
+ * Authorization check the roadmap calls out before Milestone 3.
+ */
+
+// How often the worker ticks. A few seconds feels "live" on the
+// dashboard without hammering the database — README §13 wants something
+// that ticks "every few seconds," not sub-second precision (§7 already
+// tells clients to debounce service.updated for exactly this reason).
+const TICK_INTERVAL_MS = Number(process.env.TELEMETRY_TICK_MS ?? 4_000);
+
+// Per-tick random-walk step size, and occasional larger excursions so a
+// service actually crosses into DEGRADED/OUTAGE now and then (Test 6)
+// rather than drifting forever in a narrow healthy band.
+const LATENCY_STEP_MS = 12;
+const ERROR_RATE_STEP = 0.35;
+const SPIKE_PROBABILITY = 0.06;
+const SPIKE_LATENCY_MS = 260;
+const SPIKE_ERROR_RATE = 4;
+
+// Recovery pull: nudges a reading back toward a healthy baseline each
+// tick, proportional to how far above baseline it currently is. Without
+// this, the random walk has no restoring force and every service
+// eventually wanders into OUTAGE and stays there — a "plausible
+// telemetry producer" (§36) should mostly hover healthy with occasional
+// excursions, not monotonically degrade.
+const RECOVERY_FRACTION = 0.15;
+const BASELINE_LATENCY_MS = 110;
+const BASELINE_ERROR_RATE = 0.3;
+
+const MIN_LATENCY_MS = 20;
+const MAX_LATENCY_MS = 2_000;
+const MIN_ERROR_RATE = 0;
+const MAX_ERROR_RATE = 25;
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function randomBetween(min: number, max: number): number {
+  return min + Math.random() * (max - min);
+}
+
+/** Next latency/error-rate reading for one service: pull toward
+ *  baseline, add ordinary jitter, and occasionally throw in a spike —
+ *  "a plausible latency/error-rate delta," per §13's own wording, rather
+ *  than each tick being fully independent of the last. */
+function nextReading(service: Service): {
+  latencyMs: number;
+  errorRate: number;
+} {
+  const latencyPull =
+    (BASELINE_LATENCY_MS - service.latencyMs) * RECOVERY_FRACTION;
+  const errorPull =
+    (BASELINE_ERROR_RATE - service.errorRate) * RECOVERY_FRACTION;
+
+  const spiking = Math.random() < SPIKE_PROBABILITY;
+
+  const latencyDelta =
+    latencyPull +
+    randomBetween(-LATENCY_STEP_MS, LATENCY_STEP_MS) +
+    (spiking ? randomBetween(0, SPIKE_LATENCY_MS) : 0);
+
+  const errorDelta =
+    errorPull +
+    randomBetween(-ERROR_RATE_STEP, ERROR_RATE_STEP) +
+    (spiking ? randomBetween(0, SPIKE_ERROR_RATE) : 0);
+
+  return {
+    latencyMs: Math.round(
+      clamp(service.latencyMs + latencyDelta, MIN_LATENCY_MS, MAX_LATENCY_MS),
+    ),
+    errorRate:
+      Math.round(
+        clamp(service.errorRate + errorDelta, MIN_ERROR_RATE, MAX_ERROR_RATE) *
+          100,
+      ) / 100,
+  };
+}
+
+async function tickService(orgId: string, service: Service): Promise<void> {
+  const { latencyMs, errorRate } = nextReading(service);
+  const status = statusForTelemetry(latencyMs, errorRate);
+
+  try {
+    await updateServiceTelemetry(orgId, service.id, {
+      latencyMs,
+      errorRate,
+      status,
+    });
+  } catch (error) {
+    // One service's write failing (a transient DB hiccup) shouldn't stop
+    // the rest of this tick, or the loop overall — there's another tick
+    // in a few seconds regardless (same "degraded, not fatal" posture
+    // as broadcastToOrg's own error handling).
+    console.error(
+      `telemetry worker: failed to update service ${service.id} in org ${orgId}`,
+      error,
+    );
+  }
+}
+
+async function tickOrg(orgId: string): Promise<void> {
+  const services = await listActiveServicesForTelemetry(orgId);
+  await Promise.all(services.map((service) => tickService(orgId, service)));
+}
+
+async function tick(): Promise<void> {
+  const orgIds = await listOrgIdsForTelemetry();
+  await Promise.all(orgIds.map((orgId) => tickOrg(orgId)));
+}
+
+async function main() {
+  console.log(
+    `telemetry worker: starting, ticking every ${TICK_INTERVAL_MS}ms`,
+  );
+
+  // Run once immediately rather than waiting a full interval for the
+  // first tick — otherwise a freshly started worker leaves the
+  // dashboard showing stale/zeroed numbers for the first several
+  // seconds.
+  await tick().catch((error) =>
+    console.error("telemetry worker: tick failed", error),
+  );
+
+  const timer = setInterval(() => {
+    void tick().catch((error) =>
+      console.error("telemetry worker: tick failed", error),
+    );
+  }, TICK_INTERVAL_MS);
+
+  const shutdown = (signal: string) => {
+    console.log(`telemetry worker: received ${signal}, shutting down`);
+    clearInterval(timer);
+    process.exit(0);
+  };
+
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+}
+
+void main();
+</file>
 
 <file path="app/(dashboard)/activity/page.tsx">
 "use client";
@@ -483,35 +1243,6 @@ export function LoginForm() {
         {isPending ? "Signing in…" : "Sign in"}
       </button>
     </form>
-  );
-}
-</file>
-
-<file path="components/dashboard/LiveIndicator.tsx">
-interface LiveIndicatorProps {
-  connected?: boolean;
-}
-
-/** RT-02 / RT-03: the realtime connection state has to be visible, not
- *  just implied by data updating. Connected is quiet; reconnecting is not. */
-export function LiveIndicator({ connected = true }: LiveIndicatorProps) {
-  if (!connected) {
-    return (
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-warning/10 px-2.5 py-1 text-xs font-medium text-warning">
-        <span className="size-1.5 rounded-full bg-warning" />
-        Reconnecting
-      </span>
-    );
-  }
-
-  return (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-signal-dim px-2.5 py-1 text-xs font-medium text-signal">
-      <span className="relative flex size-1.5">
-        <span className="absolute inline-flex size-full animate-ping rounded-full bg-signal opacity-75" />
-        <span className="relative inline-flex size-1.5 rounded-full bg-signal" />
-      </span>
-      Live
-    </span>
   );
 }
 </file>
@@ -966,6 +1697,63 @@ export function ConfirmDialog({
 }
 </file>
 
+<file path="components/shared/ConnectionBanner.tsx">
+"use client";
+
+import { useEffect, useState } from "react";
+import { WifiSlashIcon } from "@phosphor-icons/react";
+import { useRealtimeStatus } from "@/components/shared/RealtimeProvider";
+
+// A reconnect that resolves in a second or two (a quick tab switch, a
+// token refresh) shouldn't flash a warning across the page — the small
+// pill in the TopBar already covers that. The banner is for a connection
+// that's actually stayed down. "Offline" has no grace: the browser has
+// told us there's no network.
+const RECONNECTING_GRACE_MS = 2_000;
+
+/**
+ * §18: "avoid presenting obviously stale state as current." While the
+ * realtime connection is down, nothing is pushing updates, so whatever's
+ * on screen may be out of date — this says so. Once it reconnects,
+ * RealtimeProvider invalidates every active query (§35), the banner
+ * disappears, and the data is authoritative again.
+ */
+export function ConnectionBanner() {
+  const status = useRealtimeStatus();
+  const [graceElapsed, setGraceElapsed] = useState(false);
+
+  useEffect(() => {
+    if (status !== "reconnecting") return;
+    const timer = setTimeout(
+      () => setGraceElapsed(true),
+      RECONNECTING_GRACE_MS,
+    );
+    return () => {
+      clearTimeout(timer);
+      setGraceElapsed(false);
+    };
+  }, [status]);
+
+  const show =
+    status === "offline" || (status === "reconnecting" && graceElapsed);
+  if (!show) return null;
+
+  return (
+    <div
+      role="alert"
+      className="flex shrink-0 items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-ink"
+    >
+      <WifiSlashIcon size={18} className="mt-0.5 shrink-0 text-warning" />
+      <span>
+        {status === "offline"
+          ? "You're offline. What you see may be out of date, and changes you make won't save until you're back online."
+          : "Connection lost — reconnecting. What you see may be out of date."}
+      </span>
+    </div>
+  );
+}
+</file>
+
 <file path="components/shared/FilterPill.tsx">
 interface FilterPillProps {
   active: boolean;
@@ -991,38 +1779,6 @@ export function FilterPill({ active, onClick, label, count }: FilterPillProps) {
     >
       {label} <span className="text-ink-faint">{count}</span>
     </button>
-  );
-}
-</file>
-
-<file path="components/shared/QueryProvider.tsx">
-"use client";
-
-import { useState, type ReactNode } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
-
-/**
- * §10: "TanStack Query owns all server-derived state... one
- * QueryClientProvider at the root." "Root" here means the root of the
- * authenticated app (this composes alongside ToastProvider in the
- * dashboard layout) rather than the true app root — /login has nothing
- * to query, so there's no reason to give it a query client too.
- *
- * The QueryClient is created once via useState's lazy initializer, not
- * as a plain `new QueryClient()` inline — that would build a fresh
- * client (and lose all cached data) on every render.
- */
-export function QueryProvider({ children }: { children: ReactNode }) {
-  const [queryClient] = useState(() => new QueryClient());
-
-  return (
-    <QueryClientProvider client={queryClient}>
-      {children}
-      {process.env.NODE_ENV === "development" && (
-        <ReactQueryDevtools initialIsOpen={false} />
-      )}
-    </QueryClientProvider>
   );
 }
 </file>
@@ -1077,136 +1833,50 @@ export function Sparkline({
 }
 </file>
 
-<file path="components/shared/Toast.tsx">
-"use client";
-
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useState,
-  type ReactNode,
-} from "react";
-import {
-  CheckCircleIcon,
-  WarningCircleIcon,
-  XIcon,
-} from "@phosphor-icons/react";
-
-type ToastVariant = "success" | "error";
-
-interface Toast {
-  id: string;
-  message: string;
-  variant: ToastVariant;
-}
-
-interface ToastContextValue {
-  show: (message: string, variant?: ToastVariant) => void;
-}
-
-const ToastContext = createContext<ToastContextValue | null>(null);
-
-const AUTO_DISMISS_MS = 4000;
+<file path="lib/action-result.ts">
+import type { ActionError } from "@/server/application/errors";
 
 /**
- * README §18 requires the app to "show meaningful errors" and "avoid
- * silently losing changes" on a failed mutation — this is that delivery
- * mechanism. Right now every mutation across Tickets/Incidents/Services/
- * Team is pure local state (no network call exists yet), so there is
- * nothing that can genuinely fail — `variant: "error"` has nowhere to be
- * called from yet. What's wired up today is the success path, so actions
- * stop closing silently with no confirmation. Once real Server Actions
- * (and the §12 version-conflict check they'll return) exist, that failure
- * handler calls the same `show(message, "error")` — same mechanism, nothing
- * about this provider changes.
+ * Bridges the Server Actions' `{ ok, data | error }` results (see
+ * app/(dashboard)/tickets/actions.ts) into TanStack Query's model, where a
+ * failed mutation is a *thrown* error. Unwrapping inside `mutationFn`
+ * means a rejected write (conflict, validation, not-found) and a network
+ * failure both land in the same `onError` — which is where optimistic
+ * updates get rolled back — instead of one failure path living in
+ * `onSuccess` and the other in `onError`.
  */
-export function ToastProvider({ children }: { children: ReactNode }) {
-  const [toasts, setToasts] = useState<Toast[]>([]);
+export class ActionFailure extends Error {
+  readonly error: ActionError;
 
-  const dismiss = useCallback((id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-  }, []);
-
-  const show = useCallback(
-    (message: string, variant: ToastVariant = "success") => {
-      const id = crypto.randomUUID();
-      setToasts((prev) => [...prev, { id, message, variant }]);
-    },
-    [],
-  );
-
-  return (
-    <ToastContext.Provider value={{ show }}>
-      {children}
-
-      <div className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex flex-col items-center gap-2 p-4 sm:items-end">
-        {toasts.map((toast) => (
-          <ToastItem key={toast.id} toast={toast} onDismiss={dismiss} />
-        ))}
-      </div>
-    </ToastContext.Provider>
-  );
-}
-
-function ToastItem({
-  toast,
-  onDismiss,
-}: {
-  toast: Toast;
-  onDismiss: (id: string) => void;
-}) {
-  useEffect(() => {
-    const timer = setTimeout(() => onDismiss(toast.id), AUTO_DISMISS_MS);
-    return () => clearTimeout(timer);
-  }, [toast.id, onDismiss]);
-
-  const isError = toast.variant === "error";
-
-  return (
-    <div
-      role="status"
-      className={`pointer-events-auto flex w-full max-w-sm items-start gap-2 rounded-lg border px-3 py-2.5 shadow-lg ${
-        isError
-          ? "border-danger/30 bg-panel-raised text-ink"
-          : "border-line-strong bg-panel-raised text-ink"
-      }`}
-    >
-      {isError ? (
-        <WarningCircleIcon
-          size={18}
-          weight="fill"
-          className="mt-0.5 shrink-0 text-danger"
-        />
-      ) : (
-        <CheckCircleIcon
-          size={18}
-          weight="fill"
-          className="mt-0.5 shrink-0 text-success"
-        />
-      )}
-
-      <span className="flex-1 text-sm">{toast.message}</span>
-
-      <button
-        type="button"
-        onClick={() => onDismiss(toast.id)}
-        aria-label="Dismiss"
-        className="shrink-0 rounded p-0.5 text-ink-faint transition-colors hover:text-ink"
-      >
-        <XIcon size={14} />
-      </button>
-    </div>
-  );
-}
-
-export function useToast(): ToastContextValue {
-  const ctx = useContext(ToastContext);
-  if (!ctx) {
-    throw new Error("useToast must be used within a ToastProvider");
+  constructor(error: ActionError) {
+    super(error.message);
+    this.name = "ActionFailure";
+    this.error = error;
   }
-  return ctx;
+}
+
+export function unwrap<T>(
+  result: { ok: true; data: T } | { ok: false; error: ActionError },
+): T {
+  if (!result.ok) throw new ActionFailure(result.error);
+  return result.data;
+}
+
+/** Client-side only (reads `navigator`). Turns whatever a mutation threw
+ *  into a message a person can act on — "you're offline" is a different
+ *  problem from "the server said no". `resource` defaults to "ticket"
+ *  so the existing tickets call sites (TicketsView) don't need updating;
+ *  Milestone 4's ServicesView passes "service" explicitly. */
+export function failureMessage(
+  error: unknown,
+  action: string,
+  resource: string = "ticket",
+): string {
+  if (error instanceof ActionFailure) return error.message;
+  if (typeof navigator !== "undefined" && !navigator.onLine) {
+    return `You're offline, so the ${resource} wasn't ${action}. Reconnect and try again.`;
+  }
+  return `Couldn't ${action === "created" ? "create" : "update"} the ${resource}. Try again.`;
 }
 </file>
 
@@ -1610,6 +2280,33 @@ const SEED_ORG_ID = "00000000-0000-0000-0000-000000000001";
 // so it's obvious at seed time, never meant for anything real.
 const DEMO_PASSWORD = "relay-dev-1234";
 
+// Milestone 4: a couple of real Service rows so a freshly seeded org has
+// something for /services (and the telemetry worker) to show, using the
+// same names/descriptions lib/mock-data.ts has always used. Fixed ids,
+// same reasoning as SEED_ORG_ID — idempotent re-seeding, and
+// e2e/service-realtime.spec.ts references PAYMENTS_SERVICE_ID directly
+// (no shared import between seed and spec, same as DEMO_PASSWORD above,
+// so if either changes here the other needs updating too).
+const PAYMENTS_SERVICE_ID = "00000000-0000-0000-0000-000000000101";
+
+const seedServices = [
+  {
+    id: PAYMENTS_SERVICE_ID,
+    name: "Payments API",
+    description: "Card authorization and capture",
+  },
+  {
+    id: "00000000-0000-0000-0000-000000000102",
+    name: "Checkout",
+    description: "Cart, pricing, and order creation",
+  },
+  {
+    id: "00000000-0000-0000-0000-000000000103",
+    name: "Auth",
+    description: "Session and identity",
+  },
+];
+
 // Same identities mock-data.ts has always used (lib/mock-data.ts), so
 // switching a page from mock data to a real query returns someone the
 // UI already has copy/avatars/etc. built around.
@@ -1640,6 +2337,26 @@ async function main() {
 
   console.log(`Seeded ${seedUsers.length} users in "${org.name}".`);
   console.log(`Every seeded user's password: ${DEMO_PASSWORD}`);
+
+  // update: {} — re-seeding must never clobber whatever the telemetry
+  // worker (or a Manager) has since written to latencyMs/errorRate/
+  // status/version; this only fills in rows that don't exist yet.
+  for (const service of seedServices) {
+    await prisma.service.upsert({
+      where: { id: service.id },
+      update: {},
+      create: {
+        ...service,
+        orgId: org.id,
+        status: "OPERATIONAL",
+        latencyMs: 110,
+        errorRate: 0.3,
+        archived: false,
+      },
+    });
+  }
+
+  console.log(`Seeded ${seedServices.length} services in "${org.name}".`);
 }
 
 main()
@@ -1836,19 +2553,33 @@ export class ValidationError extends Error {
   }
 }
 
+/**
+ * The requester is authenticated (a session exists) but their role
+ * doesn't permit this action — e.g. a MEMBER calling a Manager-only
+ * service-catalog mutation (lib/permissions.ts#canManageServices). Kept
+ * distinct from NotFoundError: unlike an org-scoping mismatch, there's
+ * no reason to hide *that* the capability is Manager-only, only to deny
+ * doing it.
+ */
+export class ForbiddenError extends Error {
+  constructor(message = "You don't have permission to do that.") {
+    super(message);
+    this.name = "ForbiddenError";
+  }
+}
+
 export interface ActionError {
-  code: "conflict" | "not_found" | "invalid_input" | "unknown";
+  code: "conflict" | "not_found" | "invalid_input" | "forbidden" | "unknown";
   message: string;
 }
 
 /**
- * Shared catch-and-map for every domain's Server Actions (tickets today;
- * incidents/services will reuse this in later milestones) — one place
- * mapping the three typed errors above to a serializable result, rather
- * than each actions.ts file re-implementing the same three `instanceof`
- * checks. Anything not one of the three known types becomes "unknown"
- * with a generic message — an unexpected failure (a DB outage) shouldn't
- * leak its internals to the client.
+ * Shared catch-and-map for every domain's Server Actions (tickets and,
+ * as of Milestone 4, services) — one place mapping the typed errors
+ * above to a serializable result, rather than each actions.ts file
+ * re-implementing the same `instanceof` checks. Anything not one of the
+ * known types becomes "unknown" with a generic message — an unexpected
+ * failure (a DB outage) shouldn't leak its internals to the client.
  */
 export function toActionError(error: unknown): ActionError {
   if (error instanceof ConflictError) {
@@ -1859,6 +2590,9 @@ export function toActionError(error: unknown): ActionError {
   }
   if (error instanceof ValidationError) {
     return { code: "invalid_input", message: error.message };
+  }
+  if (error instanceof ForbiddenError) {
+    return { code: "forbidden", message: error.message };
   }
   return { code: "unknown", message: "Something went wrong. Try again." };
 }
@@ -2571,7 +3305,7 @@ import { defineConfig, devices } from "@playwright/test";
  * README §12/§41: the two-browser-context acceptance test is the actual
  * definition of done, not a final-phase checkbox — written at Milestone
  * 3 and extended as each later milestone's slice of it becomes coverable
- * (e2e/ticket-realtime.spec.ts currently covers Tests 1 & 2 only).
+ * (e2e/ticket-realtime.spec.ts currently covers Tests 1, 2, 6 & 8).
  *
  * Requires a running dev server with real Postgres + Supabase Realtime
  * configured (DATABASE_URL, JWT_SECRET, NEXT_PUBLIC_SUPABASE_URL,
@@ -2754,6 +3488,68 @@ export default async function LoginPage() {
 }
 </file>
 
+<file path="components/dashboard/LiveIndicator.tsx">
+import type { RealtimeStatus } from "@/components/shared/RealtimeProvider";
+
+interface LiveIndicatorProps {
+  status?: RealtimeStatus;
+}
+
+/** RT-02 / RT-03: the realtime connection state has to be visible, not
+ *  just implied by data updating. Connected is quiet; anything else is
+ *  not — and "no network" reads differently from "reconnecting". */
+export function LiveIndicator({ status = "connected" }: LiveIndicatorProps) {
+  if (status === "offline") {
+    return (
+      <span
+        role="status"
+        className="inline-flex items-center gap-1.5 rounded-full bg-danger/10 px-2.5 py-1 text-xs font-medium text-danger"
+      >
+        <span className="size-1.5 rounded-full bg-danger" />
+        Offline
+      </span>
+    );
+  }
+
+  if (status === "reconnecting") {
+    return (
+      <span
+        role="status"
+        className="inline-flex items-center gap-1.5 rounded-full bg-warning/10 px-2.5 py-1 text-xs font-medium text-warning"
+      >
+        <span className="size-1.5 rounded-full bg-warning" />
+        Reconnecting
+      </span>
+    );
+  }
+
+  if (status === "connecting") {
+    return (
+      <span
+        role="status"
+        className="inline-flex items-center gap-1.5 rounded-full bg-panel-raised px-2.5 py-1 text-xs font-medium text-ink-dim"
+      >
+        <span className="size-1.5 rounded-full bg-ink-faint" />
+        Connecting
+      </span>
+    );
+  }
+
+  return (
+    <span
+      role="status"
+      className="inline-flex items-center gap-1.5 rounded-full bg-signal-dim px-2.5 py-1 text-xs font-medium text-signal"
+    >
+      <span className="relative flex size-1.5">
+        <span className="absolute inline-flex size-full animate-ping rounded-full bg-signal opacity-75" />
+        <span className="relative inline-flex size-1.5 rounded-full bg-signal" />
+      </span>
+      Live
+    </span>
+  );
+}
+</file>
+
 <file path="components/dashboard/PresenceRail.tsx">
 import { Avatar } from "./Avatar";
 import type { User } from "@/types";
@@ -2850,121 +3646,177 @@ export function StatRow({ stats }: { stats: Stat[] }) {
 import { useState } from "react";
 import { Modal } from "@/components/shared/Modal";
 import { TextField } from "@/components/shared/TextField";
-import type { Service, User } from "@/types";
+import {
+  createServiceInputSchema,
+  updateServiceInputSchema,
+} from "@/server/validation/services";
+import type { Service } from "@/types";
+
+export interface CreateServiceFields {
+  name: string;
+  description: string;
+}
+
+export interface UpdateServiceFields {
+  name: string;
+  description: string;
+  expectedVersion: number;
+}
 
 interface ServiceModalProps {
-  /** null = create mode. Otherwise the service being edited. */
+  /** null = create mode. Otherwise the service being edited — the *live*
+   *  row from the query cache (same reasoning as TicketModal's `ticket`
+   *  prop), so a change made by someone else (a Manager on another tab,
+   *  or the telemetry worker) while this form is open shows up here. */
   service: Service | null;
-  self: User;
+  /** True while create/update is in flight (Milestone 4: a real network
+   *  round trip, not an instant local update). */
+  saving?: boolean;
   onClose: () => void;
-  onSave: (service: Service) => void;
+  onCreate: (input: CreateServiceFields) => void;
+  onUpdate: (input: UpdateServiceFields) => void;
   /** Asks the caller (ServicesView) to switch to an archive-confirm step
-   *  before this modal's own onSave applies the change. Only called for
-   *  archiving (going false → true) — restoring (true → false) doesn't
-   *  need a confirm step, since it's not the action that hides a
-   *  service from the default view. */
+   *  before actually archiving. Only for archiving (false → true) —
+   *  restoring (true → false) fires immediately via onRestore, since it's
+   *  not the action that hides a service from the default view. */
   onRequestArchive: (service: Service) => void;
+  /** Restoring an archived service, applied immediately against its
+   *  *current* version — independent of whatever's typed into the
+   *  name/description fields below, same as how TicketsView's
+   *  "Assign to me" acts on the live ticket rather than routing through
+   *  the open form. */
+  onRestore: (service: Service) => void;
 }
 
 /** Create-or-edit form for a service *catalog entry* — name and
  *  description only. Status, latency, error rate, and the sparkline are
- *  telemetry-driven (README §13, owned by the worker milestone) and
- *  deliberately not editable here; Manager manages which services exist,
- *  not their live health numbers. A brand-new service gets OPERATIONAL /
- *  zeroed metrics as a placeholder until real telemetry exists to report
- *  otherwise.
+ *  telemetry-driven (README §13, the worker) and deliberately not
+ *  editable here; Manager manages which services exist, not their live
+ *  health numbers. A brand-new service gets OPERATIONAL / zeroed metrics
+ *  server-side (server/repositories/services.ts#createService) as a
+ *  placeholder until real telemetry reports otherwise.
  *
  *  There's no delete here — README §19 is explicit that services (like
  *  tickets and incidents) are never hard-deleted in the MVP, only
- *  archived. Archiving just hides a service from the default view; the
- *  record, and anything historical referencing it, stays intact. */
+ *  archived. Archiving just hides a service from the default view (and
+ *  from the telemetry worker's tick, per server/application/services.ts);
+ *  the record, and anything historical referencing it, stays intact.
+ *
+ *  Validated with the same Zod schemas the server uses
+ *  (server/validation/services.ts) via `.safeParse()` on submit, per the
+ *  resolved decision in BACKEND_ROADMAP.md not to adopt React Hook Form. */
 export function ServiceModal({
   service,
-  self,
+  saving,
   onClose,
-  onSave,
+  onCreate,
+  onUpdate,
   onRequestArchive,
+  onRestore,
 }: ServiceModalProps) {
   const isCreate = service === null;
 
   const [name, setName] = useState(service?.name ?? "");
   const [description, setDescription] = useState(service?.description ?? "");
+  const [formError, setFormError] = useState<string | null>(null);
+
+  // The version this form's fields were loaded from — saves go out
+  // against *this*, never the live `service.version`, so a remote change
+  // can't silently rebase our stale edits onto the new version (§8).
+  // Same pattern as TicketModal's baseVersion.
+  const [baseVersion, setBaseVersion] = useState(service?.version ?? 0);
+  const isStale = service !== null && service.version !== baseVersion;
+
+  const loadLatest = () => {
+    if (!service) return;
+    setName(service.name);
+    setDescription(service.description);
+    setBaseVersion(service.version);
+    setFormError(null);
+  };
+
+  const handleSave = () => {
+    if (isCreate) {
+      const parsed = createServiceInputSchema.safeParse({ name, description });
+      if (!parsed.success) {
+        setFormError(parsed.error.issues[0]?.message ?? "Invalid input.");
+        return;
+      }
+      setFormError(null);
+      onCreate(parsed.data);
+    } else {
+      const parsed = updateServiceInputSchema.safeParse({
+        name,
+        description,
+        expectedVersion: baseVersion,
+      });
+      if (!parsed.success) {
+        setFormError(parsed.error.issues[0]?.message ?? "Invalid input.");
+        return;
+      }
+      setFormError(null);
+      onUpdate({
+        name: parsed.data.name ?? name,
+        description: parsed.data.description ?? description,
+        expectedVersion: parsed.data.expectedVersion,
+      });
+    }
+  };
 
   const canSave = name.trim().length > 0;
 
-  const handleSave = () => {
-    if (!canSave) return;
-    const now = new Date().toISOString();
-
-    onSave(
-      isCreate
-        ? {
-            id: `svc_${crypto.randomUUID()}`,
-            orgId: self.orgId,
-            name: name.trim(),
-            description: description.trim(),
-            status: "OPERATIONAL",
-            latencyMs: 0,
-            errorRate: 0,
-            version: 1,
-            updatedAt: now,
-            archived: false,
-            sessionLatencyTrend: [],
-          }
-        : {
-            ...service,
-            name: name.trim(),
-            description: description.trim(),
-            version: service.version + 1,
-            updatedAt: now,
-          },
-    );
-    onClose();
-  };
-
-  const handleRestore = () => {
-    if (!service) return;
-    onSave({
-      ...service,
-      archived: false,
-      version: service.version + 1,
-      updatedAt: new Date().toISOString(),
-    });
-    onClose();
-  };
-
   const footer = (
-    <div className="flex items-center justify-between gap-2">
-      {!isCreate ? (
-        <button
-          type="button"
-          onClick={() =>
-            service.archived ? handleRestore() : onRequestArchive(service)
-          }
-          className="rounded-md px-3 py-1.5 text-sm text-ink-faint transition-colors hover:text-ink"
-        >
-          {service.archived ? "Restore service" : "Archive service"}
-        </button>
-      ) : (
-        <span />
+    <div className="flex flex-col gap-2">
+      {isStale && (
+        <div className="flex items-center justify-between gap-3 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-ink">
+          <span>
+            Someone else updated this service while you were editing. Load their
+            version to keep going — your unsaved edits here will be replaced.
+          </span>
+          <button
+            type="button"
+            onClick={loadLatest}
+            className="shrink-0 rounded-md border border-line-strong px-2 py-1 font-medium text-ink transition-colors hover:bg-panel-raised"
+          >
+            Load latest
+          </button>
+        </div>
       )}
+      {formError && <p className="text-xs text-danger">{formError}</p>}
+      <div className="flex items-center justify-between gap-2">
+        {!isCreate ? (
+          <button
+            type="button"
+            onClick={() =>
+              service.archived ? onRestore(service) : onRequestArchive(service)
+            }
+            disabled={saving}
+            className="rounded-md px-3 py-1.5 text-sm text-ink-faint transition-colors hover:text-ink disabled:opacity-50"
+          >
+            {service.archived ? "Restore service" : "Archive service"}
+          </button>
+        ) : (
+          <span />
+        )}
 
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded-md border border-line px-3 py-1.5 text-sm text-ink-dim transition-colors hover:text-ink"
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={!canSave}
-          className="rounded-md bg-ink px-3 py-1.5 text-sm font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-50"
-        >
-          {isCreate ? "Add service" : "Save changes"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="rounded-md border border-line px-3 py-1.5 text-sm text-ink-dim transition-colors hover:text-ink disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving || !canSave || isStale}
+            className="rounded-md bg-ink px-3 py-1.5 text-sm font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            {saving ? "Saving…" : isCreate ? "Add service" : "Save changes"}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -2978,8 +3830,9 @@ export function ServiceModal({
       <div className="flex flex-col gap-3">
         {!isCreate && service.archived && (
           <p className="rounded-md bg-panel-raised px-2.5 py-1.5 text-xs text-ink-faint">
-            This service is archived — hidden from the default view, but its
-            history is still intact. Restore it to monitor it again.
+            This service is archived — hidden from the default view and skipped
+            by telemetry, but its history is still intact. Restore it to monitor
+            it again.
           </p>
         )}
 
@@ -3143,256 +3996,49 @@ export function Modal({ title, onClose, children, footer }: ModalProps) {
 }
 </file>
 
-<file path="components/shared/RealtimeProvider.tsx">
+<file path="components/shared/QueryProvider.tsx">
 "use client";
 
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { createClient, type RealtimeChannel } from "@supabase/supabase-js";
-import { getRealtimeTokenAction } from "@/app/(dashboard)/actions";
+import { useState, type ReactNode } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 
-const RealtimeStatusContext = createContext(false);
-
-export function useRealtimeConnected(): boolean {
-  return useContext(RealtimeStatusContext);
-}
-
-// Backoff for reconnect attempts after a CHANNEL_ERROR/TIMED_OUT/CLOSED —
-// capped so a run of failures doesn't turn into a tight retry loop against
-// the token endpoint and the socket. Resets to the first entry as soon as
-// a connect attempt actually reaches SUBSCRIBED.
-const RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 15_000];
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-const supabase =
-  supabaseUrl && supabaseAnonKey
-    ? createClient(supabaseUrl, supabaseAnonKey, {
-        // This is the actual fix for the "reconnects on its own after a
-        // while" bug — not something a retry loop can paper over.
-        //
-        // createClient()'s default wiring gives the RealtimeClient an
-        // accessToken callback that resolves to
-        // `supabase.auth`'s session token, or the anon key if there's no
-        // session. This app never signs in via supabase.auth (custom
-        // cookie-based auth instead), so that callback always resolves
-        // to the anon key. And it isn't just called once: supabase-js
-        // calls it on every heartbeat (~every 30s) to keep the socket
-        // authorized — a manual `setAuth(customToken)` call sends our
-        // org-scoped JWT for that one message, but does NOT stop the
-        // next heartbeat from overwriting it with the anon key, since
-        // "a callback is configured" always wins over "someone called
-        // setAuth() by hand" (see @supabase/realtime-js's
-        // RealtimeClient._performAuth). The anon key carries no
-        // org_id/app_role claims, so the Realtime Authorization RLS
-        // policy correctly rejects it — that's the CHANNEL_ERROR this
-        // produces every ~30 seconds, forever, regardless of anything
-        // this component does.
-        //
-        // Passing accessToken here makes our own token-minting Server
-        // Action the callback, so it's what every heartbeat and
-        // reconnect actually refreshes from — a real, valid, org-scoped
-        // token every time, not the anon key. This also disables
-        // `supabase.auth` on this client (throws if touched), which is
-        // fine: nothing in this app uses it.
-        accessToken: () => getRealtimeTokenAction(),
-      })
-    : null;
-
-interface RealtimeProviderProps {
-  orgId: string;
-  children: ReactNode;
-}
-
-export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
-  const queryClient = useQueryClient();
-  const [connected, setConnected] = useState(false);
-  const channelRef = useRef<RealtimeChannel | null>(null);
-
-  // Generation counter, not just a `cancelled` boolean. A boolean stops
-  // a stale run's own setState calls but does nothing about async work
-  // already in flight: under Strict Mode's mount→cleanup→mount, the
-  // first run's getRealtimeTokenAction()/setAuth() call can still be on
-  // the wire when the second run starts. If both runs eventually
-  // resolve and each subscribes its own channel, that's the
-  // overlapping-join symptom in the bug report. Bumping this on every
-  // effect run and checking it after every await lets a stale run
-  // detect it's stale *after each async step*, not just before calling
-  // setState, and bail before ever touching the socket.
-  const generationRef = useRef(0);
-
-  // How many reconnect attempts have failed in a row since the last
-  // successful SUBSCRIBED, for RECONNECT_DELAYS_MS backoff.
-  const retryCountRef = useRef(0);
-  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (!supabase) {
-      console.warn(
-        "RealtimeProvider: NEXT_PUBLIC_SUPABASE_URL/NEXT_PUBLIC_SUPABASE_ANON_KEY not set — realtime disabled.",
-      );
-      return;
-    }
-
-    generationRef.current += 1;
-    const myGeneration = generationRef.current;
-    const isStale = () => myGeneration !== generationRef.current;
-
-    const clearRetryTimer = () => {
-      if (retryTimerRef.current) {
-        clearTimeout(retryTimerRef.current);
-        retryTimerRef.current = null;
-      }
-    };
-
-    const teardown = () => {
-      if (channelRef.current) {
-        supabase.removeChannel(channelRef.current);
-        channelRef.current = null;
-      }
-    };
-
-    const scheduleReconnect = () => {
-      if (isStale()) return;
-      clearRetryTimer();
-      const delay =
-        RECONNECT_DELAYS_MS[
-          Math.min(retryCountRef.current, RECONNECT_DELAYS_MS.length - 1)
-        ];
-      retryCountRef.current += 1;
-      retryTimerRef.current = setTimeout(() => {
-        if (isStale()) return;
-        void connect();
-      }, delay);
-    };
-
-    const connect = async () => {
-      // Idempotent teardown first: this runs both for the very first
-      // connect and for every later reconnect (backoff timer, 'online'
-      // event, tab foregrounded), so there's never a moment with two
-      // live channels or two overlapping refresh intervals.
-      teardown();
-
-      try {
-        // setAuth() with no argument pulls a fresh token from the
-        // accessToken callback configured above (our own
-        // getRealtimeTokenAction, not the anon key) and MUST complete
-        // before subscribe() is called. Realtime Authorization checks
-        // the socket's current JWT at phx_join time; subscribing first
-        // and authenticating after means the join goes out
-        // unauthenticated (RLS has nothing to match org_id against),
-        // draws a CHANNEL_ERROR, and only succeeds on the rejoin that
-        // setAuth() triggers afterwards — which is exactly the "ok and
-        // error mixed together, plus a phx_leave" pattern in the bug
-        // report. Sequencing this, and only building/subscribing the
-        // channel afterward, removes that race entirely rather than
-        // just narrowing it.
-        await supabase.realtime.setAuth();
-        if (isStale()) return;
-
-        const channel = supabase
-          .channel(`org:${orgId}`, { config: { private: true } })
-          .on("broadcast", { event: "ticket.updated" }, ({ payload }) => {
-            if (isStale()) return;
-            if (payload?.id) {
-              queryClient.invalidateQueries({
-                queryKey: ["tickets", payload.id],
-              });
-            }
-            queryClient.invalidateQueries({ queryKey: ["tickets", "list"] });
-          })
-          .subscribe((status) => {
-            if (isStale()) return;
-
-            if (status === "SUBSCRIBED") {
-              retryCountRef.current = 0;
-              clearRetryTimer();
-              setConnected(true);
-              queryClient.invalidateQueries();
-            } else {
-              // CHANNEL_ERROR / TIMED_OUT / CLOSED. supabase-js's socket
-              // does auto-reconnect at the transport level, but a
-              // *private* channel's own rejoin still gets rejected if
-              // the realtime JWT it's carrying has since expired — a
-              // very likely state after being offline, backgrounded, or
-              // asleep for a while (the socket has no way to fetch a
-              // new one on its own; that requires our
-              // getRealtimeTokenAction() Server Action). Left alone,
-              // that rejection just sits here forever, which is exactly
-              // "came back online and it never went back to Live."
-              // Reconnecting from scratch with a fresh token is what
-              // actually resolves it.
-              setConnected(false);
-              scheduleReconnect();
-            }
-          });
-
-        channelRef.current = channel;
-      } catch (error) {
-        if (!isStale()) {
-          console.error(
-            "RealtimeProvider: failed to authenticate realtime session",
-            error,
-          );
-          setConnected(false);
-          scheduleReconnect();
-        }
-      }
-    };
-
-    void connect();
-
-    const handleOnline = () => {
-      // The browser regained connectivity. Don't wait out whatever
-      // backoff delay happens to be queued — reconnect immediately with
-      // a fresh token rather than trusting the socket's own reconnect,
-      // which can get stuck retrying with the now-expired token it had
-      // when connectivity dropped (see the CHANNEL_ERROR branch above).
-      if (isStale()) return;
-      retryCountRef.current = 0;
-      clearRetryTimer();
-      void connect();
-    };
-
-    const handleVisibility = () => {
-      // A backgrounded tab throttles timers, including the socket's own
-      // heartbeat — a laptop that slept through several missed
-      // heartbeats can come back to a channel the client still thinks
-      // is fine but the server dropped long ago. Re-verifying on
-      // foreground catches that without waiting on a heartbeat timeout.
-      if (document.visibilityState === "visible") {
-        handleOnline();
-      }
-    };
-
-    window.addEventListener("online", handleOnline);
-    document.addEventListener("visibilitychange", handleVisibility);
-
-    return () => {
-      // This cleanup can run *before* connect()'s awaits resolve (that's
-      // precisely the Strict Mode case). The isStale() checks sprinkled
-      // after every await are what actually stop a torn-down run from
-      // creating/subscribing a channel — this cleanup only tears down
-      // whatever *this* run had already made by the time it runs.
-      window.removeEventListener("online", handleOnline);
-      document.removeEventListener("visibilitychange", handleVisibility);
-      clearRetryTimer();
-      teardown();
-    };
-  }, [orgId, queryClient]);
+/**
+ * §10: "TanStack Query owns all server-derived state... one
+ * QueryClientProvider at the root." "Root" here means the root of the
+ * authenticated app (this composes alongside ToastProvider in the
+ * dashboard layout) rather than the true app root — /login has nothing
+ * to query, so there's no reason to give it a query client too.
+ *
+ * The QueryClient is created once via useState's lazy initializer, not
+ * as a plain `new QueryClient()` inline — that would build a fresh
+ * client (and lose all cached data) on every render.
+ */
+export function QueryProvider({ children }: { children: ReactNode }) {
+  const [queryClient] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          // TanStack's default ("online") *pauses* a mutation while the
+          // browser is offline and fires it whenever connectivity comes
+          // back — so a Save clicked offline would sit on "Saving…"
+          // indefinitely, then land later against a `version` that may
+          // have moved on. "always" makes it attempt immediately and
+          // fail fast, which puts the failure through onError (rollback
+          // + an honest toast) instead of hiding it. Queries keep the
+          // default: paused while offline, refetched on reconnect.
+          mutations: { networkMode: "always" },
+        },
+      }),
+  );
 
   return (
-    <RealtimeStatusContext.Provider value={connected}>
+    <QueryClientProvider client={queryClient}>
       {children}
-    </RealtimeStatusContext.Provider>
+      {process.env.NODE_ENV === "development" && (
+        <ReactQueryDevtools initialIsOpen={false} />
+      )}
+    </QueryClientProvider>
   );
 }
 </file>
@@ -3542,6 +4188,134 @@ export function TextField({
       )}
     </label>
   );
+}
+</file>
+
+<file path="components/shared/Toast.tsx">
+"use client";
+
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
+import {
+  CheckCircleIcon,
+  WarningCircleIcon,
+  XIcon,
+} from "@phosphor-icons/react";
+
+type ToastVariant = "success" | "error";
+
+interface Toast {
+  id: string;
+  message: string;
+  variant: ToastVariant;
+}
+
+interface ToastContextValue {
+  show: (message: string, variant?: ToastVariant) => void;
+}
+
+const ToastContext = createContext<ToastContextValue | null>(null);
+
+const AUTO_DISMISS_MS = 4000;
+
+/**
+ * README §18: "show meaningful errors" and "avoid silently losing
+ * changes" on a failed mutation — this is that delivery mechanism.
+ * `variant: "error"` is called from TicketsView's mutation `onError`
+ * handlers (version conflicts, validation/not-found rejections, and
+ * network failures, after any optimistic update has been rolled back).
+ */
+export function ToastProvider({ children }: { children: ReactNode }) {
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  const dismiss = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  const show = useCallback(
+    (message: string, variant: ToastVariant = "success") => {
+      const id = crypto.randomUUID();
+      setToasts((prev) => [...prev, { id, message, variant }]);
+    },
+    [],
+  );
+
+  return (
+    <ToastContext.Provider value={{ show }}>
+      {children}
+
+      <div className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex flex-col items-center gap-2 p-4 sm:items-end">
+        {toasts.map((toast) => (
+          <ToastItem key={toast.id} toast={toast} onDismiss={dismiss} />
+        ))}
+      </div>
+    </ToastContext.Provider>
+  );
+}
+
+function ToastItem({
+  toast,
+  onDismiss,
+}: {
+  toast: Toast;
+  onDismiss: (id: string) => void;
+}) {
+  useEffect(() => {
+    const timer = setTimeout(() => onDismiss(toast.id), AUTO_DISMISS_MS);
+    return () => clearTimeout(timer);
+  }, [toast.id, onDismiss]);
+
+  const isError = toast.variant === "error";
+
+  return (
+    <div
+      role="status"
+      className={`pointer-events-auto flex w-full max-w-sm items-start gap-2 rounded-lg border px-3 py-2.5 shadow-lg ${
+        isError
+          ? "border-danger/30 bg-panel-raised text-ink"
+          : "border-line-strong bg-panel-raised text-ink"
+      }`}
+    >
+      {isError ? (
+        <WarningCircleIcon
+          size={18}
+          weight="fill"
+          className="mt-0.5 shrink-0 text-danger"
+        />
+      ) : (
+        <CheckCircleIcon
+          size={18}
+          weight="fill"
+          className="mt-0.5 shrink-0 text-success"
+        />
+      )}
+
+      <span className="flex-1 text-sm">{toast.message}</span>
+
+      <button
+        type="button"
+        onClick={() => onDismiss(toast.id)}
+        aria-label="Dismiss"
+        className="shrink-0 rounded p-0.5 text-ink-faint transition-colors hover:text-ink"
+      >
+        <XIcon size={14} />
+      </button>
+    </div>
+  );
+}
+
+export function useToast(): ToastContextValue {
+  const ctx = useContext(ToastContext);
+  if (!ctx) {
+    throw new Error("useToast must be used within a ToastProvider");
+  }
+  return ctx;
 }
 </file>
 
@@ -3835,324 +4609,6 @@ export function TeamView({ users, self }: TeamViewProps) {
 }
 </file>
 
-<file path="components/tickets/TicketModal.tsx">
-"use client";
-
-import { useState } from "react";
-import { Modal } from "@/components/shared/Modal";
-import { SelectField } from "@/components/shared/SelectField";
-import { TextField } from "@/components/shared/TextField";
-import {
-  createTicketInputSchema,
-  updateTicketInputSchema,
-} from "@/server/validation/tickets";
-import {
-  ticketPriorityMeta,
-  ticketStatusMeta,
-  type Ticket,
-  type TicketPriority,
-  type TicketStatus,
-  type User,
-} from "@/types";
-
-const statusOptions = Object.entries(ticketStatusMeta).map(([value, meta]) => ({
-  value,
-  label: meta.label,
-}));
-const priorityOptions = Object.entries(ticketPriorityMeta).map(
-  ([value, meta]) => ({ value, label: meta.label }),
-);
-
-export interface CreateTicketFields {
-  title: string;
-  description: string;
-  priority: TicketPriority;
-  assigneeId: string | null;
-}
-
-export interface UpdateTicketFields {
-  title: string;
-  description: string;
-  status: TicketStatus;
-  priority: TicketPriority;
-  assigneeId: string | null;
-  expectedVersion: number;
-}
-
-interface TicketModalProps {
-  /** null = create mode. Otherwise the ticket being edited. */
-  ticket: Ticket | null;
-  users: User[];
-  /** True while the create/update mutation is in flight — this is a
-   *  real network round trip now (Milestone 2), not an instant local
-   *  state update, so the Save button needs to say so. */
-  saving?: boolean;
-  onClose: () => void;
-  onCreate: (input: CreateTicketFields) => void;
-  onUpdate: (input: UpdateTicketFields) => void;
-}
-
-/**
- * Create-or-edit form for a single ticket. One component handles both
- * modes since the fields are almost identical — only the starting
- * values and which callback fires differ.
- *
- * This hands the caller (TicketsView) plain input fields, not a
- * fully-formed Ticket: the server is what assigns the real id, version,
- * and timestamps now (Milestone 2), via createTicketAction/
- * updateTicketAction. Building a fake client-side Ticket object here —
- * which the pre-backend version of this file used to do — would just be
- * guessing at values the server is actually responsible for.
- *
- * Validated with the same Zod schemas the server uses
- * (server/validation/tickets.ts) via `.safeParse()` on submit, per the
- * resolved decision in BACKEND_ROADMAP.md not to adopt React Hook Form —
- * one shared definition of "a valid ticket," without a form-library
- * rewrite these ~5 fields don't need.
- */
-export function TicketModal({
-  ticket,
-  users,
-  saving,
-  onClose,
-  onCreate,
-  onUpdate,
-}: TicketModalProps) {
-  const isCreate = ticket === null;
-
-  const [title, setTitle] = useState(ticket?.title ?? "");
-  const [description, setDescription] = useState(ticket?.description ?? "");
-  const [status, setStatus] = useState<TicketStatus>(ticket?.status ?? "OPEN");
-  const [priority, setPriority] = useState<TicketPriority>(
-    ticket?.priority ?? "MEDIUM",
-  );
-  const [assigneeId, setAssigneeId] = useState(ticket?.assigneeId ?? "");
-  const [formError, setFormError] = useState<string | null>(null);
-
-  const handleSave = () => {
-    if (isCreate) {
-      const parsed = createTicketInputSchema.safeParse({
-        title,
-        description,
-        priority,
-        assigneeId: assigneeId || null,
-      });
-      if (!parsed.success) {
-        setFormError(parsed.error.issues[0]?.message ?? "Invalid input.");
-        return;
-      }
-      setFormError(null);
-      onCreate({ ...parsed.data, assigneeId: parsed.data.assigneeId ?? null });
-    } else {
-      const parsed = updateTicketInputSchema.safeParse({
-        title,
-        description,
-        status,
-        priority,
-        assigneeId: assigneeId || null,
-        expectedVersion: ticket.version,
-      });
-      if (!parsed.success) {
-        setFormError(parsed.error.issues[0]?.message ?? "Invalid input.");
-        return;
-      }
-      setFormError(null);
-      onUpdate({
-        title: parsed.data.title ?? title,
-        description: parsed.data.description ?? description,
-        status: parsed.data.status ?? status,
-        priority: parsed.data.priority ?? priority,
-        assigneeId: parsed.data.assigneeId ?? null,
-        expectedVersion: parsed.data.expectedVersion,
-      });
-    }
-  };
-
-  const footer = (
-    <div className="flex flex-col gap-2">
-      {formError && <p className="text-xs text-danger">{formError}</p>}
-      <div className="flex items-center justify-end gap-2">
-        <button
-          type="button"
-          onClick={onClose}
-          disabled={saving}
-          className="rounded-md border border-line px-3 py-1.5 text-sm text-ink-dim transition-colors hover:text-ink disabled:opacity-50"
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={saving}
-          className="rounded-md bg-ink px-3 py-1.5 text-sm font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-50"
-        >
-          {saving ? "Saving…" : isCreate ? "Create ticket" : "Save changes"}
-        </button>
-      </div>
-    </div>
-  );
-
-  return (
-    <Modal
-      title={isCreate ? "New ticket" : "Edit ticket"}
-      onClose={onClose}
-      footer={footer}
-    >
-      <div className="flex flex-col gap-3">
-        <TextField
-          label="Title"
-          autoFocus
-          value={title}
-          onChange={setTitle}
-          placeholder="Short, specific summary"
-        />
-
-        <TextField
-          label="Description"
-          multiline
-          value={description}
-          onChange={setDescription}
-          placeholder="Optional detail"
-        />
-
-        <div
-          className={
-            isCreate ? "grid grid-cols-1 gap-3" : "grid grid-cols-2 gap-3"
-          }
-        >
-          {!isCreate && (
-            <SelectField
-              label="Status"
-              value={status}
-              onChange={(value) => setStatus(value as TicketStatus)}
-              options={statusOptions}
-            />
-          )}
-          <SelectField
-            label="Priority"
-            value={priority}
-            onChange={(value) => setPriority(value as TicketPriority)}
-            options={priorityOptions}
-          />
-        </div>
-
-        <SelectField
-          label="Assignee"
-          value={assigneeId ?? ""}
-          onChange={setAssigneeId}
-          options={[
-            { value: "", label: "Unassigned" },
-            ...users.map((u) => ({ value: u.id, label: u.name })),
-          ]}
-        />
-      </div>
-    </Modal>
-  );
-}
-</file>
-
-<file path="e2e/ticket-realtime.spec.ts">
-import { test, expect, type Page } from "@playwright/test";
-
-/**
- * §41's actual definition of done — this file currently covers only
- * this milestone's slice (Tests 1 & 2: ticket creation and assignment
- * propagating between two browser contexts with no reload). Tests 3–8
- * get added here as Milestones 4/5/8 make them coverable, per §12's
- * instruction to keep this file red rather than write eight tests up
- * front against features that don't exist yet.
- *
- * Password must match prisma/seed.ts's DEMO_PASSWORD — there's no
- * shared import between the seed script and this test file, so if one
- * changes, the other needs to change too.
- */
-const DEMO_PASSWORD = "relay-dev-1234";
-
-const USER_A = { email: "maya@kestrel.dev", name: "Maya Reyes" };
-const USER_B = { email: "josh@kestrel.dev", name: "Josh Dietrich" };
-
-async function loginAs(page: Page, email: string) {
-  await page.goto("/login");
-  await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Password").fill(DEMO_PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).toHaveURL(/\/dashboard/);
-}
-
-test.describe("§41 Test 1 & 2 — ticket creation and assignment propagate live", () => {
-  test("a ticket created by one user appears for another without a reload", async ({
-    browser,
-  }) => {
-    const contextA = await browser.newContext();
-    const contextB = await browser.newContext();
-    const pageA = await contextA.newPage();
-    const pageB = await contextB.newPage();
-
-    await loginAs(pageA, USER_A.email);
-    await loginAs(pageB, USER_B.email);
-
-    await pageA.goto("/tickets");
-    await pageB.goto("/tickets");
-
-    const title = `Realtime test ticket ${Date.now()}`;
-
-    // Test 1 (§41): create in Browser A.
-    await pageA.getByRole("button", { name: "New ticket" }).click();
-    await pageA.getByLabel("Title").fill(title);
-    await pageA.getByRole("button", { name: "Create ticket" }).click();
-
-    // Check Browser A first — this does NOT depend on realtime at all
-    // (its own mutation invalidates its own query on success), so a
-    // failure here means ticket creation itself is broken, not
-    // propagation. Splitting this out turns "Browser B never sees it"
-    // from one failure into two, so a red run actually points at which
-    // half is broken instead of leaving both as suspects.
-    await expect(pageA.getByText(title)).toBeVisible({ timeout: 10_000 });
-
-    // The real assertion: Browser B never reloads or navigates. If this
-    // only passes after a manual pageB.reload(), the realtime wiring
-    // (broadcast → RLS-authorized subscription → invalidateQueries)
-    // isn't actually working — a passing test with a reload added would
-    // be testing the wrong thing.
-    await expect(pageB.getByText(title)).toBeVisible({ timeout: 10_000 });
-
-    // Test 2 (§41): assign it to Browser B's user, from Browser A.
-    await pageA.getByText(title).click();
-    await pageA.getByLabel("Assignee").selectOption({ label: USER_B.name });
-    await pageA.getByRole("button", { name: "Save changes" }).click();
-
-    // Same split as Test 1: confirm the update itself succeeded on
-    // Browser A before blaming propagation. TicketsView's
-    // updateMutation.onSuccess only shows this toast (and closes the
-    // modal) on the ok:true branch — a ConflictError/ValidationError/
-    // NotFoundError from updateTicket() surfaces as an error toast
-    // instead and never reaches broadcastToOrg(), which would make
-    // Browser B's failure below a red herring pointing at realtime when
-    // the actual bug is in the mutation itself.
-    await expect(pageA.getByText("Ticket updated")).toBeVisible({
-      timeout: 10_000,
-    });
-
-    // The modal closing is the same signal from a different angle —
-    // onSuccess's ok:true branch is also what calls setModalState(null).
-    await expect(
-      pageA.getByRole("heading", { name: "Edit ticket" }),
-    ).toBeHidden({ timeout: 5_000 });
-
-    // Browser B should see itself assigned without any reload either —
-    // the avatar/assignment indicator replacing "Assign to me" on that
-    // row is the visible signal.
-    const rowB = pageB.locator("li", { hasText: title });
-    await expect(rowB.getByTitle(USER_B.name)).toBeVisible({
-      timeout: 10_000,
-    });
-
-    await contextA.close();
-    await contextB.close();
-  });
-});
-</file>
-
 <file path="prisma/schema.prisma">
 generator client {
   provider        = "prisma-client"
@@ -4345,6 +4801,12 @@ model Service {
   errorRate   Decimal       @default(0) @map("error_rate") @db.Decimal(5, 2)
   version     Int           @default(1)
   updatedAt   DateTime      @updatedAt @map("updated_at")
+  // README §19: services are never hard-deleted in the MVP, only
+  // archived — the row (and anything historical referencing it, e.g.
+  // past incident links) stays intact. Archived services are hidden
+  // from the default view and skipped by the telemetry worker (Milestone
+  // 4) — Manager manages which services exist, not their live numbers.
+  archived    Boolean       @default(false)
 
   organization     Organization      @relation(fields: [orgId], references: [id], onDelete: Restrict)
   incidentServices IncidentService[]
@@ -4686,7 +5148,7 @@ export async function broadcastToOrg(
 
 <file path="test-results/.last-run.json">
 {
-  "status": "passed",
+  "status": "failed",
   "failedTests": []
 }
 </file>
@@ -6704,24 +7166,23 @@ export default async function IncidentsPage() {
 <file path="app/(dashboard)/services/page.tsx">
 import { redirect } from "next/navigation";
 import { ServicesView } from "@/components/services/ServicesView";
-import { incidents, services } from "@/lib/mock-data";
+import { incidents } from "@/lib/mock-data";
 import { getCurrentUser } from "@/server/auth/session";
 import { PATHS } from "@/utils/paths";
 
-// `self` is real now (Milestone 1). The service catalog itself
-// (`incidents`, `services`, from mock-data) is still fake — that's
-// Milestone 4's real query, plus the telemetry worker's realtime
-// updates (README §13) — once auth + the API routes for this domain
-// land. ServicesView already takes its data as props shaped like the
-// query result, so that swap shouldn't touch the JSX here. `self` is
-// what gates the Manager-only "New service" / edit affordances added
-// in Phase 3 (ROADMAP_ROLES.md).
+// Milestone 4: services are real now — ServicesView fetches them itself
+// via TanStack Query (listServicesAction as the queryFn, §10), same as
+// TicketsView, so this page no longer needs to fetch or pass service
+// data down. `incidents` stays mock (Milestone 5's real query) — used
+// only to show which active incidents affect a given service. `self`
+// still comes from the session and gates the Manager-only "New service" /
+// edit affordances (lib/permissions.ts#canManageServices).
 
 export default async function ServicesPage() {
   const self = await getCurrentUser();
   if (!self) redirect(PATHS.LOGIN);
 
-  return <ServicesView services={services} incidents={incidents} self={self} />;
+  return <ServicesView incidents={incidents} self={self} />;
 }
 </file>
 
@@ -7269,6 +7730,503 @@ export function TicketBoard({ tickets, resolveUser }: TicketBoardProps) {
     </div>
   );
 }
+</file>
+
+<file path="components/tickets/TicketModal.tsx">
+"use client";
+
+import { useState } from "react";
+import { Modal } from "@/components/shared/Modal";
+import { SelectField } from "@/components/shared/SelectField";
+import { TextField } from "@/components/shared/TextField";
+import {
+  createTicketInputSchema,
+  updateTicketInputSchema,
+} from "@/server/validation/tickets";
+import {
+  ticketPriorityMeta,
+  ticketStatusMeta,
+  type Ticket,
+  type TicketPriority,
+  type TicketStatus,
+  type User,
+} from "@/types";
+
+const statusOptions = Object.entries(ticketStatusMeta).map(([value, meta]) => ({
+  value,
+  label: meta.label,
+}));
+const priorityOptions = Object.entries(ticketPriorityMeta).map(
+  ([value, meta]) => ({ value, label: meta.label }),
+);
+
+export interface CreateTicketFields {
+  title: string;
+  description: string;
+  priority: TicketPriority;
+  assigneeId: string | null;
+}
+
+export interface UpdateTicketFields {
+  title: string;
+  description: string;
+  status: TicketStatus;
+  priority: TicketPriority;
+  assigneeId: string | null;
+  expectedVersion: number;
+}
+
+interface TicketModalProps {
+  /** null = create mode. Otherwise the ticket being edited — the *live*
+   *  row from the query cache, so a change made by someone else while
+   *  this form is open shows up here as a new `version`. */
+  ticket: Ticket | null;
+  users: User[];
+  /** True while the create/update mutation is in flight — this is a
+   *  real network round trip now (Milestone 2), not an instant local
+   *  state update, so the Save button needs to say so. */
+  saving?: boolean;
+  onClose: () => void;
+  onCreate: (input: CreateTicketFields) => void;
+  onUpdate: (input: UpdateTicketFields) => void;
+}
+
+/**
+ * Create-or-edit form for a single ticket. One component handles both
+ * modes since the fields are almost identical — only the starting
+ * values and which callback fires differ.
+ *
+ * This hands the caller (TicketsView) plain input fields, not a
+ * fully-formed Ticket: the server is what assigns the real id, version,
+ * and timestamps now (Milestone 2), via createTicketAction/
+ * updateTicketAction. Building a fake client-side Ticket object here —
+ * which the pre-backend version of this file used to do — would just be
+ * guessing at values the server is actually responsible for.
+ *
+ * Validated with the same Zod schemas the server uses
+ * (server/validation/tickets.ts) via `.safeParse()` on submit, per the
+ * resolved decision in BACKEND_ROADMAP.md not to adopt React Hook Form —
+ * one shared definition of "a valid ticket," without a form-library
+ * rewrite these ~5 fields don't need.
+ */
+export function TicketModal({
+  ticket,
+  users,
+  saving,
+  onClose,
+  onCreate,
+  onUpdate,
+}: TicketModalProps) {
+  const isCreate = ticket === null;
+
+  const [title, setTitle] = useState(ticket?.title ?? "");
+  const [description, setDescription] = useState(ticket?.description ?? "");
+  const [status, setStatus] = useState<TicketStatus>(ticket?.status ?? "OPEN");
+  const [priority, setPriority] = useState<TicketPriority>(
+    ticket?.priority ?? "MEDIUM",
+  );
+  const [assigneeId, setAssigneeId] = useState(ticket?.assigneeId ?? "");
+  const [formError, setFormError] = useState<string | null>(null);
+
+  // The version this form's fields were loaded from. Saves are sent
+  // against *this*, never the live `ticket.version` — otherwise a
+  // remote change would silently rebase our stale edits onto the new
+  // version and overwrite someone else's work (§8).
+  const [baseVersion, setBaseVersion] = useState(ticket?.version ?? 0);
+  const isStale = ticket !== null && ticket.version !== baseVersion;
+
+  const loadLatest = () => {
+    if (!ticket) return;
+    setTitle(ticket.title);
+    setDescription(ticket.description);
+    setStatus(ticket.status);
+    setPriority(ticket.priority);
+    setAssigneeId(ticket.assigneeId ?? "");
+    setBaseVersion(ticket.version);
+    setFormError(null);
+  };
+
+  const handleSave = () => {
+    if (isCreate) {
+      const parsed = createTicketInputSchema.safeParse({
+        title,
+        description,
+        priority,
+        assigneeId: assigneeId || null,
+      });
+      if (!parsed.success) {
+        setFormError(parsed.error.issues[0]?.message ?? "Invalid input.");
+        return;
+      }
+      setFormError(null);
+      onCreate({ ...parsed.data, assigneeId: parsed.data.assigneeId ?? null });
+    } else {
+      const parsed = updateTicketInputSchema.safeParse({
+        title,
+        description,
+        status,
+        priority,
+        assigneeId: assigneeId || null,
+        expectedVersion: baseVersion,
+      });
+      if (!parsed.success) {
+        setFormError(parsed.error.issues[0]?.message ?? "Invalid input.");
+        return;
+      }
+      setFormError(null);
+      onUpdate({
+        title: parsed.data.title ?? title,
+        description: parsed.data.description ?? description,
+        status: parsed.data.status ?? status,
+        priority: parsed.data.priority ?? priority,
+        assigneeId: parsed.data.assigneeId ?? null,
+        expectedVersion: parsed.data.expectedVersion,
+      });
+    }
+  };
+
+  const footer = (
+    <div className="flex flex-col gap-2">
+      {isStale && (
+        <div className="flex items-center justify-between gap-3 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-ink">
+          <span>
+            Someone else updated this ticket while you were editing. Load their
+            version to keep going — your unsaved edits here will be replaced.
+          </span>
+          <button
+            type="button"
+            onClick={loadLatest}
+            className="shrink-0 rounded-md border border-line-strong px-2 py-1 font-medium text-ink transition-colors hover:bg-panel-raised"
+          >
+            Load latest
+          </button>
+        </div>
+      )}
+      {formError && <p className="text-xs text-danger">{formError}</p>}
+      <div className="flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={saving}
+          className="rounded-md border border-line px-3 py-1.5 text-sm text-ink-dim transition-colors hover:text-ink disabled:opacity-50"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving || isStale}
+          className="rounded-md bg-ink px-3 py-1.5 text-sm font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-50"
+        >
+          {saving ? "Saving…" : isCreate ? "Create ticket" : "Save changes"}
+        </button>
+      </div>
+    </div>
+  );
+
+  return (
+    <Modal
+      title={isCreate ? "New ticket" : "Edit ticket"}
+      onClose={onClose}
+      footer={footer}
+    >
+      <div className="flex flex-col gap-3">
+        <TextField
+          label="Title"
+          autoFocus
+          value={title}
+          onChange={setTitle}
+          placeholder="Short, specific summary"
+        />
+
+        <TextField
+          label="Description"
+          multiline
+          value={description}
+          onChange={setDescription}
+          placeholder="Optional detail"
+        />
+
+        <div
+          className={
+            isCreate ? "grid grid-cols-1 gap-3" : "grid grid-cols-2 gap-3"
+          }
+        >
+          {!isCreate && (
+            <SelectField
+              label="Status"
+              value={status}
+              onChange={(value) => setStatus(value as TicketStatus)}
+              options={statusOptions}
+            />
+          )}
+          <SelectField
+            label="Priority"
+            value={priority}
+            onChange={(value) => setPriority(value as TicketPriority)}
+            options={priorityOptions}
+          />
+        </div>
+
+        <SelectField
+          label="Assignee"
+          value={assigneeId ?? ""}
+          onChange={setAssigneeId}
+          options={[
+            { value: "", label: "Unassigned" },
+            ...users.map((u) => ({ value: u.id, label: u.name })),
+          ]}
+        />
+      </div>
+    </Modal>
+  );
+}
+</file>
+
+<file path="e2e/ticket-realtime.spec.ts">
+import { test, expect, type Page } from "@playwright/test";
+import { updateServiceTelemetry } from "@/server/application/services";
+
+/**
+ * §41's actual definition of done — currently Tests 1, 2 (ticket
+ * creation and assignment propagating between two browser contexts with
+ * no reload), 6 (service degradation), and 8 (disconnect / reconnect /
+ * reconcile). Tests 3–5, 7 get added here as Milestone 5 makes them
+ * coverable, per §12's instruction to keep this file red rather than
+ * write eight tests up front against features that don't exist yet.
+ *
+ * Password must match prisma/seed.ts's DEMO_PASSWORD — there's no
+ * shared import between the seed script and this test file, so if one
+ * changes, the other needs to change too. Test 6 below duplicates
+ * PAYMENTS_SERVICE_ID for the same reason.
+ *
+ * Playwright Test resolves tsconfig `paths` for spec files itself
+ * (unlike tsx, which needed a specific check before workers/telemetry.ts
+ * could rely on it — see that file's comment), so Test 6's `@/*` import
+ * of the application layer needs no relative-path workaround.
+ */
+const DEMO_PASSWORD = "relay-dev-1234";
+
+const USER_A = { email: "maya@kestrel.dev", name: "Maya Reyes" };
+const USER_B = { email: "josh@kestrel.dev", name: "Josh Dietrich" };
+
+async function loginAs(page: Page, email: string) {
+  await page.goto("/login");
+  await page.getByLabel("Email").fill(email);
+  await page.getByLabel("Password").fill(DEMO_PASSWORD);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page).toHaveURL(/\/dashboard/);
+}
+
+test.describe("§41 Test 1 & 2 — ticket creation and assignment propagate live", () => {
+  test("a ticket created by one user appears for another without a reload", async ({
+    browser,
+  }) => {
+    const contextA = await browser.newContext();
+    const contextB = await browser.newContext();
+    const pageA = await contextA.newPage();
+    const pageB = await contextB.newPage();
+
+    await loginAs(pageA, USER_A.email);
+    await loginAs(pageB, USER_B.email);
+
+    await pageA.goto("/tickets");
+    await pageB.goto("/tickets");
+
+    const title = `Realtime test ticket ${Date.now()}`;
+
+    // Test 1 (§41): create in Browser A.
+    await pageA.getByRole("button", { name: "New ticket" }).click();
+    await pageA.getByLabel("Title").fill(title);
+    await pageA.getByRole("button", { name: "Create ticket" }).click();
+
+    // Check Browser A first — this does NOT depend on realtime at all
+    // (its own mutation invalidates its own query on success), so a
+    // failure here means ticket creation itself is broken, not
+    // propagation. Splitting this out turns "Browser B never sees it"
+    // from one failure into two, so a red run actually points at which
+    // half is broken instead of leaving both as suspects.
+    await expect(pageA.getByText(title)).toBeVisible({ timeout: 10_000 });
+
+    // The real assertion: Browser B never reloads or navigates. If this
+    // only passes after a manual pageB.reload(), the realtime wiring
+    // (broadcast → RLS-authorized subscription → invalidateQueries)
+    // isn't actually working — a passing test with a reload added would
+    // be testing the wrong thing.
+    await expect(pageB.getByText(title)).toBeVisible({ timeout: 10_000 });
+
+    // Test 2 (§41): assign it to Browser B's user, from Browser A.
+    await pageA.getByText(title).click();
+    await pageA.getByLabel("Assignee").selectOption({ label: USER_B.name });
+    await pageA.getByRole("button", { name: "Save changes" }).click();
+
+    // Same split as Test 1: confirm the update itself succeeded on
+    // Browser A before blaming propagation. TicketsView's
+    // updateMutation.onSuccess only shows this toast (and closes the
+    // modal) on the ok:true branch — a ConflictError/ValidationError/
+    // NotFoundError from updateTicket() surfaces as an error toast
+    // instead and never reaches broadcastToOrg(), which would make
+    // Browser B's failure below a red herring pointing at realtime when
+    // the actual bug is in the mutation itself.
+    await expect(pageA.getByText("Ticket updated")).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // The modal closing is the same signal from a different angle —
+    // onSuccess's ok:true branch is also what calls setModalState(null).
+    await expect(
+      pageA.getByRole("heading", { name: "Edit ticket" }),
+    ).toBeHidden({ timeout: 5_000 });
+
+    // Browser B should see itself assigned without any reload either —
+    // the avatar/assignment indicator replacing "Assign to me" on that
+    // row is the visible signal.
+    const rowB = pageB.locator("li", { hasText: title });
+    await expect(rowB.getByTitle(USER_B.name)).toBeVisible({
+      timeout: 10_000,
+    });
+
+    await contextA.close();
+    await contextB.close();
+  });
+});
+
+test.describe("§41 Test 6 — service degradation propagates live", () => {
+  test("a degraded reading is visible on both dashboards without a reload", async ({
+    browser,
+  }) => {
+    const contextA = await browser.newContext();
+    const contextB = await browser.newContext();
+    const pageA = await contextA.newPage();
+    const pageB = await contextB.newPage();
+
+    await loginAs(pageA, USER_A.email);
+    await loginAs(pageB, USER_B.email);
+
+    await pageA.goto("/services");
+    await pageB.goto("/services");
+
+    const cardA = pageA.locator("div", { hasText: "Payments API" }).first();
+    const cardB = pageB.locator("div", { hasText: "Payments API" }).first();
+
+    // Both start OPERATIONAL — prisma/seed.ts's create default, assuming
+    // nothing else in this run already degraded it. Asserted first so a
+    // failure below can't be misread as "was already degraded."
+    await expect(cardA.getByText("Operational")).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(cardB.getByText("Operational")).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // The simulation itself. There's no UI affordance for this —
+    // status/latency/errorRate are deliberately telemetry-only (README
+    // §13, ServiceModal.tsx's doc comment), never a field a human
+    // submits through a form. The real telemetry worker
+    // (workers/telemetry.ts) would eventually produce a DEGRADED
+    // reading through its own random walk, but "eventually, randomly,
+    // on a ~4s tick with a 6% spike chance" isn't reliable to await in
+    // a test — so this calls the exact same application-layer function
+    // the worker calls on the tick where it decides a reading is
+    // degraded (same version-checked write, same Activity row, same
+    // broadcastToOrg() call), just invoked directly and deterministically
+    // rather than waiting on the worker's own timer. This is standing in
+    // for one worker tick, not bypassing the architecture Test 6 is
+    // meant to exercise.
+    const PAYMENTS_SERVICE_ID = "00000000-0000-0000-0000-000000000101";
+    const SEED_ORG_ID = "00000000-0000-0000-0000-000000000001";
+
+    await updateServiceTelemetry(SEED_ORG_ID, PAYMENTS_SERVICE_ID, {
+      latencyMs: 420,
+      errorRate: 3.8,
+      status: "DEGRADED",
+    });
+
+    // Neither browser reloads or navigates from here. §7's debounce
+    // (RealtimeProvider.tsx) allows up to ~1.5s before the invalidation
+    // fires, on top of ordinary network/render time.
+    await expect(cardA.getByText("Degraded")).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(cardB.getByText("Degraded")).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // Restore the seed row to OPERATIONAL so a re-run of this test (or
+    // the real telemetry worker's next tick, if it's running) doesn't
+    // inherit a DEGRADED starting point.
+    await updateServiceTelemetry(SEED_ORG_ID, PAYMENTS_SERVICE_ID, {
+      latencyMs: 110,
+      errorRate: 0.3,
+      status: "OPERATIONAL",
+    });
+
+    await contextA.close();
+    await contextB.close();
+  });
+});
+
+test.describe("§41 Test 8 — disconnect, then reconnect and reconcile", () => {
+  test("shows a clear connection-lost state, then reconciles on reconnect", async ({
+    browser,
+  }) => {
+    const contextA = await browser.newContext();
+    const contextB = await browser.newContext();
+    const pageA = await contextA.newPage();
+    const pageB = await contextB.newPage();
+
+    await loginAs(pageA, USER_A.email);
+    await loginAs(pageB, USER_B.email);
+    await pageA.goto("/tickets");
+    await pageB.goto("/tickets");
+
+    // Browser B starts live.
+    await expect(
+      pageB.getByRole("status").filter({ hasText: "Live" }),
+    ).toBeVisible({ timeout: 15_000 });
+
+    // "Kill the network connection" (§41 Test 8) on Browser B only.
+    await contextB.setOffline(true);
+
+    // A clear connection-lost state: the indicator flips and the page
+    // says its data may be stale. This is driven by the browser's
+    // 'offline' event, so it holds even though Playwright's offline
+    // emulation doesn't reliably sever an already-open WebSocket.
+    await expect(
+      pageB.getByRole("status").filter({ hasText: "Offline" }),
+    ).toBeVisible({ timeout: 5_000 });
+    // Filtered by text: Next.js's own route announcer is also
+    // role="alert" on every page, so a bare getByRole("alert") matches
+    // two elements and trips Playwright's strict mode.
+    const staleBanner = pageB
+      .getByRole("alert")
+      .filter({ hasText: "out of date" });
+    await expect(staleBanner).toBeVisible();
+
+    // Meanwhile Browser A (still online) makes a change B can't have
+    // received through a healthy connection.
+    const title = `Reconnect test ticket ${Date.now()}`;
+    await pageA.getByRole("button", { name: "New ticket" }).click();
+    await pageA.getByLabel("Title").fill(title);
+    await pageA.getByRole("button", { name: "Create ticket" }).click();
+    await expect(pageA.getByText(title)).toBeVisible({ timeout: 10_000 });
+
+    // Restore the connection. B must reconnect on its own — no reload —
+    // return to Live, drop the warning, and reconcile with server state
+    // (§35: invalidate everything on SUBSCRIBED), which is where the
+    // ticket created during the outage shows up.
+    await contextB.setOffline(false);
+
+    await expect(
+      pageB.getByRole("status").filter({ hasText: "Live" }),
+    ).toBeVisible({ timeout: 20_000 });
+    await expect(staleBanner).toBeHidden();
+    await expect(pageB.getByText(title)).toBeVisible({ timeout: 10_000 });
+
+    await contextA.close();
+    await contextB.close();
+  });
+});
 </file>
 
 <file path="lib/mock-data.ts">
@@ -7979,6 +8937,7 @@ export function ServiceHealthGrid({ services }: { services: Service[] }) {
     "build": "prisma generate && next build",
     "start": "next start",
     "lint": "eslint",
+    "worker:telemetry": "tsx workers/telemetry.ts",
     "postinstall": "prisma skills sync || exit 0"
   },
   "dependencies": {
@@ -8010,59 +8969,6 @@ export function ServiceHealthGrid({ services }: { services: Service[] }) {
     "typescript": "^5"
   },
   "packageManager": "yarn@4.12.0"
-}
-</file>
-
-<file path="app/(dashboard)/layout.tsx">
-import type { ReactNode } from "react";
-import { redirect } from "next/navigation";
-import { TopBar } from "@/components/shared/TopBar";
-import { ToastProvider } from "@/components/shared/Toast";
-import { QueryProvider } from "@/components/shared/QueryProvider";
-import { RealtimeProvider } from "@/components/shared/RealtimeProvider";
-import { currentOrgName } from "@/lib/mock-data";
-import { getCurrentUser } from "@/server/auth/session";
-import { PATHS } from "@/utils/paths";
-
-// The getCurrentUser() check below is the actual sign-in gate — it
-// protects every route in this group even on a direct navigation (typing
-// /tickets straight into the address bar), not just the root page's
-// redirect. It covers both "no session at all" and the edge case of a
-// still-valid access token whose underlying user record no longer
-// exists — either way, no user means no admission. Because the gate is
-// here once, every page inside this layout can treat `self` as always
-// present, no per-page null check needed.
-
-export default async function DashboardLayout({
-  children,
-}: {
-  children: ReactNode;
-}) {
-  const self = await getCurrentUser();
-
-  if (!self) {
-    redirect(PATHS.LOGIN);
-  }
-
-  return (
-    <QueryProvider>
-      <RealtimeProvider orgId={self.orgId}>
-        <ToastProvider>
-          <div className="flex h-full flex-col">
-            <TopBar orgName={currentOrgName} self={self} />
-
-            {/* Only this content area scrolls — the TopBar above stays put.
-                Shared by every route in this group (dashboard, tickets,
-                incidents, services, activity) so each page only owns its own
-                content. */}
-            <main className="mx-auto flex w-full max-w-350 flex-1 flex-col gap-4 overflow-y-auto px-3 py-4 sm:px-6 sm:py-5">
-              {children}
-            </main>
-          </div>
-        </ToastProvider>
-      </RealtimeProvider>
-    </QueryProvider>
-  );
 }
 </file>
 
@@ -8565,14 +9471,25 @@ export function IncidentsView({
 <file path="components/services/ServicesView.tsx">
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { PlusIcon } from "@phosphor-icons/react";
 import { FilterPill } from "@/components/shared/FilterPill";
 import { SearchInput } from "@/components/shared/SearchInput";
 import { Sparkline } from "@/components/shared/Sparkline";
-import { ServiceModal } from "@/components/services/ServiceModal";
+import {
+  ServiceModal,
+  type CreateServiceFields,
+  type UpdateServiceFields,
+} from "@/components/services/ServiceModal";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { useToast } from "@/components/shared/Toast";
+import { ActionFailure, failureMessage, unwrap } from "@/lib/action-result";
+import {
+  createServiceAction,
+  listServicesAction,
+  updateServiceAction,
+} from "@/app/(dashboard)/services/actions";
 import {
   incidentSeverityMeta,
   serviceStatusMeta,
@@ -8599,8 +9516,21 @@ const statusRank: Record<ServiceStatus, number> = {
 
 const statusFilters: ServiceStatus[] = ["OPERATIONAL", "DEGRADED", "OUTAGE"];
 
+// How many points the client-side latency sparkline keeps per service.
+// Not persisted anywhere (types/index.ts) — just enough to draw a short
+// trend line since this tab was opened.
+const MAX_TREND_POINTS = 20;
+
+// Stable reference for the "not loaded yet" fallback, same reasoning as
+// TicketsView's EMPTY_TICKETS: a fresh `?? []` every render would defeat
+// the useMemo()s below.
+const EMPTY_SERVICES: Service[] = [];
+
+const SERVICE_LIST_KEY = ["services", "list"] as const;
+
 interface ServicesViewProps {
-  services: Service[];
+  /** Still mock data (Milestone 5 hasn't landed) — see
+   *  app/(dashboard)/services/page.tsx. Services themselves are real. */
   incidents: Incident[];
   self: User;
 }
@@ -8611,9 +9541,23 @@ type ModalState =
   | { mode: "confirm-archive"; service: Service }
   | null;
 
-export function ServicesView({ services, incidents, self }: ServicesViewProps) {
+/**
+ * Services are real (Milestone 4) and follow the same reliability
+ * pattern tickets got in Milestone 8 (see TicketsView's doc comment):
+ * optimistic patch on `onMutate`, rollback on `onError`, always
+ * invalidate on `onSettled` so the server's version wins. Creates aren't
+ * optimistic — the server assigns the id.
+ *
+ * Status/latency/errorRate never change through this view's own
+ * mutations — those are telemetry-owned (§13) and arrive via the
+ * `service.updated` realtime invalidation the telemetry worker
+ * triggers, debounced client-side (RealtimeProvider, §7).
+ */
+export function ServicesView({ incidents, self }: ServicesViewProps) {
   const now = useNow();
   const toast = useToast();
+  const queryClient = useQueryClient();
+
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<ServiceStatus | "ALL">(
     "ALL",
@@ -8621,11 +9565,151 @@ export function ServicesView({ services, incidents, self }: ServicesViewProps) {
   const [showArchived, setShowArchived] = useState(false);
   const [modalState, setModalState] = useState<ModalState>(null);
 
-  // Local-only, optimistic state — same reasoning as Tickets/Incidents:
-  // no backend yet, so mutations live here and reset on reload.
-  const [serviceList, setServiceList] = useState(services);
-
   const canManage = canManageServices(self.role);
+
+  const servicesQuery = useQuery({
+    queryKey: SERVICE_LIST_KEY,
+    queryFn: listServicesAction,
+  });
+
+  const serviceList = servicesQuery.data ?? EMPTY_SERVICES;
+
+  // README §19/types/index.ts: sessionLatencyTrend is never persisted —
+  // buffered client-side from updates received since the page loaded, so
+  // it's accumulated here as each refetch (realtime-triggered or not)
+  // lands, rather than coming from the query result itself.
+  const [trends, setTrends] = useState<Record<string, number[]>>({});
+
+  useEffect(() => {
+    if (!servicesQuery.data) return;
+
+    setTrends((prev) => {
+      let changed = false;
+      const next = { ...prev };
+
+      for (const service of servicesQuery.data) {
+        const points = next[service.id] ?? [];
+        const last = points[points.length - 1];
+        if (last === service.latencyMs) continue;
+
+        next[service.id] = [...points, service.latencyMs].slice(
+          -MAX_TREND_POINTS,
+        );
+        changed = true;
+      }
+
+      return changed ? next : prev;
+    });
+  }, [servicesQuery.data]);
+
+  const invalidateServices = (id?: string) => {
+    queryClient.invalidateQueries({ queryKey: SERVICE_LIST_KEY });
+    if (id) queryClient.invalidateQueries({ queryKey: ["services", id] });
+  };
+
+  const createMutation = useMutation({
+    mutationFn: async (input: CreateServiceFields) =>
+      unwrap(await createServiceAction(input)),
+    onSuccess: () => {
+      invalidateServices();
+      toast.show("Service added");
+      setModalState(null);
+    },
+    onError: (error) =>
+      toast.show(failureMessage(error, "created", "service"), "error"),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({
+      serviceId,
+      input,
+    }: {
+      serviceId: string;
+      input: Partial<UpdateServiceFields> & {
+        expectedVersion: number;
+        archived?: boolean;
+      };
+    }) => unwrap(await updateServiceAction(serviceId, input)),
+
+    onMutate: async ({ serviceId, input }) => {
+      // Stop an in-flight refetch (e.g. a realtime invalidation from the
+      // telemetry worker) from landing on top of the optimistic patch
+      // and undoing it — same reasoning as TicketsView's updateMutation.
+      await queryClient.cancelQueries({ queryKey: SERVICE_LIST_KEY });
+      const previous = queryClient.getQueryData<Service[]>(SERVICE_LIST_KEY);
+
+      queryClient.setQueryData<Service[]>(SERVICE_LIST_KEY, (old) =>
+        old?.map((s) =>
+          s.id === serviceId
+            ? {
+                ...s,
+                ...(input.name !== undefined ? { name: input.name } : {}),
+                ...(input.description !== undefined
+                  ? { description: input.description }
+                  : {}),
+                ...(input.archived !== undefined
+                  ? { archived: input.archived }
+                  : {}),
+                updatedAt: new Date().toISOString(),
+                // `version`/status/latency/errorRate deliberately
+                // untouched — only the server (or the telemetry worker)
+                // gets to say what those are.
+              }
+            : s,
+        ),
+      );
+
+      return { previous };
+    },
+
+    onError: (error, _variables, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(SERVICE_LIST_KEY, context.previous);
+      }
+
+      if (error instanceof ActionFailure && error.error.code === "conflict") {
+        toast.show(
+          "Someone else changed this service first, so your change wasn't saved.",
+          "error",
+        );
+        return;
+      }
+      toast.show(failureMessage(error, "updated", "service"), "error");
+    },
+
+    onSettled: (_data, _error, variables) => {
+      invalidateServices(variables.serviceId);
+    },
+  });
+
+  const archiveService = (service: Service) => {
+    updateMutation.mutate(
+      {
+        serviceId: service.id,
+        input: { archived: true, expectedVersion: service.version },
+      },
+      { onSuccess: () => toast.show("Service archived") },
+    );
+  };
+
+  const restoreService = (service: Service) => {
+    updateMutation.mutate(
+      {
+        serviceId: service.id,
+        input: { archived: false, expectedVersion: service.version },
+      },
+      { onSuccess: () => toast.show("Service restored") },
+    );
+  };
+
+  // Same live-row-from-cache reasoning as TicketsView's editingTicket —
+  // this is how the modal notices a concurrent change (version-conflict
+  // UX) instead of only ever seeing the snapshot from when it opened.
+  const editingService =
+    modalState?.mode === "edit"
+      ? (serviceList.find((s) => s.id === modalState.service.id) ??
+        modalState.service)
+      : null;
 
   const activeIncidentsByService = useMemo(() => {
     const map = new Map<string, Incident[]>();
@@ -8687,41 +9771,6 @@ export function ServicesView({ services, incidents, self }: ServicesViewProps) {
   const unhealthyCount = unarchived.filter(
     (s) => s.status !== "OPERATIONAL",
   ).length;
-
-  const applyService = (saved: Service) => {
-    setServiceList((prev) => {
-      const exists = prev.some((s) => s.id === saved.id);
-      return exists
-        ? prev.map((s) => (s.id === saved.id ? saved : s))
-        : [saved, ...prev];
-    });
-  };
-
-  const upsertService = (saved: Service) => {
-    const previous = serviceList.find((s) => s.id === saved.id);
-    const isNew = !previous;
-    const isRestore = previous?.archived === true && !saved.archived;
-
-    applyService(saved);
-
-    toast.show(
-      isNew
-        ? "Service added"
-        : isRestore
-          ? "Service restored"
-          : "Service updated",
-    );
-  };
-
-  const archiveService = (service: Service) => {
-    applyService({
-      ...service,
-      archived: true,
-      version: service.version + 1,
-      updatedAt: new Date().toISOString(),
-    });
-    toast.show("Service archived");
-  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
@@ -8786,7 +9835,22 @@ export function ServicesView({ services, incidents, self }: ServicesViewProps) {
           </div>
         </div>
 
-        {filtered.length === 0 ? (
+        {servicesQuery.isLoading ? (
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-8 text-center text-sm text-ink-dim">
+            Loading services…
+          </div>
+        ) : servicesQuery.isError ? (
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-8 text-center text-sm text-danger">
+            Couldn&apos;t load services.{" "}
+            <button
+              type="button"
+              onClick={() => servicesQuery.refetch()}
+              className="underline hover:text-ink"
+            >
+              Try again
+            </button>
+          </div>
+        ) : filtered.length === 0 ? (
           <div className="min-h-0 flex-1 overflow-y-auto px-4 py-8 text-center text-sm text-ink-dim">
             No services match your filters.
           </div>
@@ -8800,6 +9864,8 @@ export function ServicesView({ services, incidents, self }: ServicesViewProps) {
 
                 const affectingIncidents =
                   activeIncidentsByService.get(service.id) ?? [];
+
+                const trend = trends[service.id] ?? [];
 
                 return (
                   <div
@@ -8868,10 +9934,7 @@ export function ServicesView({ services, incidents, self }: ServicesViewProps) {
                         </div>
                       </div>
 
-                      <Sparkline
-                        values={service.sessionLatencyTrend}
-                        warn={warn}
-                      />
+                      <Sparkline values={trend} warn={warn} />
                     </div>
 
                     <div className="mt-2 text-[11px] text-ink-faint">
@@ -8914,13 +9977,29 @@ export function ServicesView({ services, incidents, self }: ServicesViewProps) {
       {canManage &&
         (modalState?.mode === "create" || modalState?.mode === "edit") && (
           <ServiceModal
-            service={modalState.mode === "edit" ? modalState.service : null}
-            self={self}
+            service={editingService}
+            saving={createMutation.isPending || updateMutation.isPending}
             onClose={() => setModalState(null)}
-            onSave={upsertService}
+            onCreate={(input) => createMutation.mutate(input)}
+            onUpdate={(input) => {
+              if (modalState.mode !== "edit") return;
+              updateMutation.mutate(
+                { serviceId: modalState.service.id, input },
+                {
+                  onSuccess: () => {
+                    toast.show("Service updated");
+                    setModalState(null);
+                  },
+                },
+              );
+            }}
             onRequestArchive={(service) =>
               setModalState({ mode: "confirm-archive", service })
             }
+            onRestore={(service) => {
+              restoreService(service);
+              setModalState(null);
+            }}
           />
         )}
 
@@ -8942,6 +10021,509 @@ export function ServicesView({ services, incidents, self }: ServicesViewProps) {
 }
 </file>
 
+<file path="components/shared/RealtimeProvider.tsx">
+"use client";
+
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  createClient,
+  type RealtimeChannel,
+  type SupabaseClient,
+} from "@supabase/supabase-js";
+import { getRealtimeTokenAction } from "@/app/(dashboard)/actions";
+
+/**
+ * RT-02/RT-03: the connection state has to be visible, and "never
+ * connected yet", "lost the socket", and "the browser has no network at
+ * all" are three different situations for the person looking at it:
+ *   connecting   — first connect, nothing wrong
+ *   connected    — subscribed; data on screen is live
+ *   reconnecting — was live (or tried to be), socket/auth dropped, retrying
+ *   offline      — browser reports no network; nothing to retry until it's back
+ */
+export type RealtimeStatus =
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "offline";
+
+const RealtimeStatusContext = createContext<RealtimeStatus>("connecting");
+
+export function useRealtimeStatus(): RealtimeStatus {
+  return useContext(RealtimeStatusContext);
+}
+
+export function useRealtimeConnected(): boolean {
+  return useContext(RealtimeStatusContext) === "connected";
+}
+
+// Backoff for reconnect attempts after a CHANNEL_ERROR/TIMED_OUT/CLOSED —
+// capped so a run of failures doesn't turn into a tight retry loop against
+// the token endpoint and the socket. Resets to the first entry as soon as
+// a connect attempt actually reaches SUBSCRIBED.
+const RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 15_000];
+
+// Coming back to a tab that was hidden for less than this, with the
+// channel still joined, needs no reconnect — the socket's own heartbeat
+// wouldn't have missed enough beats for the server to drop it. Longer
+// than this (or a channel that isn't joined) and we re-verify from
+// scratch with a fresh token.
+const VISIBILITY_RECHECK_AFTER_MS = 60_000;
+
+// If a connect attempt neither reaches SUBSCRIBED nor fails outright
+// within this long (a hung token call, a join that never gets a reply),
+// abandon it and retry. Without this, "connecting" can sit there forever
+// with nothing to say why.
+const CONNECT_TIMEOUT_MS = 10_000;
+
+// §7's explicit exception for high-frequency telemetry: "debounce
+// service.updated invalidations client-side (max ~once per 1-2s per
+// service) to avoid refetch storms; sub-second precision isn't a
+// product requirement." The telemetry worker (workers/telemetry.ts)
+// ticks every few seconds per service, so without this a busy org would
+// invalidate the services list on nearly every broadcast.
+const SERVICE_UPDATE_DEBOUNCE_MS = 1_500;
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+// Built inside useEffect — NOT at module scope — and one per effect run,
+// not shared.
+//
+// Not at module scope: a module-level createClient() runs while Next
+// evaluates this file for server-side rendering of the "use client"
+// tree, and supabase-js can invoke the accessToken callback below while
+// constructing the client. That callback is a Server Action, and Next
+// refuses Server Action calls made during render ("Server Functions
+// cannot be called during initial render"). Effects never run on the
+// server, so the Server Action is only ever called from the browser.
+//
+// Not shared: a module-level singleton outlives the provider. After a
+// logout → login in the same tab (client-side navigation, no page
+// reload) the new session would inherit the old one's socket state and,
+// worse, its half-removed channel — supabase-js hands back an existing
+// channel for the same topic, and removeChannel() is async, so a quick
+// re-login can get the old, already-subscribed one back and then fail
+// to subscribe it again. A fresh client per mount, disposed on unmount,
+// makes every login start from a clean slate.
+function createSupabase(): SupabaseClient | null {
+  if (typeof window === "undefined") return null;
+  if (!supabaseUrl || !supabaseAnonKey) return null;
+
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    // Why accessToken is passed at all: createClient()'s default wiring
+    // resolves to `supabase.auth`'s session token, or the anon key when
+    // there's no session. This app never signs in via supabase.auth
+    // (custom cookie-based auth), so the default is always the anon
+    // key — and supabase-js calls this callback on every heartbeat
+    // (~30s), overwriting anything a manual setAuth(token) sent. The
+    // anon key has no org_id/app_role claims, so the Realtime
+    // Authorization RLS policy rejects it: a CHANNEL_ERROR every ~30s.
+    // Making our token-minting Server Action the callback means every
+    // heartbeat and reconnect refreshes from a real, org-scoped token.
+    // This also disables `supabase.auth` on this client (throws if
+    // touched), which is fine: nothing in this app uses it.
+    accessToken: () => getRealtimeTokenAction(),
+  });
+}
+
+interface RealtimeProviderProps {
+  orgId: string;
+  children: ReactNode;
+}
+
+export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
+  const queryClient = useQueryClient();
+  const [status, setStatus] = useState<RealtimeStatus>("connecting");
+  // Whether this provider has ever reached SUBSCRIBED — distinguishes a
+  // first "connecting" from a "reconnecting" after a drop.
+  const hasConnectedRef = useRef(false);
+  const channelRef = useRef<RealtimeChannel | null>(null);
+
+  // Generation counter, not just a `cancelled` boolean. A boolean stops
+  // a stale run's own setState calls but does nothing about async work
+  // already in flight: under Strict Mode's mount→cleanup→mount, the
+  // first run's getRealtimeTokenAction()/setAuth() call can still be on
+  // the wire when the second run starts. If both runs eventually
+  // resolve and each subscribes its own channel, that's the
+  // overlapping-join symptom in the bug report. Bumping this on every
+  // effect run and checking it after every await lets a stale run
+  // detect it's stale *after each async step*, not just before calling
+  // setState, and bail before ever touching the socket.
+  const generationRef = useRef(0);
+
+  // How many reconnect attempts have failed in a row since the last
+  // successful SUBSCRIBED, for RECONNECT_DELAYS_MS backoff.
+  const retryCountRef = useRef(0);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Per-connect-attempt counter and its watchdog timer. A hung attempt
+  // (say, a token call that never returns) is abandoned by the watchdog;
+  // the counter is what stops that abandoned attempt from later waking
+  // up and building a second channel alongside the retry's.
+  const attemptRef = useRef(0);
+  const connectWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Per-service trailing-edge debounce state for `service.updated` (§7).
+  // Keyed by service id so a busy service doesn't starve invalidation of
+  // a quiet one. Trailing-edge, not leading: the *last* reading in a
+  // debounce window is the one that matters (it's what's in the
+  // database by the time the invalidated refetch runs), not the first.
+  const serviceDebounceTimersRef = useRef<
+    Map<string, ReturnType<typeof setTimeout>>
+  >(new Map());
+
+  useEffect(() => {
+    const supabase = createSupabase();
+    if (!supabase) {
+      console.warn(
+        "RealtimeProvider: NEXT_PUBLIC_SUPABASE_URL/NEXT_PUBLIC_SUPABASE_ANON_KEY not set — realtime disabled.",
+      );
+      return;
+    }
+
+    generationRef.current += 1;
+    const myGeneration = generationRef.current;
+    const isStale = () => myGeneration !== generationRef.current;
+
+    const clearRetryTimer = () => {
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
+    };
+
+    const clearConnectWatchdog = () => {
+      if (connectWatchdogRef.current) {
+        clearTimeout(connectWatchdogRef.current);
+        connectWatchdogRef.current = null;
+      }
+    };
+
+    const clearServiceDebounceTimers = () => {
+      for (const timer of serviceDebounceTimersRef.current.values()) {
+        clearTimeout(timer);
+      }
+      serviceDebounceTimersRef.current.clear();
+    };
+
+    const teardown = () => {
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
+      // Pending debounced invalidations belong to the channel that
+      // scheduled them — a reconnect already invalidates everything on
+      // SUBSCRIBED (§35), so a leftover timer from before the drop would
+      // be redundant at best.
+      clearServiceDebounceTimers();
+    };
+
+    // Trailing-edge debounce, per service id: the first event for a
+    // given service in a quiet window schedules the invalidation; any
+    // further events for that same service before the timer fires are
+    // absorbed into the same pending timer rather than each scheduling
+    // their own. isStale() is checked when the timer actually fires
+    // (not just at schedule time), since a stale effect run's timers
+    // could otherwise still land after this run's own teardown.
+    const scheduleServiceInvalidation = (serviceId: string) => {
+      if (serviceDebounceTimersRef.current.has(serviceId)) return;
+
+      const timer = setTimeout(() => {
+        serviceDebounceTimersRef.current.delete(serviceId);
+        if (isStale()) return;
+        queryClient.invalidateQueries({
+          queryKey: ["services", serviceId],
+        });
+        queryClient.invalidateQueries({ queryKey: ["services", "list"] });
+      }, SERVICE_UPDATE_DEBOUNCE_MS);
+
+      serviceDebounceTimersRef.current.set(serviceId, timer);
+    };
+
+    const scheduleReconnect = () => {
+      if (isStale()) return;
+      clearRetryTimer();
+      const delay =
+        RECONNECT_DELAYS_MS[
+          Math.min(retryCountRef.current, RECONNECT_DELAYS_MS.length - 1)
+        ];
+      retryCountRef.current += 1;
+      retryTimerRef.current = setTimeout(() => {
+        if (isStale()) return;
+        void connect();
+      }, delay);
+    };
+
+    const connect = async () => {
+      // Idempotent teardown first: this runs both for the very first
+      // connect and for every later reconnect (backoff timer, 'online'
+      // event, tab foregrounded), so there's never a moment with two
+      // live channels or two overlapping refresh intervals.
+      teardown();
+      clearConnectWatchdog();
+      attemptRef.current += 1;
+      const myAttempt = attemptRef.current;
+      const isSuperseded = () => isStale() || myAttempt !== attemptRef.current;
+
+      // No network at all: nothing to attempt. The 'online' listener
+      // below calls connect() again the moment it's back — retrying on a
+      // backoff timer while offline would just burn failed token calls.
+      if (!navigator.onLine) {
+        setStatus("offline");
+        return;
+      }
+      setStatus(hasConnectedRef.current ? "reconnecting" : "connecting");
+
+      connectWatchdogRef.current = setTimeout(() => {
+        if (isSuperseded()) return;
+        console.warn(
+          `RealtimeProvider: connect attempt didn't complete within ${CONNECT_TIMEOUT_MS / 1000}s — retrying.`,
+        );
+        setStatus("reconnecting");
+        scheduleReconnect();
+      }, CONNECT_TIMEOUT_MS);
+
+      try {
+        // setAuth() with no argument pulls a fresh token from the
+        // accessToken callback configured above (our own
+        // getRealtimeTokenAction, not the anon key) and MUST complete
+        // before subscribe() is called. Realtime Authorization checks
+        // the socket's current JWT at phx_join time; subscribing first
+        // and authenticating after means the join goes out
+        // unauthenticated (RLS has nothing to match org_id against),
+        // draws a CHANNEL_ERROR, and only succeeds on the rejoin that
+        // setAuth() triggers afterwards — which is exactly the "ok and
+        // error mixed together, plus a phx_leave" pattern in the bug
+        // report. Sequencing this, and only building/subscribing the
+        // channel afterward, removes that race entirely rather than
+        // just narrowing it.
+        await supabase.realtime.setAuth();
+        if (isSuperseded()) return;
+
+        const channel = supabase
+          .channel(`org:${orgId}`, { config: { private: true } })
+          .on("broadcast", { event: "ticket.updated" }, ({ payload }) => {
+            if (isStale()) return;
+            if (payload?.id) {
+              queryClient.invalidateQueries({
+                queryKey: ["tickets", payload.id],
+              });
+            }
+            queryClient.invalidateQueries({ queryKey: ["tickets", "list"] });
+          })
+          .on("broadcast", { event: "service.updated" }, ({ payload }) => {
+            if (isStale()) return;
+            if (payload?.id) scheduleServiceInvalidation(payload.id);
+          })
+          .subscribe((status) => {
+            if (isSuperseded()) return;
+
+            if (status === "SUBSCRIBED") {
+              retryCountRef.current = 0;
+              clearRetryTimer();
+              clearConnectWatchdog();
+              hasConnectedRef.current = true;
+              setStatus("connected");
+              // §35: after (re)connecting, refetch everything active
+              // unconditionally rather than diffing what was missed.
+              queryClient.invalidateQueries();
+            } else {
+              // CHANNEL_ERROR / TIMED_OUT / CLOSED. supabase-js's socket
+              // does auto-reconnect at the transport level, but a
+              // *private* channel's own rejoin still gets rejected if
+              // the realtime JWT it's carrying has since expired — a
+              // very likely state after being offline, backgrounded, or
+              // asleep for a while (the socket has no way to fetch a
+              // new one on its own; that requires our
+              // getRealtimeTokenAction() Server Action). Left alone,
+              // that rejection just sits here forever, which is exactly
+              // "came back online and it never went back to Live."
+              // Reconnecting from scratch with a fresh token is what
+              // actually resolves it.
+              if (!navigator.onLine) {
+                // The drop is because there's no network; the 'online'
+                // listener reconnects once it's back.
+                setStatus("offline");
+                return;
+              }
+              setStatus("reconnecting");
+              scheduleReconnect();
+            }
+          });
+
+        channelRef.current = channel;
+      } catch (error) {
+        if (!isSuperseded()) {
+          clearConnectWatchdog();
+          console.error(
+            "RealtimeProvider: failed to authenticate realtime session",
+            error,
+          );
+          setStatus(navigator.onLine ? "reconnecting" : "offline");
+          if (navigator.onLine) scheduleReconnect();
+        }
+      }
+    };
+
+    void connect();
+
+    const handleOnline = () => {
+      // The browser regained connectivity. Don't wait out whatever
+      // backoff delay happens to be queued — reconnect immediately with
+      // a fresh token rather than trusting the socket's own reconnect,
+      // which can get stuck retrying with the now-expired token it had
+      // when connectivity dropped (see the CHANNEL_ERROR branch above).
+      if (isStale()) return;
+      retryCountRef.current = 0;
+      clearRetryTimer();
+      void connect();
+    };
+
+    const handleOffline = () => {
+      // Stop any queued retry and say so plainly. Don't tear the channel
+      // down here: if the outage is a blip the socket may resume by
+      // itself, and if not, handleOnline() rebuilds everything.
+      if (isStale()) return;
+      clearRetryTimer();
+      clearConnectWatchdog();
+      setStatus("offline");
+    };
+
+    let hiddenAt: number | null = null;
+
+    const handleVisibility = () => {
+      // A backgrounded tab throttles timers, including the socket's own
+      // heartbeat — a laptop that slept through several missed
+      // heartbeats can come back to a channel the client still thinks
+      // is fine but the server dropped long ago. Re-verify on foreground
+      // — but only when that's plausible: a quick tab switch with the
+      // channel still joined doesn't need a teardown/reconnect (and the
+      // "Reconnecting" flicker that comes with it).
+      if (document.visibilityState === "hidden") {
+        hiddenAt = Date.now();
+        return;
+      }
+      const awayMs = hiddenAt === null ? Infinity : Date.now() - hiddenAt;
+      hiddenAt = null;
+
+      const joined = String(channelRef.current?.state) === "joined";
+      if (joined && awayMs < VISIBILITY_RECHECK_AFTER_MS) return;
+
+      handleOnline();
+    };
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      // This cleanup can run *before* connect()'s awaits resolve (that's
+      // precisely the Strict Mode case). The isStale() checks sprinkled
+      // after every await are what actually stop a torn-down run from
+      // creating/subscribing a channel — this cleanup only tears down
+      // whatever *this* run had already made by the time it runs.
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+      document.removeEventListener("visibilitychange", handleVisibility);
+
+      // Mark this run stale *now*. Previously only the next effect run
+      // bumped the generation, so on a plain unmount (logout) an
+      // in-flight token call could still resolve, pass isStale(), and`
+      // subscribe a channel on a client nobody owns any more.
+      generationRef.current += 1;
+
+      clearRetryTimer();
+      clearConnectWatchdog();
+      teardown();
+
+      // This run's client is discarded with it (see createSupabase):
+      // leave every channel and close the socket so nothing lingers
+      // into the next session.
+      void supabase
+        .removeAllChannels()
+        .catch(() => undefined)
+        .finally(() => {
+          try {
+            supabase.realtime.disconnect();
+          } catch {
+            // Already closed — nothing to do.
+          }
+        });
+    };
+  }, [orgId, queryClient]);
+
+  return (
+    <RealtimeStatusContext.Provider value={status}>
+      {children}
+    </RealtimeStatusContext.Provider>
+  );
+}
+</file>
+
+<file path="app/(dashboard)/layout.tsx">
+import type { ReactNode } from "react";
+import { redirect } from "next/navigation";
+import { TopBar } from "@/components/shared/TopBar";
+import { ToastProvider } from "@/components/shared/Toast";
+import { QueryProvider } from "@/components/shared/QueryProvider";
+import { RealtimeProvider } from "@/components/shared/RealtimeProvider";
+import { ConnectionBanner } from "@/components/shared/ConnectionBanner";
+import { currentOrgName } from "@/lib/mock-data";
+import { getCurrentUser } from "@/server/auth/session";
+import { PATHS } from "@/utils/paths";
+
+// The getCurrentUser() check below is the actual sign-in gate — it
+// protects every route in this group even on a direct navigation (typing
+// /tickets straight into the address bar), not just the root page's
+// redirect. It covers both "no session at all" and the edge case of a
+// still-valid access token whose underlying user record no longer
+// exists — either way, no user means no admission. Because the gate is
+// here once, every page inside this layout can treat `self` as always
+// present, no per-page null check needed.
+
+export default async function DashboardLayout({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  const self = await getCurrentUser();
+
+  if (!self) {
+    redirect(PATHS.LOGIN);
+  }
+
+  return (
+    <QueryProvider>
+      <RealtimeProvider orgId={self.orgId}>
+        <ToastProvider>
+          <div className="flex h-full flex-col">
+            <TopBar orgName={currentOrgName} self={self} />
+
+            {/* Only this content area scrolls — the TopBar above stays put.
+                Shared by every route in this group (dashboard, tickets,
+                incidents, services, activity) so each page only owns its own
+                content. */}
+            <main className="mx-auto flex w-full max-w-350 flex-1 flex-col gap-4 overflow-y-auto px-3 py-4 sm:px-6 sm:py-5">
+              <ConnectionBanner />
+              {children}
+            </main>
+          </div>
+        </ToastProvider>
+      </RealtimeProvider>
+    </QueryProvider>
+  );
+}
+</file>
+
 <file path="components/shared/TopBar.tsx">
 "use client";
 
@@ -8952,7 +10534,7 @@ import { usePathname } from "next/navigation";
 import { ListIcon, SignOutIcon, XIcon } from "@phosphor-icons/react";
 import { Avatar } from "@/components/dashboard/Avatar";
 import { LiveIndicator } from "@/components/dashboard/LiveIndicator";
-import { useRealtimeConnected } from "@/components/shared/RealtimeProvider";
+import { useRealtimeStatus } from "@/components/shared/RealtimeProvider";
 import type { User } from "@/types";
 import { canManageTeam } from "@/lib/permissions";
 import { logoutAction } from "@/app/login/actions";
@@ -8969,7 +10551,7 @@ const baseNavItems = [
 export function TopBar({ orgName, self }: { orgName: string; self: User }) {
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
-  const realtimeConnected = useRealtimeConnected();
+  const realtimeStatus = useRealtimeStatus();
 
   // Team is the one nav-level permission boundary (README §3 / MVP RBAC
   // — see ROADMAP_ROLES.md): Manager-only, hidden entirely for Member
@@ -9043,7 +10625,7 @@ export function TopBar({ orgName, self }: { orgName: string; self: User }) {
       </div>
 
       <div className="flex shrink-0 items-center gap-2 sm:gap-4">
-        <LiveIndicator connected={realtimeConnected} />
+        <LiveIndicator status={realtimeStatus} />
 
         <Avatar
           initials={self.initials}
@@ -9114,6 +10696,7 @@ import {
   type UpdateTicketFields,
 } from "@/components/tickets/TicketModal";
 import { useToast } from "@/components/shared/Toast";
+import { ActionFailure, failureMessage, unwrap } from "@/lib/action-result";
 import {
   createTicketAction,
   listOrgUsersAction,
@@ -9150,18 +10733,18 @@ interface TicketsViewProps {
 
 type ModalState = { mode: "create" } | { mode: "edit"; ticket: Ticket } | null;
 
+const TICKET_LIST_KEY = ["tickets", "list"] as const;
+
 /**
- * Milestone 2: tickets are real now. This component owns its own data —
- * `useQuery`/`useMutation` against the Server Actions in
- * app/(dashboard)/tickets/actions.ts — rather than receiving `tickets`
- * as a prop and mirroring it into local state, which is how this looked
- * before the backend existed.
+ * Tickets are real (Milestone 2) and reliable (Milestone 8): this owns its
+ * own data via `useQuery`/`useMutation` against the Server Actions in
+ * app/(dashboard)/tickets/actions.ts.
  *
- * Mutations here are "mutate, then invalidate and refetch" (via
- * onSuccess), not true client-side optimistic updates with rollback —
- * that refinement is explicitly Milestone 8's job (BACKEND_ROADMAP.md),
- * once there's a real reason to roll something back visibly rather than
- * just re-showing server state a moment later.
+ * Updates are optimistic (§8/§18): the list is patched immediately, and
+ * if the write fails — conflict, validation, network — the snapshot taken
+ * in `onMutate` is restored and the list refetched. Optimistic state is
+ * never authoritative, so `onSettled` always invalidates and the server's
+ * version wins. Creates aren't optimistic: the server assigns the id.
  */
 export function TicketsView({ self }: TicketsViewProps) {
   const now = useNow();
@@ -9199,44 +10782,73 @@ export function TicketsView({ self }: TicketsViewProps) {
   };
 
   const createMutation = useMutation({
-    mutationFn: (input: CreateTicketFields) => createTicketAction(input),
-    onSuccess: (result) => {
-      if (!result.ok) {
-        toast.show(result.error.message, "error");
-        return;
-      }
+    mutationFn: async (input: CreateTicketFields) =>
+      unwrap(await createTicketAction(input)),
+    onSuccess: () => {
       invalidateTickets();
       toast.show("Ticket created");
       setModalState(null);
     },
-    onError: () =>
-      toast.show("Couldn't create the ticket. Try again.", "error"),
+    onError: (error) => toast.show(failureMessage(error, "created"), "error"),
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({
+    mutationFn: async ({
       ticketId,
       input,
     }: {
       ticketId: string;
       input: UpdateTicketFields;
-    }) => updateTicketAction(ticketId, input),
-    onSuccess: (result, variables) => {
-      if (!result.ok) {
-        // A conflict means someone else's write landed first — there's
-        // nothing client-side to roll back (no optimistic update was
-        // applied), but the stale data on screen needs replacing with
-        // whatever's actually current now, which invalidating triggers.
-        toast.show(result.error.message, "error");
-        invalidateTickets(variables.ticketId);
+    }) => unwrap(await updateTicketAction(ticketId, input)),
+
+    onMutate: async ({ ticketId, input }) => {
+      // Stop an in-flight refetch (e.g. from a realtime invalidation)
+      // from landing on top of the optimistic patch and undoing it.
+      await queryClient.cancelQueries({ queryKey: TICKET_LIST_KEY });
+      const previous = queryClient.getQueryData<Ticket[]>(TICKET_LIST_KEY);
+
+      queryClient.setQueryData<Ticket[]>(TICKET_LIST_KEY, (old) =>
+        old?.map((t) =>
+          t.id === ticketId
+            ? {
+                ...t,
+                title: input.title,
+                description: input.description,
+                status: input.status,
+                priority: input.priority,
+                assigneeId: input.assigneeId,
+                updatedAt: new Date().toISOString(),
+                // `version` deliberately untouched: only the server
+                // gets to say what the new version is.
+              }
+            : t,
+        ),
+      );
+
+      return { previous };
+    },
+
+    onError: (error, _variables, context) => {
+      // Roll back to exactly what was on screen before the optimistic
+      // patch. The onSettled refetch below then replaces it with
+      // whatever the server actually has.
+      if (context?.previous) {
+        queryClient.setQueryData(TICKET_LIST_KEY, context.previous);
+      }
+
+      if (error instanceof ActionFailure && error.error.code === "conflict") {
+        toast.show(
+          "Someone else changed this ticket first, so your change wasn't saved.",
+          "error",
+        );
         return;
       }
-      invalidateTickets(variables.ticketId);
-      toast.show("Ticket updated");
-      setModalState(null);
+      toast.show(failureMessage(error, "updated"), "error");
     },
-    onError: () =>
-      toast.show("Couldn't update the ticket. Try again.", "error"),
+
+    onSettled: (_data, _error, variables) => {
+      invalidateTickets(variables.ticketId);
+    },
   });
 
   const assignToMe = (ticket: Ticket) => {
@@ -9252,15 +10864,21 @@ export function TicketsView({ self }: TicketsViewProps) {
           expectedVersion: ticket.version,
         },
       },
-      {
-        onSuccess: (result) => {
-          if (result.ok) toast.show("Assigned to you");
-        },
-      },
+      { onSuccess: () => toast.show("Assigned to you") },
     );
   };
 
   const ticketList = ticketsQuery.data ?? EMPTY_TICKETS;
+
+  // The modal gets the *live* row from the cache, not the snapshot taken
+  // when it was opened — that's how it notices someone else changed the
+  // ticket underneath an open edit form (version-conflict UX). The
+  // snapshot is only a fallback for the moment the row isn't in cache.
+  const editingTicket =
+    modalState?.mode === "edit"
+      ? (ticketList.find((t) => t.id === modalState.ticket.id) ??
+        modalState.ticket)
+      : null;
 
   const searched = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -9428,14 +11046,22 @@ export function TicketsView({ self }: TicketsViewProps) {
 
       {modalState && (
         <TicketModal
-          ticket={modalState.mode === "edit" ? modalState.ticket : null}
+          ticket={editingTicket}
           users={users}
           saving={createMutation.isPending || updateMutation.isPending}
           onClose={() => setModalState(null)}
           onCreate={(input) => createMutation.mutate(input)}
           onUpdate={(input) => {
             if (modalState.mode !== "edit") return;
-            updateMutation.mutate({ ticketId: modalState.ticket.id, input });
+            updateMutation.mutate(
+              { ticketId: modalState.ticket.id, input },
+              {
+                onSuccess: () => {
+                  toast.show("Ticket updated");
+                  setModalState(null);
+                },
+              },
+            );
           }}
         />
       )}

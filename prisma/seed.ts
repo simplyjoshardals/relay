@@ -19,6 +19,33 @@ const SEED_ORG_ID = "00000000-0000-0000-0000-000000000001";
 // so it's obvious at seed time, never meant for anything real.
 const DEMO_PASSWORD = "relay-dev-1234";
 
+// Milestone 4: a couple of real Service rows so a freshly seeded org has
+// something for /services (and the telemetry worker) to show, using the
+// same names/descriptions lib/mock-data.ts has always used. Fixed ids,
+// same reasoning as SEED_ORG_ID — idempotent re-seeding, and
+// e2e/service-realtime.spec.ts references PAYMENTS_SERVICE_ID directly
+// (no shared import between seed and spec, same as DEMO_PASSWORD above,
+// so if either changes here the other needs updating too).
+const PAYMENTS_SERVICE_ID = "00000000-0000-0000-0000-000000000101";
+
+const seedServices = [
+  {
+    id: PAYMENTS_SERVICE_ID,
+    name: "Payments API",
+    description: "Card authorization and capture",
+  },
+  {
+    id: "00000000-0000-0000-0000-000000000102",
+    name: "Checkout",
+    description: "Cart, pricing, and order creation",
+  },
+  {
+    id: "00000000-0000-0000-0000-000000000103",
+    name: "Auth",
+    description: "Session and identity",
+  },
+];
+
 // Same identities mock-data.ts has always used (lib/mock-data.ts), so
 // switching a page from mock data to a real query returns someone the
 // UI already has copy/avatars/etc. built around.
@@ -49,6 +76,26 @@ async function main() {
 
   console.log(`Seeded ${seedUsers.length} users in "${org.name}".`);
   console.log(`Every seeded user's password: ${DEMO_PASSWORD}`);
+
+  // update: {} — re-seeding must never clobber whatever the telemetry
+  // worker (or a Manager) has since written to latencyMs/errorRate/
+  // status/version; this only fills in rows that don't exist yet.
+  for (const service of seedServices) {
+    await prisma.service.upsert({
+      where: { id: service.id },
+      update: {},
+      create: {
+        ...service,
+        orgId: org.id,
+        status: "OPERATIONAL",
+        latencyMs: 110,
+        errorRate: 0.3,
+        archived: false,
+      },
+    });
+  }
+
+  console.log(`Seeded ${seedServices.length} services in "${org.name}".`);
 }
 
 main()
