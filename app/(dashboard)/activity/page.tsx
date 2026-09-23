@@ -1,14 +1,14 @@
-"use client";
-
 import { ActivityView } from "@/components/activity/ActivityView";
-import { activities, resolveUser } from "@/lib/mock-data";
 
-// TODO(milestone 9): replace the mock-data import above with a real
-// org-scoped, cursor-paginated activity query once auth + the API routes
-// land (README §15 / implementation plan). ActivityView's "Load more"
-// button already models the paginated contract (AC-05 / §13) — swapping
-// its client-side slicing for `fetchNextPage()` shouldn't touch the JSX.
+// Milestone 6: activity is real now — ActivityView fetches it itself
+// via TanStack Query's useInfiniteQuery (listActivityAction as the
+// paginated queryFn, §10/AC-05), same self-fetching shape
+// IncidentsView/ServicesView already settled on, so this page no
+// longer needs the mock-data import or any props. No auth guard here
+// either: DashboardLayout (app/(dashboard)/layout.tsx) already gates
+// every route in this group, and ActivityView doesn't need a `self`
+// prop the way IncidentsView/ServicesView do.
 
 export default function ActivityPage() {
-  return <ActivityView activities={activities} resolveUser={resolveUser} />;
+  return <ActivityView />;
 }

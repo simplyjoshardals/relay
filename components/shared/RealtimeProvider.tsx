@@ -315,6 +315,22 @@ export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
             }
             queryClient.invalidateQueries({ queryKey: ["incidents", "list"] });
           })
+          // Milestone 6: AC-04 ("new activity must appear in real
+          // time"). Same immediate-invalidation treatment as
+          // ticket.updated/incident.updated above — activity rows are
+          // written by human-driven mutations (plus the occasional
+          // telemetry status change, itself already debounced at its
+          // own source), not a fast tick, so no additional debounce
+          // here either. Invalidating ["activity","list"] refetches
+          // every page the ActivityView's useInfiniteQuery has already
+          // loaded (components/activity/ActivityView.tsx), which is
+          // the standard, correct way to keep an infinite query
+          // fresh — there's no single "the new row" cache entry to
+          // patch the way a single-resource list would.
+          .on("broadcast", { event: "activity.created" }, () => {
+            if (isStale()) return;
+            queryClient.invalidateQueries({ queryKey: ["activity", "list"] });
+          })
           .subscribe((status) => {
             if (isSuperseded()) return;
 

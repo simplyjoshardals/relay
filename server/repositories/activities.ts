@@ -33,5 +33,34 @@ export async function createActivity(orgId: string, data: CreateActivityData) {
       targetId: data.targetId,
       metadata: data.metadata ?? Prisma.JsonNull,
     },
-});
+  });
+}
+
+/**
+ * Milestone 6's read side. Cursor-paginated (AC-05: "paginated rather
+ * than loading an unbounded history") on `id` — sufficient on its own
+ * for a stable, gap-free cursor even though the primary sort is
+ * `createdAt desc`, because Prisma's cursor pagination compares the
+ * *whole* orderBy tuple against the cursor row, not just the cursor
+ * field itself; the secondary `id desc` sort only exists to break ties
+ * between rows with an identical `createdAt` deterministically (bursts
+ * of activity from one mutation — e.g. an incident edit that links
+ * several tickets at once, each getting its own INCIDENT_TICKET_LINKED
+ * row — can land in the same millisecond).
+ * Matches the index `@@index([orgId, createdAt(sort: Desc)])`.
+ *
+ * Fetches `limit + 1` rows so the caller (server/application/
+ * activities.ts#listActivity) can tell whether another page exists
+ * without a separate COUNT query on the hot path.
+ */
+export async function findActivityPage(
+  orgId: string,
+  { cursor, limit }: { cursor?: string; limit: number },
+) {
+  return prisma.activity.findMany({
+    where: { orgId },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: limit + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+  });
 }

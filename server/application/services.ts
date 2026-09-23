@@ -11,7 +11,7 @@ import {
   findServicesForOrg,
   updateServiceConditional,
 } from "@/server/repositories/services";
-import { createActivity } from "@/server/repositories/activities";
+import { recordActivity } from "@/server/application/activities";
 import {
   ConflictError,
   ForbiddenError,
@@ -196,7 +196,10 @@ export interface TelemetryReading {
  * with `actorId: null` (SM-06: distinguishable from human-driven
  * activity) — a latency/error-rate jiggle that doesn't cross a status
  * boundary isn't "meaningful" enough to log, matching how tickets only
- * broadcast on a real committed change, not every keystroke.
+ * broadcast on a real committed change, not every keystroke. As of
+ * Milestone 6, that write also broadcasts `activity.created`
+ * (recordActivity, server/application/activities.ts) — this call site
+ * predates that event existing, so it only ever wrote the row before.
  *
  * Uses the same version-checked conditional update as the human path
  * (§8) — not because two callers are likely to race on a single
@@ -242,7 +245,7 @@ export async function updateServiceTelemetry(
   }
 
   if (statusChanged) {
-    await createActivity(orgId, {
+    await recordActivity(orgId, {
       actorId: null,
       action: "SERVICE_STATUS_CHANGED",
       targetType: "service",
