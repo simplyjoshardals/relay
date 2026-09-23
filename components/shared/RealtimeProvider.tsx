@@ -41,6 +41,27 @@ export function useRealtimeConnected(): boolean {
   return useContext(RealtimeStatusContext) === "connected";
 }
 
+/**
+ * Milestone 7 / PR-01/PR-02/PR-03: who's online, org-wide. Supabase
+ * Presence on the *same* `org:{orgId}` channel broadcast/status already
+ * uses — §6 is explicit that this needs no separate channel or table
+ * ("no separate channel or table"), and PR-03 rules out persisting it:
+ * this lives only in this Set, in memory, for as long as the provider's
+ * channel is joined.
+ *
+ * A plain `Set<string>` of user ids, not the raw Presence state — every
+ * consumer (PresenceRail today) only ever needs "is this user id
+ * online," and the channel is configured with `presence: { key: userId
+ * }` (see connect() below) specifically so a user open in two tabs
+ * collapses to one entry here rather than needing de-duplication at
+ * every call site.
+ */
+const PresenceContext = createContext<Set<string>>(new Set());
+
+export function useOnlineUserIds(): Set<string> {
+  return useContext(PresenceContext);
+}
+
 // Backoff for reconnect attempts after a CHANNEL_ERROR/TIMED_OUT/CLOSED —
 // capped so a run of failures doesn't turn into a tight retry loop against
 // the token endpoint and the socket. Resets to the first entry as soon as
@@ -113,12 +134,22 @@ function createSupabase(): SupabaseClient | null {
 
 interface RealtimeProviderProps {
   orgId: string;
+  /** Presence's own key on this channel (see connect() below) — needs
+   *  the *current* user's id specifically, not just "some identifier",
+   *  since PresenceRail cross-references this against real user ids
+   *  from listOrgUsersAction. */
+  userId: string;
   children: ReactNode;
 }
 
-export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
+export function RealtimeProvider({
+  orgId,
+  userId,
+  children,
+}: RealtimeProviderProps) {
   const queryClient = useQueryClient();
   const [status, setStatus] = useState<RealtimeStatus>("connecting");
+  const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
   // Whether this provider has ever reached SUBSCRIBED — distinguishes a
   // first "connecting" from a "reconnecting" after a drop.
   const hasConnectedRef = useRef(false);
@@ -193,6 +224,15 @@ export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
 
     const teardown = () => {
       if (channelRef.current) {
+        // Best-effort, not awaited — teardown() is synchronous and runs
+        // in places (effect cleanup, the top of every connect() retry)
+        // where waiting on a network round trip isn't an option.
+        // removeChannel() right after is what actually guarantees the
+        // server stops considering this client present, whether or not
+        // this explicit untrack() lands first; it just makes the
+        // "gone" state visible to other clients a little sooner than
+        // waiting on connection-level detection (PR-02: "eventually").
+        void channelRef.current.untrack().catch(() => undefined);
         supabase.removeChannel(channelRef.current);
         channelRef.current = null;
       }
@@ -286,7 +326,27 @@ export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
         if (isSuperseded()) return;
 
         const channel = supabase
-          .channel(`org:${orgId}`, { config: { private: true } })
+          .channel(`org:${orgId}`, {
+            config: {
+              private: true,
+              // Presence's own key for this connection — set to the
+              // signed-in user's id (not the connection's random
+              // default) specifically so two tabs/devices for the same
+              // person collapse into one PresenceContext entry, and so
+              // that entry's key is directly comparable to a real user
+              // id from listOrgUsersAction with no translation step.
+              presence: { key: userId },
+            },
+          })
+          .on("presence", { event: "sync" }, () => {
+            // 'sync' fires with the *complete* current state on every
+            // join/leave (ours or anyone else's on this channel), not
+            // just a delta — so reading the whole thing each time and
+            // replacing state wholesale is correct, not a missed-event
+            // risk the way an add/remove-one-id approach would be.
+            if (isStale()) return;
+            setOnlineIds(new Set(Object.keys(channel.presenceState())));
+          })
           .on("broadcast", { event: "ticket.updated" }, ({ payload }) => {
             if (isStale()) return;
             if (payload?.id) {
@@ -343,6 +403,26 @@ export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
               // §35: after (re)connecting, refetch everything active
               // unconditionally rather than diffing what was missed.
               queryClient.invalidateQueries();
+              // PR-01: track() has to happen after SUBSCRIBED — Presence
+              // requires a joined channel, and this fires on every
+              // (re)join (initial connect and every reconnect alike,
+              // since connect() tears down and rebuilds the channel each
+              // time), so there's no separate "re-track after reconnect"
+              // path to maintain. The payload's content doesn't matter
+              // to any consumer here (PresenceContext only ever exposes
+              // the key set, see the 'sync' handler above) — it exists
+              // because track() requires some object, so this is mostly
+              // documentation-for-humans-inspecting-the-payload.
+              void channel
+                .track({ online_at: new Date().toISOString() })
+                .then((status) => {
+                  if (status !== "ok") {
+                    console.warn(
+                      `RealtimeProvider: presence track() failed: ${status}`,
+                    );
+                  }
+                })
+                .catch(() => undefined);
             } else {
               // CHANNEL_ERROR / TIMED_OUT / CLOSED. supabase-js's socket
               // does auto-reconnect at the transport level, but a
@@ -466,11 +546,13 @@ export function RealtimeProvider({ orgId, children }: RealtimeProviderProps) {
           }
         });
     };
-  }, [orgId, queryClient]);
+  }, [orgId, userId, queryClient]);
 
   return (
     <RealtimeStatusContext.Provider value={status}>
-      {children}
+      <PresenceContext.Provider value={onlineIds}>
+        {children}
+      </PresenceContext.Provider>
     </RealtimeStatusContext.Provider>
   );
 }

@@ -7,17 +7,28 @@ import { ActivityFeed } from "@/components/dashboard/ActivityFeed";
 import {
   activities,
   incidents,
-  onlineUserIds,
   resolveUser,
   services,
   tickets,
-  users,
 } from "@/lib/mock-data";
 
 // TODO(milestone 9): replace the mock-data import above with real
 // org-scoped queries once auth + the API routes land (README §15 /
 // implementation plan). Every component below already takes its data as
 // props shaped like the query result, so that swap shouldn't touch JSX.
+//
+// Presence is the one exception, done for real in Milestone 7:
+// PresenceRail is now fully self-contained (real users +
+// useOnlineUserIds — see its own doc comment) rather than taking
+// `users`/`onlineIds` props, so this page no longer imports `users` or
+// `onlineUserIds` from mock-data, and the "Online now" stat below is
+// gone rather than left showing a number that would silently
+// contradict the real rail right below it. Restoring an "Online now"
+// stat card for real is straightforward once this whole page is real
+// (a small client component reading useOnlineUserIds(), or the count
+// PresenceRail already shows doubling as the summary) — just not a fit
+// for a server component still computing every *other* stat from mock
+// data.
 
 export default function DashboardPage() {
   const openTickets = tickets.filter((t) => t.status === "OPEN").length;
@@ -51,7 +62,6 @@ export default function DashboardPage() {
             value: unhealthyServices,
             tone: "warning",
           },
-          { label: "Online now", value: onlineUserIds.size },
         ]}
       />
 
@@ -70,7 +80,7 @@ export default function DashboardPage() {
         </div>
 
         <div className="flex flex-col gap-4 min-w-0">
-          <PresenceRail users={users} onlineIds={onlineUserIds} />
+          <PresenceRail />
           <ActivityFeed activities={activities} resolveUser={resolveUser} />
         </div>
       </div>

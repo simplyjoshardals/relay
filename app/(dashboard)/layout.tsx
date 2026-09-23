@@ -31,7 +31,7 @@ export default async function DashboardLayout({
 
   return (
     <QueryProvider>
-      <RealtimeProvider orgId={self.orgId}>
+      <RealtimeProvider orgId={self.orgId} userId={self.id}>
         <ToastProvider>
           <div className="flex h-full flex-col">
             <TopBar orgName={currentOrgName} self={self} />

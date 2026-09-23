@@ -12,6 +12,13 @@ import { updateServiceTelemetry } from "@/server/application/services";
  * reconnect / reconcile) — every one propagating between two browser
  * contexts with no reload.
  *
+ * Two more describe blocks below cover ground §41's numbered list
+ * doesn't: `activity.created` (Milestone 6, AC-04) and Presence
+ * (Milestone 7, PR-01/02). BACKEND_ROADMAP.md flagged both as "not yet
+ * done" for the same reason — neither is one of the eight named tests —
+ * but named the exact shape each should take, which is what these two
+ * follow.
+ *
  * Password must match prisma/seed.ts's DEMO_PASSWORD — there's no
  * shared import between the seed script and this test file, so if one
  * changes, the other needs to change too. Tests 6 and 7 below duplicate
@@ -364,6 +371,137 @@ test.describe("§41 Test 7 — recovery: service restore and incident resolution
 
     await contextA.close();
     await contextB.close();
+  });
+});
+
+test.describe("Milestone 6 — activity.created propagates live", () => {
+  test("a new activity row appears on a live activity view without a reload", async ({
+    browser,
+  }) => {
+    const contextA = await browser.newContext();
+    const contextB = await browser.newContext();
+    const pageA = await contextA.newPage();
+    const pageB = await contextB.newPage();
+
+    await loginAs(pageA, USER_A.email);
+    await loginAs(pageB, USER_B.email);
+
+    // Both sit on the live activity feed for the whole test — this is
+    // the real assertion (AC-04), so neither of these two pages should
+    // ever need a reload or navigation from here on.
+    await pageA.goto("/activity");
+    await pageB.goto("/activity");
+
+    // The mutation that generates the row happens from a *second* tab
+    // in Browser A's own context, so pageA (still sitting on /activity)
+    // is a second, independent witness alongside pageB — the same
+    // "both browsers see it live" bar Tests 1-7 above hold themselves
+    // to, just with the actor's own activity view standing in for one
+    // of the two watchers instead of a second user's.
+    const ticketsTab = await contextA.newPage();
+    await ticketsTab.goto("/tickets");
+
+    const title = `Activity test ticket ${Date.now()}`;
+    await ticketsTab.getByRole("button", { name: "New ticket" }).click();
+    await ticketsTab.getByLabel("Title").fill(title);
+    await ticketsTab.getByRole("button", { name: "Create ticket" }).click();
+
+    // Confirm the mutation itself succeeded before blaming propagation —
+    // same split every earlier test in this file uses.
+    await expect(ticketsTab.getByText(title)).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // The real assertion: recordActivity() (server/application/
+    // activities.ts) wrote the TICKET_CREATED row and broadcast
+    // `activity.created` in the same call, and RealtimeProvider.tsx
+    // invalidates `["activity","list"]` immediately (no debounce,
+    // AC-04) on that event alone — no reload, on either page, gets it
+    // there. ActivityDescription.tsx renders TICKET_CREATED as
+    // `opened "<title>"`; matching on the title substring is enough and
+    // avoids depending on the exact curly-quote characters it wraps it
+    // in.
+    await expect(pageA.getByText(title)).toBeVisible({ timeout: 10_000 });
+    await expect(pageB.getByText(title)).toBeVisible({ timeout: 10_000 });
+
+    await ticketsTab.close();
+    await contextA.close();
+    await contextB.close();
+  });
+});
+
+test.describe("Milestone 7 — presence propagates live, then clears on disconnect", () => {
+  test("a second user's avatar flips online without a reload, then eventually flips back offline when they disconnect", async ({
+    browser,
+  }) => {
+    const contextA = await browser.newContext();
+    const contextB = await browser.newContext();
+    const pageA = await contextA.newPage();
+    const pageB = await contextB.newPage();
+
+    await loginAs(pageA, USER_A.email);
+    await pageA.goto("/dashboard");
+
+    // Scoped to PresenceRail specifically ("Team" is its own heading,
+    // components/dashboard/PresenceRail.tsx) rather than a bare
+    // `page.getByText(name)` — other dashboard panels (IncidentsPanel's
+    // responder, TicketBoard's assignee) can render the same user names
+    // elsewhere on this page.
+    const presenceRailA = pageA.locator("div.rounded-lg", {
+      has: pageA.getByRole("heading", { name: "Team" }),
+    });
+    const presenceRailB = pageB.locator("div.rounded-lg", {
+      has: pageB.getByRole("heading", { name: "Team" }),
+    });
+
+    const rowA_self = presenceRailA.locator("li", { hasText: USER_A.name });
+    const rowA_forB = presenceRailA.locator("li", { hasText: USER_B.name });
+
+    // Browser A's own presence tracks itself the moment its channel
+    // reaches SUBSCRIBED (RealtimeProvider.tsx's `channel.track()` call,
+    // fired on every join) — confirmed before B ever connects, so the
+    // "B is online" check below can't be mistaking A's own row for B's.
+    // The green dot is Avatar.tsx's `bg-success` indicator; there's no
+    // other online/offline signal exposed to query against.
+    await expect(rowA_self.locator(".bg-success")).toBeVisible({
+      timeout: 15_000,
+    });
+    // Before B connects, Browser A should not see B as online yet.
+    await expect(rowA_forB.locator(".bg-success")).toBeHidden();
+
+    // Now B connects, from a separate browser context — no reload or
+    // navigation on Browser A from here.
+    await loginAs(pageB, USER_B.email);
+    await pageB.goto("/dashboard");
+
+    // The real assertion (PR-01): B's avatar flips to online in A's
+    // rail purely from the Presence 'sync' event on the shared
+    // `org:{orgId}` channel — no reload, no poll.
+    await expect(rowA_forB.locator(".bg-success")).toBeVisible({
+      timeout: 15_000,
+    });
+
+    // Same roster from B's side: B sees both itself and A online.
+    const rowB_self = presenceRailB.locator("li", { hasText: USER_B.name });
+    const rowB_forA = presenceRailB.locator("li", { hasText: USER_A.name });
+    await expect(rowB_self.locator(".bg-success")).toBeVisible();
+    await expect(rowB_forA.locator(".bg-success")).toBeVisible();
+
+    // PR-02's "eventually" flips it back offline when B disconnects.
+    // Closing the whole context (not just navigating away) is the
+    // realistic "the tab just closed" case — there's no graceful
+    // `untrack()` for the test to await here, so detection falls back to
+    // Presence's own server-side timeout, same "eventually" the
+    // Milestone 7 notes call out. That's why this gets a generous
+    // timeout rather than the ~10-15s the rest of this file uses for
+    // ordinary broadcasts.
+    await contextB.close();
+
+    await expect(rowA_forB.locator(".bg-success")).toBeHidden({
+      timeout: 45_000,
+    });
+
+    await contextA.close();
   });
 });
 
