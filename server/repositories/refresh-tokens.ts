@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import type { Prisma } from "@/lib/generated/prisma/client";
 
 export async function createRefreshToken(params: {
   userId: string;
@@ -24,11 +25,15 @@ export async function revokeRefreshToken(id: string) {
   });
 }
 
-/** Sign-out-everywhere path — not wired to any UI yet, but the repository
- *  layer should have it ready for when it is (e.g. a "sign out all
- *  devices" account action). */
-export async function revokeAllRefreshTokensForUser(userId: string) {
-  await prisma.refreshToken.updateMany({
+/** Sign-out-everywhere path. First caller is Milestone 10's
+ *  `deactivateMember` (server/application/users.ts), which passes its
+ *  transaction's client so the revocation commits or rolls back together
+ *  with the deactivation itself; other callers omit `db`. */
+export async function revokeAllRefreshTokensForUser(
+  userId: string,
+  db: Prisma.TransactionClient = prisma,
+) {
+  await db.refreshToken.updateMany({
     where: { userId, revokedAt: null },
     data: { revokedAt: new Date() },
   });

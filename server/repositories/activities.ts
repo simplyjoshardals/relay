@@ -18,7 +18,7 @@ export interface CreateActivityData {
    *  user id. */
   actorId: string | null;
   action: ActivityAction;
-  targetType: "ticket" | "service" | "incident";
+  targetType: "ticket" | "service" | "incident" | "user";
   targetId: string;
   metadata?: Record<string, string | number> | null;
 }

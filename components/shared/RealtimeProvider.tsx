@@ -391,6 +391,19 @@ export function RealtimeProvider({
             if (isStale()) return;
             queryClient.invalidateQueries({ queryKey: ["activity", "list"] });
           })
+          // Milestone 10: roster or invitation changes (invite, accept,
+          // revoke, role change, deactivate). Invalidates the shared
+          // org-users query — which every assignee/responder picker, the
+          // presence roster and the activity feed's name resolution read —
+          // and the Team page's pending-invitations list. Immediate, no
+          // debounce: human-driven and rare, like incident.updated.
+          .on("broadcast", { event: "team.updated" }, () => {
+            if (isStale()) return;
+            queryClient.invalidateQueries({ queryKey: ["org-users", "list"] });
+            queryClient.invalidateQueries({
+              queryKey: ["team", "invitations"],
+            });
+          })
           .subscribe((status) => {
             if (isSuperseded()) return;
 

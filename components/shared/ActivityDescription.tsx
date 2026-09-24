@@ -1,4 +1,4 @@
-import { ArrowRight } from "@phosphor-icons/react/ssr";
+import { ArrowRightIcon } from "@phosphor-icons/react/ssr";
 import {
   incidentSeverityMeta,
   incidentStatusMeta,
@@ -7,12 +7,18 @@ import {
   ticketStatusMeta,
   type Activity,
 } from "@/types";
-
 // Activity metadata stores raw enum values (e.g. "IN_PROGRESS") as they're
 // persisted in the DB. Never show those directly — always translate through
 // the same label maps the rest of the dashboard uses, so activity reads like
 // something a person wrote ("In progress") rather than a code left showing.
 type LabelMap = Record<string, { label: string }>;
+
+// Milestone 10: roles aren't in types/index.ts's *Meta maps (they have no
+// color), so their labels live here where team events are described.
+const roleLabels: LabelMap = {
+  MEMBER: { label: "Member" },
+  MANAGER: { label: "Manager" },
+};
 
 function humanize(value: unknown, labels?: LabelMap): string {
   if (value == null) return "?";
@@ -32,7 +38,7 @@ function Transition({
   return (
     <span className="inline-flex items-center gap-1 align-middle">
       <span>{humanize(from, labels)}</span>
-      <ArrowRight size={11} weight="bold" className="text-ink-faint" />
+      <ArrowRightIcon size={11} weight="bold" className="text-ink-faint" />
       <span>{humanize(to, labels)}</span>
     </span>
   );
@@ -95,6 +101,23 @@ export function describeActivity(activity: Activity) {
       return <>unlinked a ticket</>;
     case "INCIDENT_RESOLVED":
       return <>resolved &ldquo;{m.title ?? "an incident"}&rdquo;</>;
+    case "MEMBER_INVITED":
+      return (
+        <>
+          invited {m.name ?? "someone"} as {humanize(m.role, roleLabels)}
+        </>
+      );
+    case "MEMBER_JOINED":
+      return <>joined the team</>;
+    case "MEMBER_ROLE_CHANGED":
+      return (
+        <>
+          changed {m.member ?? "a member"}&apos;s role{" "}
+          <Transition from={m.from} to={m.to} labels={roleLabels} />
+        </>
+      );
+    case "MEMBER_DEACTIVATED":
+      return <>removed {m.member ?? "a member"} from the team</>;
     default:
       return <>made a change</>;
   }
@@ -132,6 +155,14 @@ export function describeActivityText(activity: Activity): string {
       return "unlinked a ticket";
     case "INCIDENT_RESOLVED":
       return `resolved "${m.title ?? "an incident"}"`;
+    case "MEMBER_INVITED":
+      return `invited ${m.name ?? "someone"} as ${humanize(m.role, roleLabels)}`;
+    case "MEMBER_JOINED":
+      return "joined the team";
+    case "MEMBER_ROLE_CHANGED":
+      return `changed ${m.member ?? "a member"}'s role ${humanize(m.from, roleLabels)} to ${humanize(m.to, roleLabels)}`;
+    case "MEMBER_DEACTIVATED":
+      return `removed ${m.member ?? "a member"} from the team`;
     default:
       return "made a change";
   }

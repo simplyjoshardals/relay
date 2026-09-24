@@ -20,12 +20,14 @@ const targetFilters: Activity["targetType"][] = [
   "ticket",
   "incident",
   "service",
+  "user",
 ];
 
 const targetFilterLabels: Record<Activity["targetType"], string> = {
   ticket: "Tickets",
   incident: "Incidents",
   service: "Services",
+  user: "Team",
 };
 
 const EMPTY_USERS: User[] = [];

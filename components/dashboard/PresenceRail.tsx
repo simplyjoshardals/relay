@@ -27,7 +27,9 @@ export function PresenceRail() {
   });
   const onlineIds = useOnlineUserIds();
 
-  const users = usersQuery.data ?? EMPTY_USERS;
+  // Deactivated members stay in the query (history needs them) but
+  // aren't part of the roster.
+  const users = (usersQuery.data ?? EMPTY_USERS).filter((u) => u.active);
 
   const sorted = [...users].sort((a, b) => {
     const aOnline = onlineIds.has(a.id) ? 0 : 1;

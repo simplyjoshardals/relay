@@ -15,6 +15,7 @@ export const users: User[] = [
     name: "Maya Reyes",
     role: "MANAGER",
     initials: "MR",
+    active: true,
   },
   {
     id: "u_josh",
@@ -23,6 +24,7 @@ export const users: User[] = [
     name: "Josh Dietrich",
     role: "MEMBER",
     initials: "JD",
+    active: true,
   },
   {
     id: "u_sana",
@@ -31,6 +33,7 @@ export const users: User[] = [
     name: "Sana Kapoor",
     role: "MEMBER",
     initials: "SK",
+    active: true,
   },
   {
     id: "u_leo",
@@ -39,6 +42,7 @@ export const users: User[] = [
     name: "Leo Fontaine",
     role: "MEMBER",
     initials: "LF",
+    active: true,
   },
   {
     id: "u_priya",
@@ -47,6 +51,7 @@ export const users: User[] = [
     name: "Priya Nair",
     role: "MEMBER",
     initials: "PN",
+    active: true,
   },
 ];
 

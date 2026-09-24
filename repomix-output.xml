@@ -173,8 +173,6 @@ server/
     services.ts
     tickets.ts
 test-results/
-  ticket-realtime-Milestone--a18fd-ffline-when-they-disconnect-chromium/
-    error-context.md
   .last-run.json
 types/
   index.ts
@@ -198,346 +196,6 @@ tsconfig.json
 <files>
 This section contains the contents of the repository's files.
 
-<file path="test-results/ticket-realtime-Milestone--a18fd-ffline-when-they-disconnect-chromium/error-context.md">
-# Instructions
-
-- Following Playwright test failed.
-- Explain why, be concise, respect Playwright best practices.
-- Provide a snippet of code with the fix, if possible.
-
-# Test info
-
-- Name: ticket-realtime.spec.ts >> Milestone 7 — presence propagates live, then clears on disconnect >> a second user's avatar flips online without a reload, then eventually flips back offline when they disconnect
-- Location: e2e\ticket-realtime.spec.ts:434:7
-
-# Error details
-
-```
-Error: expect(locator).toBeVisible() failed
-
-Locator: locator('div.rounded-lg').filter({ has: getByRole('heading', { name: 'Team' }) }).locator('li').filter({ hasText: 'Maya Reyes' }).locator('.bg-success')
-Expected: visible
-Timeout: 15000ms
-Error: element(s) not found
-
-Call log:
-  - Expect "toBeVisible" locator('div.rounded-lg').filter({ has: getByRole('heading', { name: 'Team' }) }).locator('li').filter({ hasText: 'Maya Reyes' }).locator('.bg-success') with timeout 15000ms
-  - waiting for locator('div.rounded-lg').filter({ has: getByRole('heading', { name: 'Team' }) }).locator('li').filter({ hasText: 'Maya Reyes' }).locator('.bg-success')
-
-```
-
-```yaml
-- banner:
-  - img "Logo"
-  - text: Kestrel Commerce
-  - navigation:
-    - link "Dashboard":
-      - /url: /dashboard
-    - link "Tickets":
-      - /url: /tickets
-    - link "Incidents":
-      - /url: /incidents
-    - link "Services":
-      - /url: /services
-    - link "Activity":
-      - /url: /activity
-    - link "Team":
-      - /url: /team
-  - status: Live
-  - text: MR
-  - button "Sign out":
-    - img
-- main:
-  - text: Open tickets 4 In progress 2 Active incidents 3 Degraded / outage 2
-  - heading "Active incidents" [level=2]
-  - text: Sorted by severity
-  - list:
-    - listitem: Critical Notification delivery completely down Investigating · 19h ago · Notifications · 1 ticket SK
-    - listitem: High Elevated errors on checkout with discount codes Identified · 20h ago · Checkout · 1 ticket JD
-    - listitem: Low Search latency creeping up since deploy Monitoring · 23h ago · Search LF
-  - heading "Service health" [level=2]
-  - text: Trend is since page load Payments API Operational 118ms 0.12% err
-  - img
-  - text: Updated 18h ago Checkout Degraded 342ms 4.86% err
-  - img
-  - text: Updated 18h ago Auth Operational 76ms 0.04% err
-  - img
-  - text: Updated 18h ago Search Operational 203ms 0.31% err
-  - img
-  - text: Updated 18h ago Notifications Outage — 100.00% err
-  - img
-  - text: Updated 18h ago Billing Operational 145ms 0.08% err
-  - img
-  - text: Updated 19h ago
-  - heading "Work" [level=2]
-  - text: Open 4
-  - list:
-    - listitem: Search returns stale prices for ~30s after update LF
-    - listitem: Add pagination to billing invoice export
-    - listitem: Auth refresh token rotation off by one PN
-    - listitem: Search facet counts ignore region filter PN
-  - text: In progress 2
-  - list:
-    - listitem: Checkout 500s on discount codes >10% off JD
-    - listitem: Notification worker stuck retrying dead queue SK
-  - text: Blocked 2
-  - list:
-    - listitem: Payments webhook signature check flaky in staging JD
-    - listitem: Checkout cart total rounding mismatch (JPY) SK
-  - text: Resolved 2
-  - list:
-    - listitem: Add dark-mode icon set to notification emails LF
-    - listitem: Billing double-charged trial-to-paid conversions MR
-  - heading "Team" [level=2]
-  - text: 0 online
-  - list:
-    - listitem: JD Josh Dietrich
-    - listitem: LF Leo Fontaine
-    - listitem: MR Maya Reyes
-    - listitem: PN Priya Nair
-    - listitem: SK Sana Kapoor
-  - heading "Activity" [level=2]
-  - list:
-    - listitem:
-      - img
-      - text: telemetry status changed Degraded
-      - img
-      - text: Outage 18h ago
-    - listitem:
-      - text: SK Sana Kapoor moved incident Identified
-      - img
-      - text: Investigating 18h ago
-    - listitem:
-      - text: SK Sana Kapoor moved a ticket Open
-      - img
-      - text: In progress 19h ago
-    - listitem:
-      - img
-      - text: telemetry status changed Operational
-      - img
-      - text: Degraded 19h ago
-    - listitem: JD Josh Dietrich linked “Checkout 500s on discount codes >10% off” 19h ago
-    - listitem: JD Josh Dietrich assigned this ticket to Josh Dietrich 19h ago
-    - listitem: MR Maya Reyes opened incident “Elevated errors on checkout with discount codes” 20h ago
-    - listitem:
-      - text: LF Leo Fontaine changed severity Medium
-      - img
-      - text: Low 21h ago
-    - listitem: PN Priya Nair opened “Search facet counts ignore region filter” 22h ago
-    - listitem: MR Maya Reyes resolved “Billing double-charge on trial conversion” 2d ago
-- button "Open Tanstack query devtools":
-  - img
-- alert
-```
-
-# Test source
-
-```ts
-  366 |       timeout: 10_000,
-  367 |     });
-  368 |     await expect(rowB.getByText("Resolved", { exact: true })).toBeVisible({
-  369 |       timeout: 10_000,
-  370 |     });
-  371 | 
-  372 |     await contextA.close();
-  373 |     await contextB.close();
-  374 |   });
-  375 | });
-  376 | 
-  377 | test.describe("Milestone 6 — activity.created propagates live", () => {
-  378 |   test("a new activity row appears on a live activity view without a reload", async ({
-  379 |     browser,
-  380 |   }) => {
-  381 |     const contextA = await browser.newContext();
-  382 |     const contextB = await browser.newContext();
-  383 |     const pageA = await contextA.newPage();
-  384 |     const pageB = await contextB.newPage();
-  385 | 
-  386 |     await loginAs(pageA, USER_A.email);
-  387 |     await loginAs(pageB, USER_B.email);
-  388 | 
-  389 |     // Both sit on the live activity feed for the whole test — this is
-  390 |     // the real assertion (AC-04), so neither of these two pages should
-  391 |     // ever need a reload or navigation from here on.
-  392 |     await pageA.goto("/activity");
-  393 |     await pageB.goto("/activity");
-  394 | 
-  395 |     // The mutation that generates the row happens from a *second* tab
-  396 |     // in Browser A's own context, so pageA (still sitting on /activity)
-  397 |     // is a second, independent witness alongside pageB — the same
-  398 |     // "both browsers see it live" bar Tests 1-7 above hold themselves
-  399 |     // to, just with the actor's own activity view standing in for one
-  400 |     // of the two watchers instead of a second user's.
-  401 |     const ticketsTab = await contextA.newPage();
-  402 |     await ticketsTab.goto("/tickets");
-  403 | 
-  404 |     const title = `Activity test ticket ${Date.now()}`;
-  405 |     await ticketsTab.getByRole("button", { name: "New ticket" }).click();
-  406 |     await ticketsTab.getByLabel("Title").fill(title);
-  407 |     await ticketsTab.getByRole("button", { name: "Create ticket" }).click();
-  408 | 
-  409 |     // Confirm the mutation itself succeeded before blaming propagation —
-  410 |     // same split every earlier test in this file uses.
-  411 |     await expect(ticketsTab.getByText(title)).toBeVisible({
-  412 |       timeout: 10_000,
-  413 |     });
-  414 | 
-  415 |     // The real assertion: recordActivity() (server/application/
-  416 |     // activities.ts) wrote the TICKET_CREATED row and broadcast
-  417 |     // `activity.created` in the same call, and RealtimeProvider.tsx
-  418 |     // invalidates `["activity","list"]` immediately (no debounce,
-  419 |     // AC-04) on that event alone — no reload, on either page, gets it
-  420 |     // there. ActivityDescription.tsx renders TICKET_CREATED as
-  421 |     // `opened "<title>"`; matching on the title substring is enough and
-  422 |     // avoids depending on the exact curly-quote characters it wraps it
-  423 |     // in.
-  424 |     await expect(pageA.getByText(title)).toBeVisible({ timeout: 10_000 });
-  425 |     await expect(pageB.getByText(title)).toBeVisible({ timeout: 10_000 });
-  426 | 
-  427 |     await ticketsTab.close();
-  428 |     await contextA.close();
-  429 |     await contextB.close();
-  430 |   });
-  431 | });
-  432 | 
-  433 | test.describe("Milestone 7 — presence propagates live, then clears on disconnect", () => {
-  434 |   test("a second user's avatar flips online without a reload, then eventually flips back offline when they disconnect", async ({
-  435 |     browser,
-  436 |   }) => {
-  437 |     const contextA = await browser.newContext();
-  438 |     const contextB = await browser.newContext();
-  439 |     const pageA = await contextA.newPage();
-  440 |     const pageB = await contextB.newPage();
-  441 | 
-  442 |     await loginAs(pageA, USER_A.email);
-  443 |     await pageA.goto("/dashboard");
-  444 | 
-  445 |     // Scoped to PresenceRail specifically ("Team" is its own heading,
-  446 |     // components/dashboard/PresenceRail.tsx) rather than a bare
-  447 |     // `page.getByText(name)` — other dashboard panels (IncidentsPanel's
-  448 |     // responder, TicketBoard's assignee) can render the same user names
-  449 |     // elsewhere on this page.
-  450 |     const presenceRailA = pageA.locator("div.rounded-lg", {
-  451 |       has: pageA.getByRole("heading", { name: "Team" }),
-  452 |     });
-  453 |     const presenceRailB = pageB.locator("div.rounded-lg", {
-  454 |       has: pageB.getByRole("heading", { name: "Team" }),
-  455 |     });
-  456 | 
-  457 |     const rowA_self = presenceRailA.locator("li", { hasText: USER_A.name });
-  458 |     const rowA_forB = presenceRailA.locator("li", { hasText: USER_B.name });
-  459 | 
-  460 |     // Browser A's own presence tracks itself the moment its channel
-  461 |     // reaches SUBSCRIBED (RealtimeProvider.tsx's `channel.track()` call,
-  462 |     // fired on every join) — confirmed before B ever connects, so the
-  463 |     // "B is online" check below can't be mistaking A's own row for B's.
-  464 |     // The green dot is Avatar.tsx's `bg-success` indicator; there's no
-  465 |     // other online/offline signal exposed to query against.
-> 466 |     await expect(rowA_self.locator(".bg-success")).toBeVisible({
-      |                                                    ^ Error: expect(locator).toBeVisible() failed
-  467 |       timeout: 15_000,
-  468 |     });
-  469 |     // Before B connects, Browser A should not see B as online yet.
-  470 |     await expect(rowA_forB.locator(".bg-success")).toBeHidden();
-  471 | 
-  472 |     // Now B connects, from a separate browser context — no reload or
-  473 |     // navigation on Browser A from here.
-  474 |     await loginAs(pageB, USER_B.email);
-  475 |     await pageB.goto("/dashboard");
-  476 | 
-  477 |     // The real assertion (PR-01): B's avatar flips to online in A's
-  478 |     // rail purely from the Presence 'sync' event on the shared
-  479 |     // `org:{orgId}` channel — no reload, no poll.
-  480 |     await expect(rowA_forB.locator(".bg-success")).toBeVisible({
-  481 |       timeout: 15_000,
-  482 |     });
-  483 | 
-  484 |     // Same roster from B's side: B sees both itself and A online.
-  485 |     const rowB_self = presenceRailB.locator("li", { hasText: USER_B.name });
-  486 |     const rowB_forA = presenceRailB.locator("li", { hasText: USER_A.name });
-  487 |     await expect(rowB_self.locator(".bg-success")).toBeVisible();
-  488 |     await expect(rowB_forA.locator(".bg-success")).toBeVisible();
-  489 | 
-  490 |     // PR-02's "eventually" flips it back offline when B disconnects.
-  491 |     // Closing the whole context (not just navigating away) is the
-  492 |     // realistic "the tab just closed" case — there's no graceful
-  493 |     // `untrack()` for the test to await here, so detection falls back to
-  494 |     // Presence's own server-side timeout, same "eventually" the
-  495 |     // Milestone 7 notes call out. That's why this gets a generous
-  496 |     // timeout rather than the ~10-15s the rest of this file uses for
-  497 |     // ordinary broadcasts.
-  498 |     await contextB.close();
-  499 | 
-  500 |     await expect(rowA_forB.locator(".bg-success")).toBeHidden({
-  501 |       timeout: 45_000,
-  502 |     });
-  503 | 
-  504 |     await contextA.close();
-  505 |   });
-  506 | });
-  507 | 
-  508 | test.describe("§41 Test 8 — disconnect, then reconnect and reconcile", () => {
-  509 |   test("shows a clear connection-lost state, then reconciles on reconnect", async ({
-  510 |     browser,
-  511 |   }) => {
-  512 |     const contextA = await browser.newContext();
-  513 |     const contextB = await browser.newContext();
-  514 |     const pageA = await contextA.newPage();
-  515 |     const pageB = await contextB.newPage();
-  516 | 
-  517 |     await loginAs(pageA, USER_A.email);
-  518 |     await loginAs(pageB, USER_B.email);
-  519 |     await pageA.goto("/tickets");
-  520 |     await pageB.goto("/tickets");
-  521 | 
-  522 |     // Browser B starts live.
-  523 |     await expect(
-  524 |       pageB.getByRole("status").filter({ hasText: "Live" }),
-  525 |     ).toBeVisible({ timeout: 15_000 });
-  526 | 
-  527 |     // "Kill the network connection" (§41 Test 8) on Browser B only.
-  528 |     await contextB.setOffline(true);
-  529 | 
-  530 |     // A clear connection-lost state: the indicator flips and the page
-  531 |     // says its data may be stale. This is driven by the browser's
-  532 |     // 'offline' event, so it holds even though Playwright's offline
-  533 |     // emulation doesn't reliably sever an already-open WebSocket.
-  534 |     await expect(
-  535 |       pageB.getByRole("status").filter({ hasText: "Offline" }),
-  536 |     ).toBeVisible({ timeout: 5_000 });
-  537 |     // Filtered by text: Next.js's own route announcer is also
-  538 |     // role="alert" on every page, so a bare getByRole("alert") matches
-  539 |     // two elements and trips Playwright's strict mode.
-  540 |     const staleBanner = pageB
-  541 |       .getByRole("alert")
-  542 |       .filter({ hasText: "out of date" });
-  543 |     await expect(staleBanner).toBeVisible();
-  544 | 
-  545 |     // Meanwhile Browser A (still online) makes a change B can't have
-  546 |     // received through a healthy connection.
-  547 |     const title = `Reconnect test ticket ${Date.now()}`;
-  548 |     await pageA.getByRole("button", { name: "New ticket" }).click();
-  549 |     await pageA.getByLabel("Title").fill(title);
-  550 |     await pageA.getByRole("button", { name: "Create ticket" }).click();
-  551 |     await expect(pageA.getByText(title)).toBeVisible({ timeout: 10_000 });
-  552 | 
-  553 |     // Restore the connection. B must reconnect on its own — no reload —
-  554 |     // return to Live, drop the warning, and reconcile with server state
-  555 |     // (§35: invalidate everything on SUBSCRIBED), which is where the
-  556 |     // ticket created during the outage shows up.
-  557 |     await contextB.setOffline(false);
-  558 | 
-  559 |     await expect(
-  560 |       pageB.getByRole("status").filter({ hasText: "Live" }),
-  561 |     ).toBeVisible({ timeout: 20_000 });
-  562 |     await expect(staleBanner).toBeHidden();
-  563 |     await expect(pageB.getByText(title)).toBeVisible({ timeout: 10_000 });
-  564 | 
-  565 |     await contextA.close();
-  566 |     await contextB.close();
-```
-</file>
-
 <file path="app/(dashboard)/activity/actions.ts">
 "use server";
 
@@ -554,98 +212,6 @@ export async function listActivityAction(
 ): Promise<ActivityPage> {
   const session = await requireSession();
   return listActivity(session, cursor);
-}
-</file>
-
-<file path="app/(dashboard)/dashboard/page.tsx">
-import { StatRow } from "@/components/dashboard/StatRow";
-import { IncidentsPanel } from "@/components/dashboard/IncidentsPanel";
-import { ServiceHealthGrid } from "@/components/dashboard/ServiceHealthGrid";
-import { TicketBoard } from "@/components/dashboard/TicketBoard";
-import { PresenceRail } from "@/components/dashboard/PresenceRail";
-import { ActivityFeed } from "@/components/dashboard/ActivityFeed";
-import {
-  activities,
-  incidents,
-  resolveUser,
-  services,
-  tickets,
-} from "@/lib/mock-data";
-
-// TODO(milestone 9): replace the mock-data import above with real
-// org-scoped queries once auth + the API routes land (README §15 /
-// implementation plan). Every component below already takes its data as
-// props shaped like the query result, so that swap shouldn't touch JSX.
-//
-// Presence is the one exception, done for real in Milestone 7:
-// PresenceRail is now fully self-contained (real users +
-// useOnlineUserIds — see its own doc comment) rather than taking
-// `users`/`onlineIds` props, so this page no longer imports `users` or
-// `onlineUserIds` from mock-data, and the "Online now" stat below is
-// gone rather than left showing a number that would silently
-// contradict the real rail right below it. Restoring an "Online now"
-// stat card for real is straightforward once this whole page is real
-// (a small client component reading useOnlineUserIds(), or the count
-// PresenceRail already shows doubling as the summary) — just not a fit
-// for a server component still computing every *other* stat from mock
-// data.
-
-export default function DashboardPage() {
-  const openTickets = tickets.filter((t) => t.status === "OPEN").length;
-  const inProgressTickets = tickets.filter(
-    (t) => t.status === "IN_PROGRESS",
-  ).length;
-  // Resolved incidents now exist in the data (added for the standalone
-  // incidents page's history view), so this can no longer just be
-  // `incidents.length` — the dashboard only ever wants the ones still
-  // open. IncidentsPanel is built the same way: its "No active incidents"
-  // empty state assumes the caller already filtered, it doesn't re-check.
-  const activeIncidentsList = incidents.filter((i) => i.status !== "RESOLVED");
-  const activeIncidents = activeIncidentsList.length;
-  const unhealthyServices = services.filter(
-    (s) => s.status !== "OPERATIONAL",
-  ).length;
-
-  return (
-    <>
-      <StatRow
-        stats={[
-          { label: "Open tickets", value: openTickets },
-          { label: "In progress", value: inProgressTickets },
-          {
-            label: "Active incidents",
-            value: activeIncidents,
-            tone: "danger",
-          },
-          {
-            label: "Degraded / outage",
-            value: unhealthyServices,
-            tone: "warning",
-          },
-        ]}
-      />
-
-      {/* Side-by-side only once there's room for both columns to
-          breathe; below that, the rail just drops beneath the main
-          content instead of squeezing next to it. */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[2.2fr_1fr] lg:items-start">
-        <div className="flex flex-col gap-4 min-w-0">
-          <IncidentsPanel
-            incidents={activeIncidentsList}
-            services={services}
-            resolveUser={resolveUser}
-          />
-          <ServiceHealthGrid services={services} />
-          <TicketBoard tickets={tickets} resolveUser={resolveUser} />
-        </div>
-
-        <div className="flex flex-col gap-4 min-w-0">
-          <PresenceRail />
-          <ActivityFeed activities={activities} resolveUser={resolveUser} />
-        </div>
-      </div>
-    </>
-  );
 }
 </file>
 
@@ -3263,6 +2829,98 @@ export default function ActivityPage() {
 }
 </file>
 
+<file path="app/(dashboard)/dashboard/page.tsx">
+import { StatRow } from "@/components/dashboard/StatRow";
+import { IncidentsPanel } from "@/components/dashboard/IncidentsPanel";
+import { ServiceHealthGrid } from "@/components/dashboard/ServiceHealthGrid";
+import { TicketBoard } from "@/components/dashboard/TicketBoard";
+import { PresenceRail } from "@/components/dashboard/PresenceRail";
+import { ActivityFeed } from "@/components/dashboard/ActivityFeed";
+import {
+  activities,
+  incidents,
+  resolveUser,
+  services,
+  tickets,
+} from "@/lib/mock-data";
+
+// TODO(milestone 9): replace the mock-data import above with real
+// org-scoped queries once auth + the API routes land (README §15 /
+// implementation plan). Every component below already takes its data as
+// props shaped like the query result, so that swap shouldn't touch JSX.
+//
+// Presence is the one exception, done for real in Milestone 7:
+// PresenceRail is now fully self-contained (real users +
+// useOnlineUserIds — see its own doc comment) rather than taking
+// `users`/`onlineIds` props, so this page no longer imports `users` or
+// `onlineUserIds` from mock-data, and the "Online now" stat below is
+// gone rather than left showing a number that would silently
+// contradict the real rail right below it. Restoring an "Online now"
+// stat card for real is straightforward once this whole page is real
+// (a small client component reading useOnlineUserIds(), or the count
+// PresenceRail already shows doubling as the summary) — just not a fit
+// for a server component still computing every *other* stat from mock
+// data.
+
+export default function DashboardPage() {
+  const openTickets = tickets.filter((t) => t.status === "OPEN").length;
+  const inProgressTickets = tickets.filter(
+    (t) => t.status === "IN_PROGRESS",
+  ).length;
+  // Resolved incidents now exist in the data (added for the standalone
+  // incidents page's history view), so this can no longer just be
+  // `incidents.length` — the dashboard only ever wants the ones still
+  // open. IncidentsPanel is built the same way: its "No active incidents"
+  // empty state assumes the caller already filtered, it doesn't re-check.
+  const activeIncidentsList = incidents.filter((i) => i.status !== "RESOLVED");
+  const activeIncidents = activeIncidentsList.length;
+  const unhealthyServices = services.filter(
+    (s) => s.status !== "OPERATIONAL",
+  ).length;
+
+  return (
+    <>
+      <StatRow
+        stats={[
+          { label: "Open tickets", value: openTickets },
+          { label: "In progress", value: inProgressTickets },
+          {
+            label: "Active incidents",
+            value: activeIncidents,
+            tone: "danger",
+          },
+          {
+            label: "Degraded / outage",
+            value: unhealthyServices,
+            tone: "warning",
+          },
+        ]}
+      />
+
+      {/* Side-by-side only once there's room for both columns to
+          breathe; below that, the rail just drops beneath the main
+          content instead of squeezing next to it. */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[2.2fr_1fr] lg:items-start">
+        <div className="flex flex-col gap-4 min-w-0">
+          <IncidentsPanel
+            incidents={activeIncidentsList}
+            services={services}
+            resolveUser={resolveUser}
+          />
+          <ServiceHealthGrid services={services} />
+          <TicketBoard tickets={tickets} resolveUser={resolveUser} />
+        </div>
+
+        <div className="flex flex-col gap-4 min-w-0">
+          <PresenceRail />
+          <ActivityFeed activities={activities} resolveUser={resolveUser} />
+        </div>
+      </div>
+    </>
+  );
+}
+</file>
+
 <file path="app/(dashboard)/team/page.tsx">
 import { redirect } from "next/navigation";
 import { TeamView } from "@/components/team/TeamView";
@@ -3383,126 +3041,6 @@ export function LiveIndicator({ status = "connected" }: LiveIndicatorProps) {
       </span>
       Live
     </span>
-  );
-}
-</file>
-
-<file path="components/dashboard/PresenceRail.tsx">
-"use client";
-
-import { useQuery } from "@tanstack/react-query";
-import { Avatar } from "./Avatar";
-import { useOnlineUserIds } from "@/components/shared/RealtimeProvider";
-import { listOrgUsersAction } from "@/app/(dashboard)/tickets/actions";
-import type { User } from "@/types";
-
-const EMPTY_USERS: User[] = [];
-
-/**
- * Milestone 7 / PR-01: real presence, in place of the static mock
- * `onlineUserIds` set this used to take as a prop. Now fully
- * self-contained — no props — for a reason beyond the usual
- * self-fetching pattern (IncidentsView/ServicesView/ActivityView):
- * `onlineIds` (useOnlineUserIds, RealtimeProvider.tsx) is real Supabase
- * Presence keyed on real user ids, so the roster it's cross-referenced
- * against has to be real too, or every entry would show offline
- * regardless of actual presence — a mock `users` list with ids like
- * "u_maya" would never match. `listOrgUsersAction` is the same query
- * TicketModal/IncidentModal already use for assignee/responder pickers.
- */
-export function PresenceRail() {
-  const usersQuery = useQuery({
-    queryKey: ["org-users", "list"],
-    queryFn: listOrgUsersAction,
-  });
-  const onlineIds = useOnlineUserIds();
-
-  const users = usersQuery.data ?? EMPTY_USERS;
-
-  const sorted = [...users].sort((a, b) => {
-    const aOnline = onlineIds.has(a.id) ? 0 : 1;
-    const bOnline = onlineIds.has(b.id) ? 0 : 1;
-    return aOnline - bOnline;
-  });
-
-  return (
-    <div className="rounded-lg border border-line bg-panel p-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-medium text-ink">Team</h2>
-        <span className="text-xs text-ink-faint">{onlineIds.size} online</span>
-      </div>
-
-      <ul className="mt-3 flex flex-col gap-2">
-        {usersQuery.isLoading ? (
-          <li className="text-xs text-ink-faint">Loading…</li>
-        ) : (
-          sorted.map((user) => {
-            const online = onlineIds.has(user.id);
-            return (
-              <li key={user.id} className="flex items-center gap-2.5">
-                <Avatar
-                  initials={user.initials}
-                  seed={user.id}
-                  online={online}
-                />
-                <span
-                  className={
-                    online ? "text-xs text-ink" : "text-xs text-ink-faint"
-                  }
-                >
-                  {user.name}
-                </span>
-              </li>
-            );
-          })
-        )}
-      </ul>
-    </div>
-  );
-}
-</file>
-
-<file path="components/dashboard/StatRow.tsx">
-interface Stat {
-  label: string;
-  value: number;
-  tone?: "danger" | "warning";
-}
-
-export function StatRow({ stats }: { stats: Stat[] }) {
-  return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-      {stats.map((stat) => {
-        const alert = stat.tone && stat.value > 0;
-        return (
-          <div
-            key={stat.label}
-            className={
-              alert
-                ? `rounded-lg border p-3.5 ${
-                    stat.tone === "danger"
-                      ? "border-danger/25 bg-danger/6"
-                      : "border-warning/25 bg-warning/6"
-                  }`
-                : "rounded-lg border border-line bg-panel p-3.5"
-            }
-          >
-            <div className="text-xs text-ink-dim">{stat.label}</div>
-            <div
-              className={`mt-1 font-mono text-2xl font-medium tabular-nums ${
-                alert
-                  ? stat.tone === "danger"
-                    ? "text-danger"
-                    : "text-warning"
-                  : "text-ink"
-              }`}
-            >
-              {stat.value}
-            </div>
-          </div>
-        );
-      })}
-    </div>
   );
 }
 </file>
@@ -8269,6 +7807,126 @@ export function IncidentsPanel({
 }
 </file>
 
+<file path="components/dashboard/PresenceRail.tsx">
+"use client";
+
+import { useQuery } from "@tanstack/react-query";
+import { Avatar } from "./Avatar";
+import { useOnlineUserIds } from "@/components/shared/RealtimeProvider";
+import { listOrgUsersAction } from "@/app/(dashboard)/tickets/actions";
+import type { User } from "@/types";
+
+const EMPTY_USERS: User[] = [];
+
+/**
+ * Milestone 7 / PR-01: real presence, in place of the static mock
+ * `onlineUserIds` set this used to take as a prop. Now fully
+ * self-contained — no props — for a reason beyond the usual
+ * self-fetching pattern (IncidentsView/ServicesView/ActivityView):
+ * `onlineIds` (useOnlineUserIds, RealtimeProvider.tsx) is real Supabase
+ * Presence keyed on real user ids, so the roster it's cross-referenced
+ * against has to be real too, or every entry would show offline
+ * regardless of actual presence — a mock `users` list with ids like
+ * "u_maya" would never match. `listOrgUsersAction` is the same query
+ * TicketModal/IncidentModal already use for assignee/responder pickers.
+ */
+export function PresenceRail() {
+  const usersQuery = useQuery({
+    queryKey: ["org-users", "list"],
+    queryFn: listOrgUsersAction,
+  });
+  const onlineIds = useOnlineUserIds();
+
+  const users = usersQuery.data ?? EMPTY_USERS;
+
+  const sorted = [...users].sort((a, b) => {
+    const aOnline = onlineIds.has(a.id) ? 0 : 1;
+    const bOnline = onlineIds.has(b.id) ? 0 : 1;
+    return aOnline - bOnline;
+  });
+
+  return (
+    <div className="rounded-lg border border-line bg-panel p-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-medium text-ink">Team</h2>
+        <span className="text-xs text-ink-faint">{onlineIds.size} online</span>
+      </div>
+
+      <ul className="mt-3 flex flex-col gap-2">
+        {usersQuery.isLoading ? (
+          <li className="text-xs text-ink-faint">Loading…</li>
+        ) : (
+          sorted.map((user) => {
+            const online = onlineIds.has(user.id);
+            return (
+              <li key={user.id} className="flex items-center gap-2.5">
+                <Avatar
+                  initials={user.initials}
+                  seed={user.id}
+                  online={online}
+                />
+                <span
+                  className={
+                    online ? "text-xs text-ink" : "text-xs text-ink-faint"
+                  }
+                >
+                  {user.name}
+                </span>
+              </li>
+            );
+          })
+        )}
+      </ul>
+    </div>
+  );
+}
+</file>
+
+<file path="components/dashboard/StatRow.tsx">
+interface Stat {
+  label: string;
+  value: number;
+  tone?: "danger" | "warning";
+}
+
+export function StatRow({ stats }: { stats: Stat[] }) {
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      {stats.map((stat) => {
+        const alert = stat.tone && stat.value > 0;
+        return (
+          <div
+            key={stat.label}
+            className={
+              alert
+                ? `rounded-lg border p-3.5 ${
+                    stat.tone === "danger"
+                      ? "border-danger/25 bg-danger/6"
+                      : "border-warning/25 bg-warning/6"
+                  }`
+                : "rounded-lg border border-line bg-panel p-3.5"
+            }
+          >
+            <div className="text-xs text-ink-dim">{stat.label}</div>
+            <div
+              className={`mt-1 font-mono text-2xl font-medium tabular-nums ${
+                alert
+                  ? stat.tone === "danger"
+                    ? "text-danger"
+                    : "text-warning"
+                  : "text-ink"
+              }`}
+            >
+              {stat.value}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+</file>
+
 <file path="components/dashboard/TicketBoard.tsx">
 import { Avatar } from "./Avatar";
 import {
@@ -10253,10 +9911,8 @@ export function ServiceHealthGrid({ services }: { services: Service[] }) {
 
 <file path="test-results/.last-run.json">
 {
-  "status": "failed",
-  "failedTests": [
-    "30bcad0ebe4e9ffa9e6f-fe9510cb6ffb3a5fba16"
-  ]
+  "status": "passed",
+  "failedTests": []
 }
 </file>
 
@@ -10424,577 +10080,6 @@ export function Avatar({
 }
 </file>
 
-<file path="e2e/ticket-realtime.spec.ts">
-import "dotenv/config";
-import { test, expect, type Page } from "@playwright/test";
-import { updateServiceTelemetry } from "@/server/application/services";
-
-/**
- * §41's actual definition of done — all eight tests now covered: 1, 2
- * (ticket creation and assignment), 3, 4, 5, 7 (incident creation,
- * ticket-linked impact, response assignment, and recovery — added here
- * as Milestone 5 made them coverable, per §12's instruction to keep this
- * file red rather than write eight tests up front against features that
- * don't exist yet), 6 (service degradation), and 8 (disconnect /
- * reconnect / reconcile) — every one propagating between two browser
- * contexts with no reload.
- *
- * Two more describe blocks below cover ground §41's numbered list
- * doesn't: `activity.created` (Milestone 6, AC-04) and Presence
- * (Milestone 7, PR-01/02). BACKEND_ROADMAP.md flagged both as "not yet
- * done" for the same reason — neither is one of the eight named tests —
- * but named the exact shape each should take, which is what these two
- * follow.
- *
- * Password must match prisma/seed.ts's DEMO_PASSWORD — there's no
- * shared import between the seed script and this test file, so if one
- * changes, the other needs to change too. Tests 6 and 7 below duplicate
- * PAYMENTS_SERVICE_ID for the same reason.
- *
- * Playwright Test resolves tsconfig `paths` for spec files itself, so
- * Test 6/7's `@/*` import of the application layer needs no
- * relative-path workaround. That's a separate concern from env loading,
- * though: like workers/telemetry.ts, this file is a standalone Node
- * process pulling in `/server/application` directly rather than going
- * through Next.js (which loads `.env` on its own) — the new
- * `prisma-client` generator doesn't load `.env` at runtime, so the
- * explicit `import "dotenv/config"` above is required for
- * `@/lib/prisma`'s `process.env.DATABASE_URL` to be defined when Test
- * 6/7 run.
- */
-const DEMO_PASSWORD = "relay-dev-1234";
-
-const USER_A = { email: "maya@kestrel.dev", name: "Maya Reyes" };
-const USER_B = { email: "josh@kestrel.dev", name: "Josh Dietrich" };
-
-async function loginAs(page: Page, email: string) {
-  await page.goto("/login");
-  await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Password").fill(DEMO_PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).toHaveURL(/\/dashboard/);
-}
-
-test.describe("§41 Test 1 & 2 — ticket creation and assignment propagate live", () => {
-  test("a ticket created by one user appears for another without a reload", async ({
-    browser,
-  }) => {
-    const contextA = await browser.newContext();
-    const contextB = await browser.newContext();
-    const pageA = await contextA.newPage();
-    const pageB = await contextB.newPage();
-
-    await loginAs(pageA, USER_A.email);
-    await loginAs(pageB, USER_B.email);
-
-    await pageA.goto("/tickets");
-    await pageB.goto("/tickets");
-
-    const title = `Realtime test ticket ${Date.now()}`;
-
-    // Test 1 (§41): create in Browser A.
-    await pageA.getByRole("button", { name: "New ticket" }).click();
-    await pageA.getByLabel("Title").fill(title);
-    await pageA.getByRole("button", { name: "Create ticket" }).click();
-
-    // Check Browser A first — this does NOT depend on realtime at all
-    // (its own mutation invalidates its own query on success), so a
-    // failure here means ticket creation itself is broken, not
-    // propagation. Splitting this out turns "Browser B never sees it"
-    // from one failure into two, so a red run actually points at which
-    // half is broken instead of leaving both as suspects.
-    await expect(pageA.getByText(title)).toBeVisible({ timeout: 10_000 });
-
-    // The real assertion: Browser B never reloads or navigates. If this
-    // only passes after a manual pageB.reload(), the realtime wiring
-    // (broadcast → RLS-authorized subscription → invalidateQueries)
-    // isn't actually working — a passing test with a reload added would
-    // be testing the wrong thing.
-    await expect(pageB.getByText(title)).toBeVisible({ timeout: 10_000 });
-
-    // Test 2 (§41): assign it to Browser B's user, from Browser A.
-    await pageA.getByText(title).click();
-    await pageA.getByLabel("Assignee").selectOption({ label: USER_B.name });
-    await pageA.getByRole("button", { name: "Save changes" }).click();
-
-    // Same split as Test 1: confirm the update itself succeeded on
-    // Browser A before blaming propagation. TicketsView's
-    // updateMutation.onSuccess only shows this toast (and closes the
-    // modal) on the ok:true branch — a ConflictError/ValidationError/
-    // NotFoundError from updateTicket() surfaces as an error toast
-    // instead and never reaches broadcastToOrg(), which would make
-    // Browser B's failure below a red herring pointing at realtime when
-    // the actual bug is in the mutation itself.
-    await expect(pageA.getByText("Ticket updated")).toBeVisible({
-      timeout: 10_000,
-    });
-
-    // The modal closing is the same signal from a different angle —
-    // onSuccess's ok:true branch is also what calls setModalState(null).
-    await expect(
-      pageA.getByRole("heading", { name: "Edit ticket" }),
-    ).toBeHidden({ timeout: 5_000 });
-
-    // Browser B should see itself assigned without any reload either —
-    // the avatar/assignment indicator replacing "Assign to me" on that
-    // row is the visible signal.
-    const rowB = pageB.locator("li", { hasText: title });
-    await expect(rowB.getByTitle(USER_B.name)).toBeVisible({
-      timeout: 10_000,
-    });
-
-    await contextA.close();
-    await contextB.close();
-  });
-});
-
-test.describe("§41 Test 3, 4 & 5 — incident creation, ticket-linked impact, and response propagate live", () => {
-  test("an incident, its linked tickets, and its responder all appear for another browser without a reload", async ({
-    browser,
-  }) => {
-    const contextA = await browser.newContext();
-    const contextB = await browser.newContext();
-    const pageA = await contextA.newPage();
-    const pageB = await contextB.newPage();
-
-    await loginAs(pageA, USER_A.email);
-    await loginAs(pageB, USER_B.email);
-
-    // Test 4 ("associate multiple tickets with the incident") needs
-    // real tickets to link against — IncidentModal's checklist lists
-    // actual org tickets (Milestone 5), not placeholder rows, so two
-    // get created here first.
-    const ts = Date.now();
-    const ticketATitle = `Impact test ticket A ${ts}`;
-    const ticketBTitle = `Impact test ticket B ${ts}`;
-
-    await pageA.goto("/tickets");
-    for (const title of [ticketATitle, ticketBTitle]) {
-      await pageA.getByRole("button", { name: "New ticket" }).click();
-      await pageA.getByLabel("Title").fill(title);
-      await pageA.getByRole("button", { name: "Create ticket" }).click();
-      await expect(pageA.getByText(title)).toBeVisible({ timeout: 10_000 });
-    }
-
-    await pageA.goto("/incidents");
-    await pageB.goto("/incidents");
-
-    // Test 3 (§41): create an incident affecting a service, from
-    // Browser A.
-    const incidentTitle = `Realtime test incident ${ts}`;
-
-    await pageA.getByRole("button", { name: "New incident" }).click();
-    await pageA.getByLabel("Title").fill(incidentTitle);
-    // Seeded by prisma/seed.ts — same service Test 6 below exercises.
-    await pageA.getByRole("checkbox", { name: "Payments API" }).check();
-    await pageA.getByRole("checkbox", { name: ticketATitle }).check();
-    await pageA.getByRole("checkbox", { name: ticketBTitle }).check();
-    await pageA.getByRole("button", { name: "Create incident" }).click();
-
-    // Same split as Test 1: confirm the create itself succeeded on
-    // Browser A before blaming propagation.
-    await expect(pageA.getByText(incidentTitle)).toBeVisible({
-      timeout: 10_000,
-    });
-
-    // The real assertion for Test 3: Browser B never reloads or
-    // navigates.
-    await expect(pageB.getByText(incidentTitle)).toBeVisible({
-      timeout: 10_000,
-    });
-
-    // Test 4 (§41): "the incident displays its operational impact" —
-    // both linked tickets showing up as a count on the row, on both
-    // browsers.
-    const rowA = pageA.locator("li", { hasText: incidentTitle });
-    const rowB = pageB.locator("li", { hasText: incidentTitle });
-    await expect(rowA.getByText("2 tickets")).toBeVisible({
-      timeout: 10_000,
-    });
-    await expect(rowB.getByText("2 tickets")).toBeVisible({
-      timeout: 10_000,
-    });
-
-    // Test 5 (§41): assign the incident to Browser B's user, from
-    // Browser A.
-    await pageA.getByText(incidentTitle).click();
-    await pageA.getByLabel("Responder").selectOption({ label: USER_B.name });
-    await pageA.getByRole("button", { name: "Save changes" }).click();
-
-    // Confirm the update itself succeeded on Browser A first, same
-    // reasoning as Test 2 above — a rejected update never reaches
-    // broadcastToOrg(), which would make Browser B's check below a
-    // red herring pointing at realtime when the actual bug is in the
-    // mutation itself.
-    await expect(pageA.getByText("Incident updated")).toBeVisible({
-      timeout: 10_000,
-    });
-    await expect(
-      pageA.getByRole("heading", { name: "Edit incident" }),
-    ).toBeHidden({ timeout: 5_000 });
-
-    // "A sees B as the responder immediately" (§41 Test 5) is the
-    // named assertion, but B seeing itself reflected back without a
-    // reload is the same realtime path and worth checking too.
-    await expect(rowA.getByTitle(`${USER_B.name} responding`)).toBeVisible({
-      timeout: 10_000,
-    });
-    await expect(rowB.getByTitle(`${USER_B.name} responding`)).toBeVisible({
-      timeout: 10_000,
-    });
-
-    await contextA.close();
-    await contextB.close();
-  });
-});
-
-test.describe("§41 Test 6 — service degradation propagates live", () => {
-  test("a degraded reading is visible on both dashboards without a reload", async ({
-    browser,
-  }) => {
-    const contextA = await browser.newContext();
-    const contextB = await browser.newContext();
-    const pageA = await contextA.newPage();
-    const pageB = await contextB.newPage();
-
-    await loginAs(pageA, USER_A.email);
-    await loginAs(pageB, USER_B.email);
-
-    await pageA.goto("/services");
-    await pageB.goto("/services");
-
-    const cardA = pageA.getByTestId("service-card-Payments API");
-    const cardB = pageB.getByTestId("service-card-Payments API");
-
-    // Both start OPERATIONAL — prisma/seed.ts's create default, assuming
-    // nothing else in this run already degraded it. Asserted first so a
-    // failure below can't be misread as "was already degraded."
-    await expect(cardA.getByText("Operational")).toBeVisible({
-      timeout: 10_000,
-    });
-    await expect(cardB.getByText("Operational")).toBeVisible({
-      timeout: 10_000,
-    });
-
-    // The simulation itself. There's no UI affordance for this —
-    // status/latency/errorRate are deliberately telemetry-only (README
-    // §13, ServiceModal.tsx's doc comment), never a field a human
-    // submits through a form. The real telemetry worker
-    // (workers/telemetry.ts) would eventually produce a DEGRADED
-    // reading through its own random walk, but "eventually, randomly,
-    // on a ~4s tick with a 6% spike chance" isn't reliable to await in
-    // a test — so this calls the exact same application-layer function
-    // the worker calls on the tick where it decides a reading is
-    // degraded (same version-checked write, same Activity row, same
-    // broadcastToOrg() call), just invoked directly and deterministically
-    // rather than waiting on the worker's own timer. This is standing in
-    // for one worker tick, not bypassing the architecture Test 6 is
-    // meant to exercise.
-    const PAYMENTS_SERVICE_ID = "00000000-0000-0000-0000-000000000101";
-    const SEED_ORG_ID = "00000000-0000-0000-0000-000000000001";
-
-    await updateServiceTelemetry(SEED_ORG_ID, PAYMENTS_SERVICE_ID, {
-      latencyMs: 420,
-      errorRate: 3.8,
-      status: "DEGRADED",
-    });
-
-    // Neither browser reloads or navigates from here. §7's debounce
-    // (RealtimeProvider.tsx) allows up to ~1.5s before the invalidation
-    // fires, on top of ordinary network/render time.
-    await expect(cardA.getByText("Degraded")).toBeVisible({
-      timeout: 10_000,
-    });
-    await expect(cardB.getByText("Degraded")).toBeVisible({
-      timeout: 10_000,
-    });
-
-    // Restore the seed row to OPERATIONAL so a re-run of this test (or
-    // the real telemetry worker's next tick, if it's running) doesn't
-    // inherit a DEGRADED starting point.
-    await updateServiceTelemetry(SEED_ORG_ID, PAYMENTS_SERVICE_ID, {
-      latencyMs: 110,
-      errorRate: 0.3,
-      status: "OPERATIONAL",
-    });
-
-    await contextA.close();
-    await contextB.close();
-  });
-});
-
-test.describe("§41 Test 7 — recovery: service restore and incident resolution converge", () => {
-  test("both browsers converge on Operational/Resolved without a reload", async ({
-    browser,
-  }) => {
-    const contextA = await browser.newContext();
-    const contextB = await browser.newContext();
-    const pageA = await contextA.newPage();
-    const pageB = await contextB.newPage();
-
-    await loginAs(pageA, USER_A.email);
-    await loginAs(pageB, USER_B.email);
-    await pageA.goto("/incidents");
-    await pageB.goto("/incidents");
-
-    // A fresh incident for this test rather than reusing Test 3/4/5's
-    // (a separate Playwright test file/run has no ordering guarantee
-    // against it) — affecting the same seeded service Test 6 degrades,
-    // so restoring that service below is the same "the affected
-    // service" §41 Test 7 describes, not an unrelated one.
-    const PAYMENTS_SERVICE_ID = "00000000-0000-0000-0000-000000000101";
-    const SEED_ORG_ID = "00000000-0000-0000-0000-000000000001";
-    const incidentTitle = `Recovery test incident ${Date.now()}`;
-
-    await pageA.getByRole("button", { name: "New incident" }).click();
-    await pageA.getByLabel("Title").fill(incidentTitle);
-    await pageA.getByRole("checkbox", { name: "Payments API" }).check();
-    await pageA.getByRole("button", { name: "Create incident" }).click();
-    await expect(pageA.getByText(incidentTitle)).toBeVisible({
-      timeout: 10_000,
-    });
-    await expect(pageB.getByText(incidentTitle)).toBeVisible({
-      timeout: 10_000,
-    });
-
-    // The service side of "recovery" — same standing-in-for-a-worker-
-    // tick reasoning Test 6 documents: degrade first (an incident
-    // affecting an already-healthy service wouldn't be much of a
-    // recovery to observe), then restore.
-    await updateServiceTelemetry(SEED_ORG_ID, PAYMENTS_SERVICE_ID, {
-      latencyMs: 420,
-      errorRate: 3.8,
-      status: "DEGRADED",
-    });
-    await updateServiceTelemetry(SEED_ORG_ID, PAYMENTS_SERVICE_ID, {
-      latencyMs: 110,
-      errorRate: 0.3,
-      status: "OPERATIONAL",
-    });
-
-    // The incident side: resolve it from Browser A.
-    await pageA.getByText(incidentTitle).click();
-    await pageA.getByLabel("Status").selectOption({ label: "Resolved" });
-    await pageA.getByRole("button", { name: "Save changes" }).click();
-    await expect(pageA.getByText("Incident updated")).toBeVisible({
-      timeout: 10_000,
-    });
-
-    // "Both clients converge on the same final state" (§41 Test 7):
-    // neither browser reloads, and both end up showing the incident
-    // as Resolved.
-    // Exact match: the row also shows "Resolved 5s ago" as a separate
-    // element (incident.resolvedAt's relative time), which also
-    // contains the substring "Resolved" and would otherwise make this
-    // locator resolve to two elements.
-    const rowA = pageA.locator("li", { hasText: incidentTitle });
-    const rowB = pageB.locator("li", { hasText: incidentTitle });
-    await expect(rowA.getByText("Resolved", { exact: true })).toBeVisible({
-      timeout: 10_000,
-    });
-    await expect(rowB.getByText("Resolved", { exact: true })).toBeVisible({
-      timeout: 10_000,
-    });
-
-    await contextA.close();
-    await contextB.close();
-  });
-});
-
-test.describe("Milestone 6 — activity.created propagates live", () => {
-  test("a new activity row appears on a live activity view without a reload", async ({
-    browser,
-  }) => {
-    const contextA = await browser.newContext();
-    const contextB = await browser.newContext();
-    const pageA = await contextA.newPage();
-    const pageB = await contextB.newPage();
-
-    await loginAs(pageA, USER_A.email);
-    await loginAs(pageB, USER_B.email);
-
-    // Both sit on the live activity feed for the whole test — this is
-    // the real assertion (AC-04), so neither of these two pages should
-    // ever need a reload or navigation from here on.
-    await pageA.goto("/activity");
-    await pageB.goto("/activity");
-
-    // The mutation that generates the row happens from a *second* tab
-    // in Browser A's own context, so pageA (still sitting on /activity)
-    // is a second, independent witness alongside pageB — the same
-    // "both browsers see it live" bar Tests 1-7 above hold themselves
-    // to, just with the actor's own activity view standing in for one
-    // of the two watchers instead of a second user's.
-    const ticketsTab = await contextA.newPage();
-    await ticketsTab.goto("/tickets");
-
-    const title = `Activity test ticket ${Date.now()}`;
-    await ticketsTab.getByRole("button", { name: "New ticket" }).click();
-    await ticketsTab.getByLabel("Title").fill(title);
-    await ticketsTab.getByRole("button", { name: "Create ticket" }).click();
-
-    // Confirm the mutation itself succeeded before blaming propagation —
-    // same split every earlier test in this file uses.
-    await expect(ticketsTab.getByText(title)).toBeVisible({
-      timeout: 10_000,
-    });
-
-    // The real assertion: recordActivity() (server/application/
-    // activities.ts) wrote the TICKET_CREATED row and broadcast
-    // `activity.created` in the same call, and RealtimeProvider.tsx
-    // invalidates `["activity","list"]` immediately (no debounce,
-    // AC-04) on that event alone — no reload, on either page, gets it
-    // there. ActivityDescription.tsx renders TICKET_CREATED as
-    // `opened "<title>"`; matching on the title substring is enough and
-    // avoids depending on the exact curly-quote characters it wraps it
-    // in.
-    await expect(pageA.getByText(title)).toBeVisible({ timeout: 10_000 });
-    await expect(pageB.getByText(title)).toBeVisible({ timeout: 10_000 });
-
-    await ticketsTab.close();
-    await contextA.close();
-    await contextB.close();
-  });
-});
-
-test.describe("Milestone 7 — presence propagates live, then clears on disconnect", () => {
-  test("a second user's avatar flips online without a reload, then eventually flips back offline when they disconnect", async ({
-    browser,
-  }) => {
-    const contextA = await browser.newContext();
-    const contextB = await browser.newContext();
-    const pageA = await contextA.newPage();
-    const pageB = await contextB.newPage();
-
-    await loginAs(pageA, USER_A.email);
-    await pageA.goto("/dashboard");
-
-    // Scoped to PresenceRail specifically ("Team" is its own heading,
-    // components/dashboard/PresenceRail.tsx) rather than a bare
-    // `page.getByText(name)` — other dashboard panels (IncidentsPanel's
-    // responder, TicketBoard's assignee) can render the same user names
-    // elsewhere on this page.
-    const presenceRailA = pageA.locator("div.rounded-lg", {
-      has: pageA.getByRole("heading", { name: "Team" }),
-    });
-    const presenceRailB = pageB.locator("div.rounded-lg", {
-      has: pageB.getByRole("heading", { name: "Team" }),
-    });
-
-    const rowA_self = presenceRailA.locator("li", { hasText: USER_A.name });
-    const rowA_forB = presenceRailA.locator("li", { hasText: USER_B.name });
-
-    // Browser A's own presence tracks itself the moment its channel
-    // reaches SUBSCRIBED (RealtimeProvider.tsx's `channel.track()` call,
-    // fired on every join) — confirmed before B ever connects, so the
-    // "B is online" check below can't be mistaking A's own row for B's.
-    // The green dot is Avatar.tsx's `bg-success` indicator; there's no
-    // other online/offline signal exposed to query against.
-    await expect(rowA_self.locator(".bg-success")).toBeVisible({
-      timeout: 15_000,
-    });
-    // Before B connects, Browser A should not see B as online yet.
-    await expect(rowA_forB.locator(".bg-success")).toBeHidden();
-
-    // Now B connects, from a separate browser context — no reload or
-    // navigation on Browser A from here.
-    await loginAs(pageB, USER_B.email);
-    await pageB.goto("/dashboard");
-
-    // The real assertion (PR-01): B's avatar flips to online in A's
-    // rail purely from the Presence 'sync' event on the shared
-    // `org:{orgId}` channel — no reload, no poll.
-    await expect(rowA_forB.locator(".bg-success")).toBeVisible({
-      timeout: 15_000,
-    });
-
-    // Same roster from B's side: B sees both itself and A online.
-    const rowB_self = presenceRailB.locator("li", { hasText: USER_B.name });
-    const rowB_forA = presenceRailB.locator("li", { hasText: USER_A.name });
-    await expect(rowB_self.locator(".bg-success")).toBeVisible();
-    await expect(rowB_forA.locator(".bg-success")).toBeVisible();
-
-    // PR-02's "eventually" flips it back offline when B disconnects.
-    // Closing the whole context (not just navigating away) is the
-    // realistic "the tab just closed" case — there's no graceful
-    // `untrack()` for the test to await here, so detection falls back to
-    // Presence's own server-side timeout, same "eventually" the
-    // Milestone 7 notes call out. That's why this gets a generous
-    // timeout rather than the ~10-15s the rest of this file uses for
-    // ordinary broadcasts.
-    await contextB.close();
-
-    await expect(rowA_forB.locator(".bg-success")).toBeHidden({
-      timeout: 45_000,
-    });
-
-    await contextA.close();
-  });
-});
-
-test.describe("§41 Test 8 — disconnect, then reconnect and reconcile", () => {
-  test("shows a clear connection-lost state, then reconciles on reconnect", async ({
-    browser,
-  }) => {
-    const contextA = await browser.newContext();
-    const contextB = await browser.newContext();
-    const pageA = await contextA.newPage();
-    const pageB = await contextB.newPage();
-
-    await loginAs(pageA, USER_A.email);
-    await loginAs(pageB, USER_B.email);
-    await pageA.goto("/tickets");
-    await pageB.goto("/tickets");
-
-    // Browser B starts live.
-    await expect(
-      pageB.getByRole("status").filter({ hasText: "Live" }),
-    ).toBeVisible({ timeout: 15_000 });
-
-    // "Kill the network connection" (§41 Test 8) on Browser B only.
-    await contextB.setOffline(true);
-
-    // A clear connection-lost state: the indicator flips and the page
-    // says its data may be stale. This is driven by the browser's
-    // 'offline' event, so it holds even though Playwright's offline
-    // emulation doesn't reliably sever an already-open WebSocket.
-    await expect(
-      pageB.getByRole("status").filter({ hasText: "Offline" }),
-    ).toBeVisible({ timeout: 5_000 });
-    // Filtered by text: Next.js's own route announcer is also
-    // role="alert" on every page, so a bare getByRole("alert") matches
-    // two elements and trips Playwright's strict mode.
-    const staleBanner = pageB
-      .getByRole("alert")
-      .filter({ hasText: "out of date" });
-    await expect(staleBanner).toBeVisible();
-
-    // Meanwhile Browser A (still online) makes a change B can't have
-    // received through a healthy connection.
-    const title = `Reconnect test ticket ${Date.now()}`;
-    await pageA.getByRole("button", { name: "New ticket" }).click();
-    await pageA.getByLabel("Title").fill(title);
-    await pageA.getByRole("button", { name: "Create ticket" }).click();
-    await expect(pageA.getByText(title)).toBeVisible({ timeout: 10_000 });
-
-    // Restore the connection. B must reconnect on its own — no reload —
-    // return to Live, drop the warning, and reconcile with server state
-    // (§35: invalidate everything on SUBSCRIBED), which is where the
-    // ticket created during the outage shows up.
-    await contextB.setOffline(false);
-
-    await expect(
-      pageB.getByRole("status").filter({ hasText: "Live" }),
-    ).toBeVisible({ timeout: 20_000 });
-    await expect(staleBanner).toBeHidden();
-    await expect(pageB.getByText(title)).toBeVisible({ timeout: 10_000 });
-
-    await contextA.close();
-    await contextB.close();
-  });
-});
-</file>
-
 <file path="package.json">
 {
   "name": "relay",
@@ -11037,61 +10122,6 @@ test.describe("§41 Test 8 — disconnect, then reconnect and reconcile", () => 
     "typescript": "^5"
   },
   "packageManager": "yarn@4.12.0"
-}
-</file>
-
-<file path="app/(dashboard)/layout.tsx">
-import type { ReactNode } from "react";
-import { redirect } from "next/navigation";
-import { TopBar } from "@/components/shared/TopBar";
-import { ToastProvider } from "@/components/shared/Toast";
-import { QueryProvider } from "@/components/shared/QueryProvider";
-import { RealtimeProvider } from "@/components/shared/RealtimeProvider";
-import { ConnectionBanner } from "@/components/shared/ConnectionBanner";
-import { currentOrgName } from "@/lib/mock-data";
-import { getCurrentUser } from "@/server/auth/session";
-import { PATHS } from "@/utils/paths";
-
-// The getCurrentUser() check below is the actual sign-in gate — it
-// protects every route in this group even on a direct navigation (typing
-// /tickets straight into the address bar), not just the root page's
-// redirect. It covers both "no session at all" and the edge case of a
-// still-valid access token whose underlying user record no longer
-// exists — either way, no user means no admission. Because the gate is
-// here once, every page inside this layout can treat `self` as always
-// present, no per-page null check needed.
-
-export default async function DashboardLayout({
-  children,
-}: {
-  children: ReactNode;
-}) {
-  const self = await getCurrentUser();
-
-  if (!self) {
-    redirect(PATHS.LOGIN);
-  }
-
-  return (
-    <QueryProvider>
-      <RealtimeProvider orgId={self.orgId} userId={self.id}>
-        <ToastProvider>
-          <div className="flex h-full flex-col">
-            <TopBar orgName={currentOrgName} self={self} />
-
-            {/* Only this content area scrolls — the TopBar above stays put.
-                Shared by every route in this group (dashboard, tickets,
-                incidents, services, activity) so each page only owns its own
-                content. */}
-            <main className="mx-auto flex w-full max-w-350 flex-1 flex-col gap-4 overflow-y-auto px-3 py-4 sm:px-6 sm:py-5">
-              <ConnectionBanner />
-              {children}
-            </main>
-          </div>
-        </ToastProvider>
-      </RealtimeProvider>
-    </QueryProvider>
-  );
 }
 </file>
 
@@ -11781,6 +10811,632 @@ export function TopBar({ orgName, self }: { orgName: string; self: User }) {
 }
 </file>
 
+<file path="e2e/ticket-realtime.spec.ts">
+import "dotenv/config";
+import { test, expect, type Page } from "@playwright/test";
+import { updateServiceTelemetry } from "@/server/application/services";
+
+/**
+ * §41's actual definition of done — all eight tests now covered: 1, 2
+ * (ticket creation and assignment), 3, 4, 5, 7 (incident creation,
+ * ticket-linked impact, response assignment, and recovery — added here
+ * as Milestone 5 made them coverable, per §12's instruction to keep this
+ * file red rather than write eight tests up front against features that
+ * don't exist yet), 6 (service degradation), and 8 (disconnect /
+ * reconnect / reconcile) — every one propagating between two browser
+ * contexts with no reload.
+ *
+ * Two more describe blocks below cover ground §41's numbered list
+ * doesn't: `activity.created` (Milestone 6, AC-04) and Presence
+ * (Milestone 7, PR-01/02). BACKEND_ROADMAP.md flagged both as "not yet
+ * done" for the same reason — neither is one of the eight named tests —
+ * but named the exact shape each should take, which is what these two
+ * follow.
+ *
+ * Password must match prisma/seed.ts's DEMO_PASSWORD — there's no
+ * shared import between the seed script and this test file, so if one
+ * changes, the other needs to change too. Tests 6 and 7 below duplicate
+ * PAYMENTS_SERVICE_ID for the same reason.
+ *
+ * Playwright Test resolves tsconfig `paths` for spec files itself, so
+ * Test 6/7's `@/*` import of the application layer needs no
+ * relative-path workaround. That's a separate concern from env loading,
+ * though: like workers/telemetry.ts, this file is a standalone Node
+ * process pulling in `/server/application` directly rather than going
+ * through Next.js (which loads `.env` on its own) — the new
+ * `prisma-client` generator doesn't load `.env` at runtime, so the
+ * explicit `import "dotenv/config"` above is required for
+ * `@/lib/prisma`'s `process.env.DATABASE_URL` to be defined when Test
+ * 6/7 run.
+ */
+const DEMO_PASSWORD = "relay-dev-1234";
+
+const USER_A = { email: "maya@kestrel.dev", name: "Maya Reyes" };
+const USER_B = { email: "josh@kestrel.dev", name: "Josh Dietrich" };
+
+async function loginAs(page: Page, email: string) {
+  await page.goto("/login");
+  await page.getByLabel("Email").fill(email);
+  await page.getByLabel("Password").fill(DEMO_PASSWORD);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page).toHaveURL(/\/dashboard/);
+}
+
+test.describe("§41 Test 1 & 2 — ticket creation and assignment propagate live", () => {
+  test("a ticket created by one user appears for another without a reload", async ({
+    browser,
+  }) => {
+    const contextA = await browser.newContext();
+    const contextB = await browser.newContext();
+    const pageA = await contextA.newPage();
+    const pageB = await contextB.newPage();
+
+    await loginAs(pageA, USER_A.email);
+    await loginAs(pageB, USER_B.email);
+
+    await pageA.goto("/tickets");
+    await pageB.goto("/tickets");
+
+    const title = `Realtime test ticket ${Date.now()}`;
+
+    // Test 1 (§41): create in Browser A.
+    await pageA.getByRole("button", { name: "New ticket" }).click();
+    await pageA.getByLabel("Title").fill(title);
+    await pageA.getByRole("button", { name: "Create ticket" }).click();
+
+    // Check Browser A first — this does NOT depend on realtime at all
+    // (its own mutation invalidates its own query on success), so a
+    // failure here means ticket creation itself is broken, not
+    // propagation. Splitting this out turns "Browser B never sees it"
+    // from one failure into two, so a red run actually points at which
+    // half is broken instead of leaving both as suspects.
+    await expect(pageA.getByText(title)).toBeVisible({ timeout: 10_000 });
+
+    // The real assertion: Browser B never reloads or navigates. If this
+    // only passes after a manual pageB.reload(), the realtime wiring
+    // (broadcast → RLS-authorized subscription → invalidateQueries)
+    // isn't actually working — a passing test with a reload added would
+    // be testing the wrong thing.
+    await expect(pageB.getByText(title)).toBeVisible({ timeout: 10_000 });
+
+    // Test 2 (§41): assign it to Browser B's user, from Browser A.
+    await pageA.getByText(title).click();
+    await pageA.getByLabel("Assignee").selectOption({ label: USER_B.name });
+    await pageA.getByRole("button", { name: "Save changes" }).click();
+
+    // Same split as Test 1: confirm the update itself succeeded on
+    // Browser A before blaming propagation. TicketsView's
+    // updateMutation.onSuccess only shows this toast (and closes the
+    // modal) on the ok:true branch — a ConflictError/ValidationError/
+    // NotFoundError from updateTicket() surfaces as an error toast
+    // instead and never reaches broadcastToOrg(), which would make
+    // Browser B's failure below a red herring pointing at realtime when
+    // the actual bug is in the mutation itself.
+    await expect(pageA.getByText("Ticket updated")).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // The modal closing is the same signal from a different angle —
+    // onSuccess's ok:true branch is also what calls setModalState(null).
+    await expect(
+      pageA.getByRole("heading", { name: "Edit ticket" }),
+    ).toBeHidden({ timeout: 5_000 });
+
+    // Browser B should see itself assigned without any reload either —
+    // the avatar/assignment indicator replacing "Assign to me" on that
+    // row is the visible signal.
+    const rowB = pageB.locator("li", { hasText: title });
+    await expect(rowB.getByTitle(USER_B.name)).toBeVisible({
+      timeout: 10_000,
+    });
+
+    await contextA.close();
+    await contextB.close();
+  });
+});
+
+test.describe("§41 Test 3, 4 & 5 — incident creation, ticket-linked impact, and response propagate live", () => {
+  test("an incident, its linked tickets, and its responder all appear for another browser without a reload", async ({
+    browser,
+  }) => {
+    const contextA = await browser.newContext();
+    const contextB = await browser.newContext();
+    const pageA = await contextA.newPage();
+    const pageB = await contextB.newPage();
+
+    await loginAs(pageA, USER_A.email);
+    await loginAs(pageB, USER_B.email);
+
+    // Test 4 ("associate multiple tickets with the incident") needs
+    // real tickets to link against — IncidentModal's checklist lists
+    // actual org tickets (Milestone 5), not placeholder rows, so two
+    // get created here first.
+    const ts = Date.now();
+    const ticketATitle = `Impact test ticket A ${ts}`;
+    const ticketBTitle = `Impact test ticket B ${ts}`;
+
+    await pageA.goto("/tickets");
+    for (const title of [ticketATitle, ticketBTitle]) {
+      await pageA.getByRole("button", { name: "New ticket" }).click();
+      await pageA.getByLabel("Title").fill(title);
+      await pageA.getByRole("button", { name: "Create ticket" }).click();
+      await expect(pageA.getByText(title)).toBeVisible({ timeout: 10_000 });
+    }
+
+    await pageA.goto("/incidents");
+    await pageB.goto("/incidents");
+
+    // Test 3 (§41): create an incident affecting a service, from
+    // Browser A.
+    const incidentTitle = `Realtime test incident ${ts}`;
+
+    await pageA.getByRole("button", { name: "New incident" }).click();
+    await pageA.getByLabel("Title").fill(incidentTitle);
+    // Seeded by prisma/seed.ts — same service Test 6 below exercises.
+    await pageA.getByRole("checkbox", { name: "Payments API" }).check();
+    await pageA.getByRole("checkbox", { name: ticketATitle }).check();
+    await pageA.getByRole("checkbox", { name: ticketBTitle }).check();
+    await pageA.getByRole("button", { name: "Create incident" }).click();
+
+    // Same split as Test 1: confirm the create itself succeeded on
+    // Browser A before blaming propagation.
+    await expect(pageA.getByText(incidentTitle)).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // The real assertion for Test 3: Browser B never reloads or
+    // navigates.
+    await expect(pageB.getByText(incidentTitle)).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // Test 4 (§41): "the incident displays its operational impact" —
+    // both linked tickets showing up as a count on the row, on both
+    // browsers.
+    const rowA = pageA.locator("li", { hasText: incidentTitle });
+    const rowB = pageB.locator("li", { hasText: incidentTitle });
+    await expect(rowA.getByText("2 tickets")).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(rowB.getByText("2 tickets")).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // Test 5 (§41): assign the incident to Browser B's user, from
+    // Browser A.
+    await pageA.getByText(incidentTitle).click();
+    await pageA.getByLabel("Responder").selectOption({ label: USER_B.name });
+    await pageA.getByRole("button", { name: "Save changes" }).click();
+
+    // Confirm the update itself succeeded on Browser A first, same
+    // reasoning as Test 2 above — a rejected update never reaches
+    // broadcastToOrg(), which would make Browser B's check below a
+    // red herring pointing at realtime when the actual bug is in the
+    // mutation itself.
+    await expect(pageA.getByText("Incident updated")).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(
+      pageA.getByRole("heading", { name: "Edit incident" }),
+    ).toBeHidden({ timeout: 5_000 });
+
+    // "A sees B as the responder immediately" (§41 Test 5) is the
+    // named assertion, but B seeing itself reflected back without a
+    // reload is the same realtime path and worth checking too.
+    await expect(rowA.getByTitle(`${USER_B.name} responding`)).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(rowB.getByTitle(`${USER_B.name} responding`)).toBeVisible({
+      timeout: 10_000,
+    });
+
+    await contextA.close();
+    await contextB.close();
+  });
+});
+
+test.describe("§41 Test 6 — service degradation propagates live", () => {
+  test("a degraded reading is visible on both dashboards without a reload", async ({
+    browser,
+  }) => {
+    const contextA = await browser.newContext();
+    const contextB = await browser.newContext();
+    const pageA = await contextA.newPage();
+    const pageB = await contextB.newPage();
+
+    await loginAs(pageA, USER_A.email);
+    await loginAs(pageB, USER_B.email);
+
+    await pageA.goto("/services");
+    await pageB.goto("/services");
+
+    const cardA = pageA.getByTestId("service-card-Payments API");
+    const cardB = pageB.getByTestId("service-card-Payments API");
+
+    // Both start OPERATIONAL — prisma/seed.ts's create default, assuming
+    // nothing else in this run already degraded it. Asserted first so a
+    // failure below can't be misread as "was already degraded."
+    await expect(cardA.getByText("Operational")).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(cardB.getByText("Operational")).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // The simulation itself. There's no UI affordance for this —
+    // status/latency/errorRate are deliberately telemetry-only (README
+    // §13, ServiceModal.tsx's doc comment), never a field a human
+    // submits through a form. The real telemetry worker
+    // (workers/telemetry.ts) would eventually produce a DEGRADED
+    // reading through its own random walk, but "eventually, randomly,
+    // on a ~4s tick with a 6% spike chance" isn't reliable to await in
+    // a test — so this calls the exact same application-layer function
+    // the worker calls on the tick where it decides a reading is
+    // degraded (same version-checked write, same Activity row, same
+    // broadcastToOrg() call), just invoked directly and deterministically
+    // rather than waiting on the worker's own timer. This is standing in
+    // for one worker tick, not bypassing the architecture Test 6 is
+    // meant to exercise.
+    const PAYMENTS_SERVICE_ID = "00000000-0000-0000-0000-000000000101";
+    const SEED_ORG_ID = "00000000-0000-0000-0000-000000000001";
+
+    await updateServiceTelemetry(SEED_ORG_ID, PAYMENTS_SERVICE_ID, {
+      latencyMs: 420,
+      errorRate: 3.8,
+      status: "DEGRADED",
+    });
+
+    // Neither browser reloads or navigates from here. §7's debounce
+    // (RealtimeProvider.tsx) allows up to ~1.5s before the invalidation
+    // fires, on top of ordinary network/render time.
+    await expect(cardA.getByText("Degraded")).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(cardB.getByText("Degraded")).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // Restore the seed row to OPERATIONAL so a re-run of this test (or
+    // the real telemetry worker's next tick, if it's running) doesn't
+    // inherit a DEGRADED starting point.
+    await updateServiceTelemetry(SEED_ORG_ID, PAYMENTS_SERVICE_ID, {
+      latencyMs: 110,
+      errorRate: 0.3,
+      status: "OPERATIONAL",
+    });
+
+    await contextA.close();
+    await contextB.close();
+  });
+});
+
+test.describe("§41 Test 7 — recovery: service restore and incident resolution converge", () => {
+  test("both browsers converge on Operational/Resolved without a reload", async ({
+    browser,
+  }) => {
+    const contextA = await browser.newContext();
+    const contextB = await browser.newContext();
+    const pageA = await contextA.newPage();
+    const pageB = await contextB.newPage();
+
+    await loginAs(pageA, USER_A.email);
+    await loginAs(pageB, USER_B.email);
+    await pageA.goto("/incidents");
+    await pageB.goto("/incidents");
+
+    // A fresh incident for this test rather than reusing Test 3/4/5's
+    // (a separate Playwright test file/run has no ordering guarantee
+    // against it) — affecting the same seeded service Test 6 degrades,
+    // so restoring that service below is the same "the affected
+    // service" §41 Test 7 describes, not an unrelated one.
+    const PAYMENTS_SERVICE_ID = "00000000-0000-0000-0000-000000000101";
+    const SEED_ORG_ID = "00000000-0000-0000-0000-000000000001";
+    const incidentTitle = `Recovery test incident ${Date.now()}`;
+
+    await pageA.getByRole("button", { name: "New incident" }).click();
+    await pageA.getByLabel("Title").fill(incidentTitle);
+    await pageA.getByRole("checkbox", { name: "Payments API" }).check();
+    await pageA.getByRole("button", { name: "Create incident" }).click();
+    await expect(pageA.getByText(incidentTitle)).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(pageB.getByText(incidentTitle)).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // The service side of "recovery" — same standing-in-for-a-worker-
+    // tick reasoning Test 6 documents: degrade first (an incident
+    // affecting an already-healthy service wouldn't be much of a
+    // recovery to observe), then restore.
+    await updateServiceTelemetry(SEED_ORG_ID, PAYMENTS_SERVICE_ID, {
+      latencyMs: 420,
+      errorRate: 3.8,
+      status: "DEGRADED",
+    });
+    await updateServiceTelemetry(SEED_ORG_ID, PAYMENTS_SERVICE_ID, {
+      latencyMs: 110,
+      errorRate: 0.3,
+      status: "OPERATIONAL",
+    });
+
+    // The incident side: resolve it from Browser A.
+    await pageA.getByText(incidentTitle).click();
+    await pageA.getByLabel("Status").selectOption({ label: "Resolved" });
+    await pageA.getByRole("button", { name: "Save changes" }).click();
+    await expect(pageA.getByText("Incident updated")).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // "Both clients converge on the same final state" (§41 Test 7):
+    // neither browser reloads, and both end up showing the incident
+    // as Resolved.
+    // Exact match: the row also shows "Resolved 5s ago" as a separate
+    // element (incident.resolvedAt's relative time), which also
+    // contains the substring "Resolved" and would otherwise make this
+    // locator resolve to two elements.
+    const rowA = pageA.locator("li", { hasText: incidentTitle });
+    const rowB = pageB.locator("li", { hasText: incidentTitle });
+    await expect(rowA.getByText("Resolved", { exact: true })).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(rowB.getByText("Resolved", { exact: true })).toBeVisible({
+      timeout: 10_000,
+    });
+
+    await contextA.close();
+    await contextB.close();
+  });
+});
+
+test.describe("Milestone 6 — activity.created propagates live", () => {
+  test("a new activity row appears on a live activity view without a reload", async ({
+    browser,
+  }) => {
+    const contextA = await browser.newContext();
+    const contextB = await browser.newContext();
+    const pageA = await contextA.newPage();
+    const pageB = await contextB.newPage();
+
+    await loginAs(pageA, USER_A.email);
+    await loginAs(pageB, USER_B.email);
+
+    // Both sit on the live activity feed for the whole test — this is
+    // the real assertion (AC-04), so neither of these two pages should
+    // ever need a reload or navigation from here on.
+    await pageA.goto("/activity");
+    await pageB.goto("/activity");
+
+    // The mutation that generates the row happens from a *second* tab
+    // in Browser A's own context, so pageA (still sitting on /activity)
+    // is a second, independent witness alongside pageB — the same
+    // "both browsers see it live" bar Tests 1-7 above hold themselves
+    // to, just with the actor's own activity view standing in for one
+    // of the two watchers instead of a second user's.
+    const ticketsTab = await contextA.newPage();
+    await ticketsTab.goto("/tickets");
+
+    const title = `Activity test ticket ${Date.now()}`;
+    await ticketsTab.getByRole("button", { name: "New ticket" }).click();
+    await ticketsTab.getByLabel("Title").fill(title);
+    await ticketsTab.getByRole("button", { name: "Create ticket" }).click();
+
+    // Confirm the mutation itself succeeded before blaming propagation —
+    // same split every earlier test in this file uses.
+    await expect(ticketsTab.getByText(title)).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // The real assertion: recordActivity() (server/application/
+    // activities.ts) wrote the TICKET_CREATED row and broadcast
+    // `activity.created` in the same call, and RealtimeProvider.tsx
+    // invalidates `["activity","list"]` immediately (no debounce,
+    // AC-04) on that event alone — no reload, on either page, gets it
+    // there. ActivityDescription.tsx renders TICKET_CREATED as
+    // `opened "<title>"`; matching on the title substring is enough and
+    // avoids depending on the exact curly-quote characters it wraps it
+    // in.
+    await expect(pageA.getByText(title)).toBeVisible({ timeout: 10_000 });
+    await expect(pageB.getByText(title)).toBeVisible({ timeout: 10_000 });
+
+    await ticketsTab.close();
+    await contextA.close();
+    await contextB.close();
+  });
+});
+
+test.describe("Milestone 7 — presence propagates live, then clears on disconnect", () => {
+  test("a second user's avatar flips online without a reload, then eventually flips back offline when they disconnect", async ({
+    browser,
+  }) => {
+    const contextA = await browser.newContext();
+    const contextB = await browser.newContext();
+    const pageA = await contextA.newPage();
+    const pageB = await contextB.newPage();
+
+    await loginAs(pageA, USER_A.email);
+    await pageA.goto("/dashboard");
+
+    // Scoped to PresenceRail specifically ("Team" is its own heading,
+    // components/dashboard/PresenceRail.tsx) rather than a bare
+    // `page.getByText(name)` — other dashboard panels (IncidentsPanel's
+    // responder, TicketBoard's assignee) can render the same user names
+    // elsewhere on this page.
+    const presenceRailA = pageA.locator("div.rounded-lg", {
+      has: pageA.getByRole("heading", { name: "Team" }),
+    });
+    const presenceRailB = pageB.locator("div.rounded-lg", {
+      has: pageB.getByRole("heading", { name: "Team" }),
+    });
+
+    const rowA_self = presenceRailA.locator("li", { hasText: USER_A.name });
+    const rowA_forB = presenceRailA.locator("li", { hasText: USER_B.name });
+
+    // Browser A's own presence tracks itself the moment its channel
+    // reaches SUBSCRIBED (RealtimeProvider.tsx's `channel.track()` call,
+    // fired on every join) — confirmed before B ever connects, so the
+    // "B is online" check below can't be mistaking A's own row for B's.
+    // The green dot is Avatar.tsx's `bg-success` indicator; there's no
+    // other online/offline signal exposed to query against.
+    await expect(rowA_self.locator(".bg-success")).toBeVisible({
+      timeout: 15_000,
+    });
+    // Before B connects, Browser A should not see B as online yet.
+    await expect(rowA_forB.locator(".bg-success")).toBeHidden();
+
+    // Now B connects, from a separate browser context — no reload or
+    // navigation on Browser A from here.
+    await loginAs(pageB, USER_B.email);
+    await pageB.goto("/dashboard");
+
+    // The real assertion (PR-01): B's avatar flips to online in A's
+    // rail purely from the Presence 'sync' event on the shared
+    // `org:{orgId}` channel — no reload, no poll.
+    await expect(rowA_forB.locator(".bg-success")).toBeVisible({
+      timeout: 15_000,
+    });
+
+    // Same roster from B's side: B sees both itself and A online.
+    const rowB_self = presenceRailB.locator("li", { hasText: USER_B.name });
+    const rowB_forA = presenceRailB.locator("li", { hasText: USER_A.name });
+    await expect(rowB_self.locator(".bg-success")).toBeVisible();
+    await expect(rowB_forA.locator(".bg-success")).toBeVisible();
+
+    // PR-02's "eventually" flips it back offline when B disconnects.
+    // Closing the whole context (not just navigating away) is the
+    // realistic "the tab just closed" case — there's no graceful
+    // `untrack()` for the test to await here, so detection falls back to
+    // Presence's own server-side timeout, same "eventually" the
+    // Milestone 7 notes call out. That's why this gets a generous
+    // timeout rather than the ~10-15s the rest of this file uses for
+    // ordinary broadcasts.
+    await contextB.close();
+
+    await expect(rowA_forB.locator(".bg-success")).toBeHidden({
+      timeout: 45_000,
+    });
+
+    await contextA.close();
+  });
+});
+
+test.describe("§41 Test 8 — disconnect, then reconnect and reconcile", () => {
+  test("shows a clear connection-lost state, then reconciles on reconnect", async ({
+    browser,
+  }) => {
+    const contextA = await browser.newContext();
+    const contextB = await browser.newContext();
+    const pageA = await contextA.newPage();
+    const pageB = await contextB.newPage();
+
+    await loginAs(pageA, USER_A.email);
+    await loginAs(pageB, USER_B.email);
+    await pageA.goto("/tickets");
+    await pageB.goto("/tickets");
+
+    // Browser B starts live.
+    await expect(
+      pageB.getByRole("status").filter({ hasText: "Live" }),
+    ).toBeVisible({ timeout: 15_000 });
+
+    // "Kill the network connection" (§41 Test 8) on Browser B only.
+    await contextB.setOffline(true);
+
+    // A clear connection-lost state: the indicator flips and the page
+    // says its data may be stale. This is driven by the browser's
+    // 'offline' event, so it holds even though Playwright's offline
+    // emulation doesn't reliably sever an already-open WebSocket.
+    await expect(
+      pageB.getByRole("status").filter({ hasText: "Offline" }),
+    ).toBeVisible({ timeout: 5_000 });
+    // Filtered by text: Next.js's own route announcer is also
+    // role="alert" on every page, so a bare getByRole("alert") matches
+    // two elements and trips Playwright's strict mode.
+    const staleBanner = pageB
+      .getByRole("alert")
+      .filter({ hasText: "out of date" });
+    await expect(staleBanner).toBeVisible();
+
+    // Meanwhile Browser A (still online) makes a change B can't have
+    // received through a healthy connection.
+    const title = `Reconnect test ticket ${Date.now()}`;
+    await pageA.getByRole("button", { name: "New ticket" }).click();
+    await pageA.getByLabel("Title").fill(title);
+    await pageA.getByRole("button", { name: "Create ticket" }).click();
+    await expect(pageA.getByText(title)).toBeVisible({ timeout: 10_000 });
+
+    // Restore the connection. B must reconnect on its own — no reload —
+    // return to Live, drop the warning, and reconcile with server state
+    // (§35: invalidate everything on SUBSCRIBED), which is where the
+    // ticket created during the outage shows up.
+    await contextB.setOffline(false);
+
+    await expect(
+      pageB.getByRole("status").filter({ hasText: "Live" }),
+    ).toBeVisible({ timeout: 20_000 });
+    await expect(staleBanner).toBeHidden();
+    await expect(pageB.getByText(title)).toBeVisible({ timeout: 10_000 });
+
+    await contextA.close();
+    await contextB.close();
+  });
+});
+</file>
+
+<file path="app/(dashboard)/layout.tsx">
+import type { ReactNode } from "react";
+import { redirect } from "next/navigation";
+import { TopBar } from "@/components/shared/TopBar";
+import { ToastProvider } from "@/components/shared/Toast";
+import { QueryProvider } from "@/components/shared/QueryProvider";
+import { RealtimeProvider } from "@/components/shared/RealtimeProvider";
+import { ConnectionBanner } from "@/components/shared/ConnectionBanner";
+import { currentOrgName } from "@/lib/mock-data";
+import { getCurrentUser } from "@/server/auth/session";
+import { PATHS } from "@/utils/paths";
+
+// The getCurrentUser() check below is the actual sign-in gate — it
+// protects every route in this group even on a direct navigation (typing
+// /tickets straight into the address bar), not just the root page's
+// redirect. It covers both "no session at all" and the edge case of a
+// still-valid access token whose underlying user record no longer
+// exists — either way, no user means no admission. Because the gate is
+// here once, every page inside this layout can treat `self` as always
+// present, no per-page null check needed.
+
+export default async function DashboardLayout({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  const self = await getCurrentUser();
+
+  if (!self) {
+    redirect(PATHS.LOGIN);
+  }
+
+  return (
+    <QueryProvider>
+      <RealtimeProvider orgId={self.orgId} userId={self.id}>
+        <ToastProvider>
+          <div className="flex h-full flex-col">
+            <TopBar orgName={currentOrgName} self={self} />
+
+            {/* Only this content area scrolls — the TopBar above stays put.
+                Shared by every route in this group (dashboard, tickets,
+                incidents, services, activity) so each page only owns its own
+                content. */}
+            <main className="mx-auto flex w-full max-w-350 flex-1 flex-col gap-4 overflow-y-auto px-3 py-4 sm:px-6 sm:py-5">
+              <ConnectionBanner />
+              {children}
+            </main>
+          </div>
+        </ToastProvider>
+      </RealtimeProvider>
+    </QueryProvider>
+  );
+}
+</file>
+
 <file path="components/services/ServicesView.tsx">
 "use client";
 
@@ -12345,6 +12001,395 @@ export function ServicesView({ self }: ServicesViewProps) {
 }
 </file>
 
+<file path="components/tickets/TicketsView.tsx">
+"use client";
+
+import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { PlusIcon } from "@phosphor-icons/react";
+import { Avatar } from "@/components/dashboard/Avatar";
+import { FilterPill } from "@/components/shared/FilterPill";
+import { SearchInput } from "@/components/shared/SearchInput";
+import {
+  TicketModal,
+  type CreateTicketFields,
+  type UpdateTicketFields,
+} from "@/components/tickets/TicketModal";
+import { useToast } from "@/components/shared/Toast";
+import { ActionFailure, failureMessage, unwrap } from "@/lib/action-result";
+import {
+  createTicketAction,
+  listOrgUsersAction,
+  listTicketsAction,
+  updateTicketAction,
+} from "@/app/(dashboard)/tickets/actions";
+import {
+  ticketPriorityMeta,
+  ticketStatusMeta,
+  type Ticket,
+  type TicketStatus,
+  type User,
+} from "@/types";
+import { relativeTime, statusChipBg, statusDot, statusText } from "@/lib/style";
+import { useNow } from "@/lib/use-now";
+
+const statusColumns: TicketStatus[] = [
+  "OPEN",
+  "IN_PROGRESS",
+  "BLOCKED",
+  "RESOLVED",
+];
+
+// Stable references for the "not loaded yet" fallback — `?? []` inline
+// would create a new array every render, which then defeats the
+// useMemo()s below that depend on `users`/`ticketList` (a fresh []
+// reference each time looks like a real change).
+const EMPTY_TICKETS: Ticket[] = [];
+const EMPTY_USERS: User[] = [];
+
+interface TicketsViewProps {
+  self: User;
+}
+
+type ModalState = { mode: "create" } | { mode: "edit"; ticket: Ticket } | null;
+
+const TICKET_LIST_KEY = ["tickets", "list"] as const;
+
+/**
+ * Tickets are real (Milestone 2) and reliable (Milestone 8): this owns its
+ * own data via `useQuery`/`useMutation` against the Server Actions in
+ * app/(dashboard)/tickets/actions.ts.
+ *
+ * Updates are optimistic (§8/§18): the list is patched immediately, and
+ * if the write fails — conflict, validation, network — the snapshot taken
+ * in `onMutate` is restored and the list refetched. Optimistic state is
+ * never authoritative, so `onSettled` always invalidates and the server's
+ * version wins. Creates aren't optimistic: the server assigns the id.
+ */
+export function TicketsView({ self }: TicketsViewProps) {
+  const now = useNow();
+  const toast = useToast();
+  const queryClient = useQueryClient();
+
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<TicketStatus | "ALL">("ALL");
+  const [modalState, setModalState] = useState<ModalState>(null);
+
+  const ticketsQuery = useQuery({
+    queryKey: ["tickets", "list"],
+    queryFn: listTicketsAction,
+  });
+
+  const usersQuery = useQuery({
+    queryKey: ["org-users", "list"],
+    queryFn: listOrgUsersAction,
+  });
+
+  const users = usersQuery.data ?? EMPTY_USERS;
+  const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
+  const resolveUser = (id: string | null): User | null =>
+    id ? (userById.get(id) ?? null) : null;
+
+  // §7's exact invalidation pattern: invalidate the list and the
+  // single-ticket key together. There's no separate `useQuery(['tickets',
+  // id])` cached anywhere yet, so the second call is a no-op today — it's
+  // here so this already matches what Milestone 3's realtime handler
+  // will do on a `ticket.updated` broadcast, rather than needing a
+  // rewrite then.
+  const invalidateTickets = (id?: string) => {
+    queryClient.invalidateQueries({ queryKey: ["tickets", "list"] });
+    if (id) queryClient.invalidateQueries({ queryKey: ["tickets", id] });
+  };
+
+  const createMutation = useMutation({
+    mutationFn: async (input: CreateTicketFields) =>
+      unwrap(await createTicketAction(input)),
+    onSuccess: () => {
+      invalidateTickets();
+      toast.show("Ticket created");
+      setModalState(null);
+    },
+    onError: (error) => toast.show(failureMessage(error, "created"), "error"),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({
+      ticketId,
+      input,
+    }: {
+      ticketId: string;
+      input: UpdateTicketFields;
+    }) => unwrap(await updateTicketAction(ticketId, input)),
+
+    onMutate: async ({ ticketId, input }) => {
+      // Stop an in-flight refetch (e.g. from a realtime invalidation)
+      // from landing on top of the optimistic patch and undoing it.
+      await queryClient.cancelQueries({ queryKey: TICKET_LIST_KEY });
+      const previous = queryClient.getQueryData<Ticket[]>(TICKET_LIST_KEY);
+
+      queryClient.setQueryData<Ticket[]>(TICKET_LIST_KEY, (old) =>
+        old?.map((t) =>
+          t.id === ticketId
+            ? {
+                ...t,
+                title: input.title,
+                description: input.description,
+                status: input.status,
+                priority: input.priority,
+                assigneeId: input.assigneeId,
+                updatedAt: new Date().toISOString(),
+                // `version` deliberately untouched: only the server
+                // gets to say what the new version is.
+              }
+            : t,
+        ),
+      );
+
+      return { previous };
+    },
+
+    onError: (error, _variables, context) => {
+      // Roll back to exactly what was on screen before the optimistic
+      // patch. The onSettled refetch below then replaces it with
+      // whatever the server actually has.
+      if (context?.previous) {
+        queryClient.setQueryData(TICKET_LIST_KEY, context.previous);
+      }
+
+      if (error instanceof ActionFailure && error.error.code === "conflict") {
+        toast.show(
+          "Someone else changed this ticket first, so your change wasn't saved.",
+          "error",
+        );
+        return;
+      }
+      toast.show(failureMessage(error, "updated"), "error");
+    },
+
+    onSettled: (_data, _error, variables) => {
+      invalidateTickets(variables.ticketId);
+    },
+  });
+
+  const assignToMe = (ticket: Ticket) => {
+    updateMutation.mutate(
+      {
+        ticketId: ticket.id,
+        input: {
+          title: ticket.title,
+          description: ticket.description,
+          status: ticket.status,
+          priority: ticket.priority,
+          assigneeId: self.id,
+          expectedVersion: ticket.version,
+        },
+      },
+      { onSuccess: () => toast.show("Assigned to you") },
+    );
+  };
+
+  const ticketList = ticketsQuery.data ?? EMPTY_TICKETS;
+
+  // The modal gets the *live* row from the cache, not the snapshot taken
+  // when it was opened — that's how it notices someone else changed the
+  // ticket underneath an open edit form (version-conflict UX). The
+  // snapshot is only a fallback for the moment the row isn't in cache.
+  const editingTicket =
+    modalState?.mode === "edit"
+      ? (ticketList.find((t) => t.id === modalState.ticket.id) ??
+        modalState.ticket)
+      : null;
+
+  const searched = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    if (!query) return ticketList;
+
+    return ticketList.filter((t) => t.title.toLowerCase().includes(query));
+  }, [ticketList, search]);
+
+  const filtered = useMemo(() => {
+    const byStatus =
+      statusFilter === "ALL"
+        ? searched
+        : searched.filter((t) => t.status === statusFilter);
+
+    return [...byStatus].sort(
+      (a, b) =>
+        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+    );
+  }, [searched, statusFilter]);
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-4">
+      <div className="flex shrink-0 items-center justify-between gap-3">
+        <div>
+          <h1 className="text-lg font-medium text-ink">Tickets</h1>
+          <p className="text-sm text-ink-dim">
+            {ticketList.length} {ticketList.length === 1 ? "ticket" : "tickets"}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setModalState({ mode: "create" })}
+          className="flex shrink-0 items-center gap-1.5 rounded-md bg-ink px-3 py-1.5 text-sm font-medium text-bg transition-opacity hover:opacity-90"
+        >
+          <PlusIcon size={14} weight="bold" />
+          New ticket
+        </button>
+      </div>
+
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-line bg-panel">
+        <div className="shrink-0 border-b border-line px-4 py-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap items-center gap-1">
+              <FilterPill
+                active={statusFilter === "ALL"}
+                onClick={() => setStatusFilter("ALL")}
+                label="All"
+                count={searched.length}
+              />
+
+              {statusColumns.map((status) => (
+                <FilterPill
+                  key={status}
+                  active={statusFilter === status}
+                  onClick={() => setStatusFilter(status)}
+                  label={ticketStatusMeta[status].label}
+                  count={searched.filter((t) => t.status === status).length}
+                />
+              ))}
+            </div>
+
+            <SearchInput
+              value={search}
+              onChange={setSearch}
+              placeholder="Search tickets"
+            />
+          </div>
+        </div>
+
+        {ticketsQuery.isLoading ? (
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-8 text-center text-sm text-ink-dim">
+            Loading tickets…
+          </div>
+        ) : ticketsQuery.isError ? (
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-8 text-center text-sm text-danger">
+            Couldn&apos;t load tickets.{" "}
+            <button
+              type="button"
+              onClick={() => ticketsQuery.refetch()}
+              className="underline hover:text-ink"
+            >
+              Try again
+            </button>
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-8 text-center text-sm text-ink-dim">
+            No tickets match your filters.
+          </div>
+        ) : (
+          <ul className="min-h-0 flex-1 overflow-y-auto">
+            {filtered.map((ticket) => {
+              const statusMeta = ticketStatusMeta[ticket.status];
+              const priorityMeta = ticketPriorityMeta[ticket.priority];
+              const assignee = resolveUser(ticket.assigneeId);
+
+              return (
+                <li
+                  key={ticket.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setModalState({ mode: "edit", ticket })}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setModalState({ mode: "edit", ticket });
+                    }
+                  }}
+                  className="flex cursor-pointer items-center gap-3 border-b border-line px-4 py-3 last:border-b-0 transition-colors hover:bg-panel-raised"
+                >
+                  <span
+                    className={`size-1.5 shrink-0 rounded-full ${statusDot[priorityMeta.color]}`}
+                    title={`${priorityMeta.label} priority`}
+                  />
+
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm text-ink">
+                      {ticket.title}
+                    </div>
+
+                    <div className="mt-0.5 flex items-center gap-1.5 text-xs text-ink-faint sm:hidden">
+                      <span className={statusText[statusMeta.color]}>
+                        {statusMeta.label}
+                      </span>
+                      <span>·</span>
+                      <span>{relativeTime(ticket.updatedAt, now)}</span>
+                    </div>
+                  </div>
+
+                  <span
+                    className={`hidden shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium sm:inline-block ${statusChipBg[statusMeta.color]} ${statusText[statusMeta.color]}`}
+                  >
+                    {statusMeta.label}
+                  </span>
+
+                  <span className="hidden w-16 shrink-0 text-xs text-ink-faint md:inline-block">
+                    {relativeTime(ticket.updatedAt, now)}
+                  </span>
+
+                  {assignee ? (
+                    <Avatar
+                      initials={assignee.initials}
+                      seed={assignee.id}
+                      title={assignee.name}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        assignToMe(ticket);
+                      }}
+                      className="shrink-0 rounded-full border border-dashed border-line-strong px-2 py-0.5 text-[11px] text-ink-faint transition-colors hover:border-signal hover:text-ink"
+                    >
+                      Assign to me
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
+      {modalState && (
+        <TicketModal
+          ticket={editingTicket}
+          users={users}
+          saving={createMutation.isPending || updateMutation.isPending}
+          onClose={() => setModalState(null)}
+          onCreate={(input) => createMutation.mutate(input)}
+          onUpdate={(input) => {
+            if (modalState.mode !== "edit") return;
+            updateMutation.mutate(
+              { ticketId: modalState.ticket.id, input },
+              {
+                onSuccess: () => {
+                  toast.show("Ticket updated");
+                  setModalState(null);
+                },
+              },
+            );
+          }}
+        />
+      )}
+    </div>
+  );
+}
+</file>
+
 <file path="components/shared/RealtimeProvider.tsx">
 "use client";
 
@@ -12763,6 +12808,13 @@ export function RealtimeProvider({
               // documentation-for-humans-inspecting-the-payload.
               void channel
                 .track({ online_at: new Date().toISOString() })
+                .then((status) => {
+                  if (status !== "ok") {
+                    console.warn(
+                      `RealtimeProvider: presence track() failed: ${status}`,
+                    );
+                  }
+                })
                 .catch(() => undefined);
             } else {
               // CHANNEL_ERROR / TIMED_OUT / CLOSED. supabase-js's socket
@@ -12895,395 +12947,6 @@ export function RealtimeProvider({
         {children}
       </PresenceContext.Provider>
     </RealtimeStatusContext.Provider>
-  );
-}
-</file>
-
-<file path="components/tickets/TicketsView.tsx">
-"use client";
-
-import { useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { PlusIcon } from "@phosphor-icons/react";
-import { Avatar } from "@/components/dashboard/Avatar";
-import { FilterPill } from "@/components/shared/FilterPill";
-import { SearchInput } from "@/components/shared/SearchInput";
-import {
-  TicketModal,
-  type CreateTicketFields,
-  type UpdateTicketFields,
-} from "@/components/tickets/TicketModal";
-import { useToast } from "@/components/shared/Toast";
-import { ActionFailure, failureMessage, unwrap } from "@/lib/action-result";
-import {
-  createTicketAction,
-  listOrgUsersAction,
-  listTicketsAction,
-  updateTicketAction,
-} from "@/app/(dashboard)/tickets/actions";
-import {
-  ticketPriorityMeta,
-  ticketStatusMeta,
-  type Ticket,
-  type TicketStatus,
-  type User,
-} from "@/types";
-import { relativeTime, statusChipBg, statusDot, statusText } from "@/lib/style";
-import { useNow } from "@/lib/use-now";
-
-const statusColumns: TicketStatus[] = [
-  "OPEN",
-  "IN_PROGRESS",
-  "BLOCKED",
-  "RESOLVED",
-];
-
-// Stable references for the "not loaded yet" fallback — `?? []` inline
-// would create a new array every render, which then defeats the
-// useMemo()s below that depend on `users`/`ticketList` (a fresh []
-// reference each time looks like a real change).
-const EMPTY_TICKETS: Ticket[] = [];
-const EMPTY_USERS: User[] = [];
-
-interface TicketsViewProps {
-  self: User;
-}
-
-type ModalState = { mode: "create" } | { mode: "edit"; ticket: Ticket } | null;
-
-const TICKET_LIST_KEY = ["tickets", "list"] as const;
-
-/**
- * Tickets are real (Milestone 2) and reliable (Milestone 8): this owns its
- * own data via `useQuery`/`useMutation` against the Server Actions in
- * app/(dashboard)/tickets/actions.ts.
- *
- * Updates are optimistic (§8/§18): the list is patched immediately, and
- * if the write fails — conflict, validation, network — the snapshot taken
- * in `onMutate` is restored and the list refetched. Optimistic state is
- * never authoritative, so `onSettled` always invalidates and the server's
- * version wins. Creates aren't optimistic: the server assigns the id.
- */
-export function TicketsView({ self }: TicketsViewProps) {
-  const now = useNow();
-  const toast = useToast();
-  const queryClient = useQueryClient();
-
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<TicketStatus | "ALL">("ALL");
-  const [modalState, setModalState] = useState<ModalState>(null);
-
-  const ticketsQuery = useQuery({
-    queryKey: ["tickets", "list"],
-    queryFn: listTicketsAction,
-  });
-
-  const usersQuery = useQuery({
-    queryKey: ["org-users", "list"],
-    queryFn: listOrgUsersAction,
-  });
-
-  const users = usersQuery.data ?? EMPTY_USERS;
-  const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
-  const resolveUser = (id: string | null): User | null =>
-    id ? (userById.get(id) ?? null) : null;
-
-  // §7's exact invalidation pattern: invalidate the list and the
-  // single-ticket key together. There's no separate `useQuery(['tickets',
-  // id])` cached anywhere yet, so the second call is a no-op today — it's
-  // here so this already matches what Milestone 3's realtime handler
-  // will do on a `ticket.updated` broadcast, rather than needing a
-  // rewrite then.
-  const invalidateTickets = (id?: string) => {
-    queryClient.invalidateQueries({ queryKey: ["tickets", "list"] });
-    if (id) queryClient.invalidateQueries({ queryKey: ["tickets", id] });
-  };
-
-  const createMutation = useMutation({
-    mutationFn: async (input: CreateTicketFields) =>
-      unwrap(await createTicketAction(input)),
-    onSuccess: () => {
-      invalidateTickets();
-      toast.show("Ticket created");
-      setModalState(null);
-    },
-    onError: (error) => toast.show(failureMessage(error, "created"), "error"),
-  });
-
-  const updateMutation = useMutation({
-    mutationFn: async ({
-      ticketId,
-      input,
-    }: {
-      ticketId: string;
-      input: UpdateTicketFields;
-    }) => unwrap(await updateTicketAction(ticketId, input)),
-
-    onMutate: async ({ ticketId, input }) => {
-      // Stop an in-flight refetch (e.g. from a realtime invalidation)
-      // from landing on top of the optimistic patch and undoing it.
-      await queryClient.cancelQueries({ queryKey: TICKET_LIST_KEY });
-      const previous = queryClient.getQueryData<Ticket[]>(TICKET_LIST_KEY);
-
-      queryClient.setQueryData<Ticket[]>(TICKET_LIST_KEY, (old) =>
-        old?.map((t) =>
-          t.id === ticketId
-            ? {
-                ...t,
-                title: input.title,
-                description: input.description,
-                status: input.status,
-                priority: input.priority,
-                assigneeId: input.assigneeId,
-                updatedAt: new Date().toISOString(),
-                // `version` deliberately untouched: only the server
-                // gets to say what the new version is.
-              }
-            : t,
-        ),
-      );
-
-      return { previous };
-    },
-
-    onError: (error, _variables, context) => {
-      // Roll back to exactly what was on screen before the optimistic
-      // patch. The onSettled refetch below then replaces it with
-      // whatever the server actually has.
-      if (context?.previous) {
-        queryClient.setQueryData(TICKET_LIST_KEY, context.previous);
-      }
-
-      if (error instanceof ActionFailure && error.error.code === "conflict") {
-        toast.show(
-          "Someone else changed this ticket first, so your change wasn't saved.",
-          "error",
-        );
-        return;
-      }
-      toast.show(failureMessage(error, "updated"), "error");
-    },
-
-    onSettled: (_data, _error, variables) => {
-      invalidateTickets(variables.ticketId);
-    },
-  });
-
-  const assignToMe = (ticket: Ticket) => {
-    updateMutation.mutate(
-      {
-        ticketId: ticket.id,
-        input: {
-          title: ticket.title,
-          description: ticket.description,
-          status: ticket.status,
-          priority: ticket.priority,
-          assigneeId: self.id,
-          expectedVersion: ticket.version,
-        },
-      },
-      { onSuccess: () => toast.show("Assigned to you") },
-    );
-  };
-
-  const ticketList = ticketsQuery.data ?? EMPTY_TICKETS;
-
-  // The modal gets the *live* row from the cache, not the snapshot taken
-  // when it was opened — that's how it notices someone else changed the
-  // ticket underneath an open edit form (version-conflict UX). The
-  // snapshot is only a fallback for the moment the row isn't in cache.
-  const editingTicket =
-    modalState?.mode === "edit"
-      ? (ticketList.find((t) => t.id === modalState.ticket.id) ??
-        modalState.ticket)
-      : null;
-
-  const searched = useMemo(() => {
-    const query = search.trim().toLowerCase();
-
-    if (!query) return ticketList;
-
-    return ticketList.filter((t) => t.title.toLowerCase().includes(query));
-  }, [ticketList, search]);
-
-  const filtered = useMemo(() => {
-    const byStatus =
-      statusFilter === "ALL"
-        ? searched
-        : searched.filter((t) => t.status === statusFilter);
-
-    return [...byStatus].sort(
-      (a, b) =>
-        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-    );
-  }, [searched, statusFilter]);
-
-  return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4">
-      <div className="flex shrink-0 items-center justify-between gap-3">
-        <div>
-          <h1 className="text-lg font-medium text-ink">Tickets</h1>
-          <p className="text-sm text-ink-dim">
-            {ticketList.length} {ticketList.length === 1 ? "ticket" : "tickets"}
-          </p>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => setModalState({ mode: "create" })}
-          className="flex shrink-0 items-center gap-1.5 rounded-md bg-ink px-3 py-1.5 text-sm font-medium text-bg transition-opacity hover:opacity-90"
-        >
-          <PlusIcon size={14} weight="bold" />
-          New ticket
-        </button>
-      </div>
-
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-line bg-panel">
-        <div className="shrink-0 border-b border-line px-4 py-3">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex flex-wrap items-center gap-1">
-              <FilterPill
-                active={statusFilter === "ALL"}
-                onClick={() => setStatusFilter("ALL")}
-                label="All"
-                count={searched.length}
-              />
-
-              {statusColumns.map((status) => (
-                <FilterPill
-                  key={status}
-                  active={statusFilter === status}
-                  onClick={() => setStatusFilter(status)}
-                  label={ticketStatusMeta[status].label}
-                  count={searched.filter((t) => t.status === status).length}
-                />
-              ))}
-            </div>
-
-            <SearchInput
-              value={search}
-              onChange={setSearch}
-              placeholder="Search tickets"
-            />
-          </div>
-        </div>
-
-        {ticketsQuery.isLoading ? (
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-8 text-center text-sm text-ink-dim">
-            Loading tickets…
-          </div>
-        ) : ticketsQuery.isError ? (
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-8 text-center text-sm text-danger">
-            Couldn&apos;t load tickets.{" "}
-            <button
-              type="button"
-              onClick={() => ticketsQuery.refetch()}
-              className="underline hover:text-ink"
-            >
-              Try again
-            </button>
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-8 text-center text-sm text-ink-dim">
-            No tickets match your filters.
-          </div>
-        ) : (
-          <ul className="min-h-0 flex-1 overflow-y-auto">
-            {filtered.map((ticket) => {
-              const statusMeta = ticketStatusMeta[ticket.status];
-              const priorityMeta = ticketPriorityMeta[ticket.priority];
-              const assignee = resolveUser(ticket.assigneeId);
-
-              return (
-                <li
-                  key={ticket.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setModalState({ mode: "edit", ticket })}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      setModalState({ mode: "edit", ticket });
-                    }
-                  }}
-                  className="flex cursor-pointer items-center gap-3 border-b border-line px-4 py-3 last:border-b-0 transition-colors hover:bg-panel-raised"
-                >
-                  <span
-                    className={`size-1.5 shrink-0 rounded-full ${statusDot[priorityMeta.color]}`}
-                    title={`${priorityMeta.label} priority`}
-                  />
-
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm text-ink">
-                      {ticket.title}
-                    </div>
-
-                    <div className="mt-0.5 flex items-center gap-1.5 text-xs text-ink-faint sm:hidden">
-                      <span className={statusText[statusMeta.color]}>
-                        {statusMeta.label}
-                      </span>
-                      <span>·</span>
-                      <span>{relativeTime(ticket.updatedAt, now)}</span>
-                    </div>
-                  </div>
-
-                  <span
-                    className={`hidden shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium sm:inline-block ${statusChipBg[statusMeta.color]} ${statusText[statusMeta.color]}`}
-                  >
-                    {statusMeta.label}
-                  </span>
-
-                  <span className="hidden w-16 shrink-0 text-xs text-ink-faint md:inline-block">
-                    {relativeTime(ticket.updatedAt, now)}
-                  </span>
-
-                  {assignee ? (
-                    <Avatar
-                      initials={assignee.initials}
-                      seed={assignee.id}
-                      title={assignee.name}
-                    />
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        assignToMe(ticket);
-                      }}
-                      className="shrink-0 rounded-full border border-dashed border-line-strong px-2 py-0.5 text-[11px] text-ink-faint transition-colors hover:border-signal hover:text-ink"
-                    >
-                      Assign to me
-                    </button>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </div>
-
-      {modalState && (
-        <TicketModal
-          ticket={editingTicket}
-          users={users}
-          saving={createMutation.isPending || updateMutation.isPending}
-          onClose={() => setModalState(null)}
-          onCreate={(input) => createMutation.mutate(input)}
-          onUpdate={(input) => {
-            if (modalState.mode !== "edit") return;
-            updateMutation.mutate(
-              { ticketId: modalState.ticket.id, input },
-              {
-                onSuccess: () => {
-                  toast.show("Ticket updated");
-                  setModalState(null);
-                },
-              },
-            );
-          }}
-        />
-      )}
-    </div>
   );
 }
 </file>

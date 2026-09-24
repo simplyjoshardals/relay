@@ -81,6 +81,13 @@ enum ActivityAction {
   INCIDENT_TICKET_LINKED
   INCIDENT_TICKET_UNLINKED
   INCIDENT_RESOLVED
+  // Milestone 10 — team management (BACKEND_ROADMAP.md, decision 3). A
+  // deliberate extension of §13's list, which only enumerates
+  // ticket/service/incident events.
+  MEMBER_INVITED
+  MEMBER_JOINED
+  MEMBER_ROLE_CHANGED
+  MEMBER_DEACTIVATED
 
   @@map("activity_action")
 }
@@ -94,13 +101,14 @@ model Organization {
   name      String
   createdAt DateTime @default(now()) @map("created_at")
 
-  users              User[]
-  tickets            Ticket[]
-  services           Service[]
-  incidents          Incident[]
-  incidentServices   IncidentService[]
-  incidentTickets    IncidentTicket[]
-  activities         Activity[]
+  users            User[]
+  tickets          Ticket[]
+  services         Service[]
+  incidents        Incident[]
+  incidentServices IncidentService[]
+  incidentTickets  IncidentTicket[]
+  activities       Activity[]
+  invitations      Invitation[]
 
   @@map("organizations")
 }
@@ -118,15 +126,24 @@ model User {
   name         String
   passwordHash String   @map("password_hash")
   role         Role     @default(MEMBER)
+  // Milestone 10 (BACKEND_ROADMAP.md, decision 2): "removing" a member
+  // deactivates them, never deletes the row. Ticket.assignee/creator,
+  // Incident.responder and Activity.actor are all onDelete: Restrict, so
+  // a real DELETE would fail for almost any user who's done anything —
+  // and history should keep resolving to a real name regardless. An
+  // inactive user can't log in, refresh a session, or be assigned new
+  // work, but stays readable wherever old records point at them.
+  active       Boolean  @default(true)
   createdAt    DateTime @default(now()) @map("created_at")
 
   organization Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
 
-  createdTickets       Ticket[]        @relation("TicketCreator")
-  assignedTickets      Ticket[]        @relation("TicketAssignee")
-  respondingIncidents  Incident[]      @relation("IncidentResponder")
-  activities           Activity[]      @relation("ActivityActor")
-  refreshTokens        RefreshToken[]
+  createdTickets      Ticket[]       @relation("TicketCreator")
+  assignedTickets     Ticket[]       @relation("TicketAssignee")
+  respondingIncidents Incident[]     @relation("IncidentResponder")
+  activities          Activity[]     @relation("ActivityActor")
+  refreshTokens       RefreshToken[]
+  sentInvitations     Invitation[]   @relation("InvitationInviter")
 
   // Email only needs to be unique within an org, not globally.
   @@unique([orgId, email])
@@ -146,6 +163,48 @@ model RefreshToken {
 
   @@index([userId])
   @@map("refresh_tokens")
+}
+
+// Milestone 10 (BACKEND_ROADMAP.md, decision 1): a Manager's "invite" creates
+// one of these, not a User. The invited person sets their own password on
+// accept, which is the only moment a User row (and its non-nullable
+// passwordHash) comes into existence — so a pending invite never has to
+// satisfy User's constraints or collide with @@unique([orgId, email])
+// before anyone has actually joined.
+//
+// `tokenHash` is the SHA-256 of an opaque random token (same scheme and
+// reasoning as refresh tokens, server/auth/tokens.ts) — the plaintext only
+// ever exists in the link handed to the inviting Manager.
+//
+// Pending = acceptedAt IS NULL, revokedAt IS NULL, expiresAt in the future.
+// Nothing here is ever deleted: accepted/revoked/expired rows are the
+// record of what happened.
+model Invitation {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId       String    @map("org_id") @db.Uuid
+  email       String
+  // The name the Manager typed into the invite form. Shown on the pending
+  // row and pre-filled (editable) on the accept page — the invitee has the
+  // final say over their own display name.
+  name        String
+  role        Role      @default(MEMBER)
+  tokenHash   String    @unique @map("token_hash")
+  expiresAt   DateTime  @map("expires_at")
+  acceptedAt  DateTime? @map("accepted_at")
+  // A Manager can withdraw an invitation (typo'd email, changed their
+  // mind) — without this, a live link addressed to the wrong person would
+  // stay redeemable until it expired.
+  revokedAt   DateTime? @map("revoked_at")
+  invitedById String    @map("invited_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  invitedBy    User         @relation("InvitationInviter", fields: [invitedById], references: [id], onDelete: Restrict)
+
+  @@index([orgId])
+  @@index([orgId, email])
+  @@index([invitedById])
+  @@map("invitations")
 }
 
 // ---------------------------------------------------------------------------
@@ -266,11 +325,11 @@ model IncidentTicket {
   ticket       Ticket       @relation(fields: [ticketId], references: [id], onDelete: Restrict)
 
   @@id([incidentId, ticketId])
-  @@index([ticketId])
-  @@index([orgId])
   // The actual enforcement of "one active incident per ticket" (§2 of the
   // implementation plan). Requires the partialIndexes preview feature.
   @@unique([ticketId], map: "one_active_incident_per_ticket", where: { isActive: true })
+  @@index([ticketId])
+  @@index([orgId])
   @@map("incident_tickets")
 }
 

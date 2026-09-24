@@ -60,5 +60,10 @@ export async function getCurrentUser(): Promise<User | null> {
     name: record.name,
     role: record.role,
     initials: initialsFor(record.name),
+    // findUserById only matches active users (Milestone 10), so anyone
+    // who gets this far is active by construction — a deactivated user
+    // with a still-unexpired access token resolves to null above and is
+    // bounced to /login by the dashboard layout.
+    active: true,
   };
 }

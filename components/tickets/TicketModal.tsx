@@ -239,7 +239,15 @@ export function TicketModal({
           onChange={setAssigneeId}
           options={[
             { value: "", label: "Unassigned" },
-            ...users.map((u) => ({ value: u.id, label: u.name })),
+            // Deactivated members aren't offered as a new assignee — but a
+            // ticket already assigned to one keeps showing them, so the
+            // select doesn't silently fall back to "Unassigned".
+            ...users
+              .filter((u) => u.active || u.id === ticket?.assigneeId)
+              .map((u) => ({
+                value: u.id,
+                label: u.active ? u.name : `${u.name} (removed)`,
+              })),
           ]}
         />
       </div>

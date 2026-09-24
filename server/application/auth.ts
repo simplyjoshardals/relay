@@ -14,7 +14,7 @@ import { signAccessToken } from "@/server/auth/jwt";
 import { generateRefreshToken, hashRefreshToken } from "@/server/auth/tokens";
 import { REFRESH_TOKEN_TTL_SECONDS } from "@/server/auth/cookies";
 
-interface SessionUser {
+export interface SessionUser {
   id: string;
   orgId: string;
   email: string;
@@ -35,8 +35,12 @@ export interface IssuedSession {
  * without a Next.js request context to fake; the thin Server Action that
  * calls this (app/login/actions.ts) is where the actual cookie-setting
  * and redirect happen.
+ *
+ * Exported as of Milestone 10: accepting an invitation
+ * (server/application/invitations.ts) is the one other place a session
+ * comes into existence, and it shouldn't grow its own copy of this.
  */
-async function issueSession(user: SessionUser): Promise<IssuedSession> {
+export async function issueSession(user: SessionUser): Promise<IssuedSession> {
   const accessToken = await signAccessToken({
     sub: user.id,
     orgId: user.orgId,

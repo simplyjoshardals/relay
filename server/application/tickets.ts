@@ -154,8 +154,17 @@ export async function updateTicket(
     throw new NotFoundError("Ticket not found.");
   }
 
+  // Only *changing* the assignee needs the in-org check. TicketModal
+  // resubmits the current assignee on every save, and (Milestone 10)
+  // that assignee may since have been deactivated — findUserById only
+  // matches active users, so re-validating an unchanged assignee would
+  // make every edit to such a ticket fail with "assignee not found."
+  // A *new* assignment to a deactivated user is still rejected here.
   let assigneeUser: Awaited<ReturnType<typeof assertAssigneeInOrg>> = null;
-  if (parsed.data.assigneeId !== undefined) {
+  if (
+    parsed.data.assigneeId !== undefined &&
+    parsed.data.assigneeId !== existing.assigneeId
+  ) {
     assigneeUser = await assertAssigneeInOrg(
       session.orgId,
       parsed.data.assigneeId,

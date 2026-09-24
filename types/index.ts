@@ -31,7 +31,12 @@ export type ActivityAction =
   | "INCIDENT_SERVICE_UNLINKED"
   | "INCIDENT_TICKET_LINKED"
   | "INCIDENT_TICKET_UNLINKED"
-  | "INCIDENT_RESOLVED";
+  | "INCIDENT_RESOLVED"
+  // Milestone 10 — team management (BACKEND_ROADMAP.md, decision 3).
+  | "MEMBER_INVITED"
+  | "MEMBER_JOINED"
+  | "MEMBER_ROLE_CHANGED"
+  | "MEMBER_DEACTIVATED";
 
 export interface User {
   id: string;
@@ -40,6 +45,27 @@ export interface User {
   name: string;
   role: Role;
   initials: string;
+  /** Milestone 10: "removing" a member deactivates them — the row stays
+   *  so tickets, incidents and activity that point at them keep resolving
+   *  to a real name. `listOrgUsers` returns inactive users too (history
+   *  needs them); anything that offers people as a *choice* — assignee and
+   *  responder pickers, the presence roster, the team list — filters on
+   *  this. */
+  active: boolean;
+}
+
+/** A Manager's outstanding invitation (Milestone 10). Never carries the
+ *  token or its hash — the plaintext exists only in the link handed to
+ *  the inviting Manager at creation time. */
+export interface PendingInvitation {
+  id: string;
+  orgId: string;
+  email: string;
+  name: string;
+  role: Role;
+  invitedById: string;
+  createdAt: string;
+  expiresAt: string;
 }
 
 export interface Ticket {
@@ -96,7 +122,10 @@ export interface Activity {
   orgId: string;
   actorId: string | null; // null => telemetry-generated
   action: ActivityAction;
-  targetType: "ticket" | "service" | "incident";
+  // "user" (Milestone 10): the member an event is about. For
+  // MEMBER_INVITED specifically no user exists yet, so `targetId` is the
+  // *invitation's* id — nothing should try to resolve it as a user.
+  targetType: "ticket" | "service" | "incident" | "user";
   targetId: string;
   metadata: Record<string, string | number> | null;
   createdAt: string;

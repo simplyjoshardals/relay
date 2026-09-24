@@ -213,7 +213,15 @@ export async function updateIncident(
     throw new NotFoundError("Incident not found.");
   }
 
-  if (parsed.data.responderId !== undefined) {
+  // Only *changing* the responder needs the in-org check — same reasoning
+  // as server/application/tickets.ts#updateTicket: IncidentModal resubmits
+  // the current responder on every save, and (Milestone 10) that person
+  // may since have been deactivated, which findUserById no longer
+  // matches. A new assignment to a deactivated user is still rejected.
+  if (
+    parsed.data.responderId !== undefined &&
+    parsed.data.responderId !== existing.responderId
+  ) {
     await assertResponderInOrg(session.orgId, parsed.data.responderId);
   }
 
