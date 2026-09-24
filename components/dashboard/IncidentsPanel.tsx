@@ -1,4 +1,10 @@
+import Link from "next/link";
 import { Avatar } from "./Avatar";
+import {
+  Skeleton,
+  SkeletonCircle,
+  SkeletonText,
+} from "@/components/shared/Skeleton";
 import {
   incidentSeverityMeta,
   incidentStatusMeta,
@@ -12,24 +18,68 @@ import {
   statusChipBg,
   statusText,
 } from "@/lib/style";
+import { PATHS } from "@/utils/paths";
 
 const severityOrder = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+
+// Milestone 9: "active incidents" is normally small, but nothing stops
+// it from piling up during a bad day at a real org — this is a glance
+// widget (the full history lives on the Incidents page), so show the
+// top few by severity and link out to the rest, same reasoning as
+// TicketBoard's COLUMN_LIMIT.
+const PANEL_LIMIT = 5;
 
 interface IncidentsPanelProps {
   incidents: Incident[];
   services: Service[];
   resolveUser: (id: string | null) => User | null;
+  /** Milestone 9: the panel is a Server Component elsewhere in the app
+   *  (it never fetches on its own), so the client-side query owner
+   *  (DashboardView) passes this while its incidents/services queries
+   *  are still `isLoading`. Skeleton rows render instead of the "No
+   *  active incidents" empty state, which only applies once the real
+   *  answer is known to be zero. */
+  loading?: boolean;
 }
 
 export function IncidentsPanel({
   incidents,
   services,
   resolveUser,
+  loading,
 }: IncidentsPanelProps) {
   const sorted = [...incidents].sort(
     (a, b) => severityOrder[a.severity] - severityOrder[b.severity],
   );
+  const shown = sorted.slice(0, PANEL_LIMIT);
+  const remaining = sorted.length - shown.length;
   const serviceById = Object.fromEntries(services.map((s) => [s.id, s]));
+
+  if (loading) {
+    return (
+      <div className="rounded-lg border border-line bg-panel">
+        <div className="flex items-center justify-between border-b border-line px-4 py-3">
+          <h2 className="text-sm font-medium text-ink">Active incidents</h2>
+        </div>
+
+        <ul>
+          {[0, 1, 2].map((i) => (
+            <li
+              key={i}
+              className="flex items-center gap-4 border-b border-line px-4 py-3 last:border-b-0"
+            >
+              <Skeleton className="h-5 w-16 shrink-0" />
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <SkeletonText width="w-2/3" />
+                <SkeletonText width="w-1/3" className="h-2.5" />
+              </div>
+              <SkeletonCircle />
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
 
   if (sorted.length === 0) {
     return (
@@ -49,7 +99,7 @@ export function IncidentsPanel({
       </div>
 
       <ul>
-        {sorted.map((incident) => {
+        {shown.map((incident) => {
           const sevMeta = incidentSeverityMeta[incident.severity];
           const statusMeta = incidentStatusMeta[incident.status];
           const responder = resolveUser(incident.responderId);
@@ -115,6 +165,16 @@ export function IncidentsPanel({
             </li>
           );
         })}
+        {remaining > 0 && (
+          <li className="px-4 py-2">
+            <Link
+              href={PATHS.INCIDENTS}
+              className="text-xs text-ink-faint underline-offset-2 hover:text-ink hover:underline"
+            >
+              +{remaining} more
+            </Link>
+          </li>
+        )}
       </ul>
     </div>
   );

@@ -1,4 +1,5 @@
 import { Sparkline } from "@/components/shared/Sparkline";
+import { Skeleton, SkeletonText } from "@/components/shared/Skeleton";
 import { serviceStatusMeta, type Service } from "@/types";
 import {
   formatErrorRate,
@@ -7,7 +8,44 @@ import {
   statusText,
 } from "@/lib/style";
 
-export function ServiceHealthGrid({ services }: { services: Service[] }) {
+interface ServiceHealthGridProps {
+  services: Service[];
+  /** Milestone 9: set by DashboardView while its services query is
+   *  still `isLoading` — see IncidentsPanel's `loading` prop for the
+   *  same reasoning. */
+  loading?: boolean;
+}
+
+export function ServiceHealthGrid({
+  services,
+  loading,
+}: ServiceHealthGridProps) {
+  if (loading) {
+    return (
+      <div className="rounded-lg border border-line bg-panel">
+        <div className="flex items-center justify-between border-b border-line px-4 py-3">
+          <h2 className="text-sm font-medium text-ink">Service health</h2>
+        </div>
+
+        <div className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2 lg:grid-cols-3">
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <div key={i} className="bg-panel p-3.5">
+              <div className="flex items-center justify-between">
+                <SkeletonText width="w-20" />
+                <Skeleton className="size-1.5 rounded-full" />
+              </div>
+              <SkeletonText width="w-14" className="mt-2 h-2.5" />
+              <div className="mt-3 flex items-end justify-between">
+                <Skeleton className="h-7 w-10" />
+                <Skeleton className="h-5 w-16" />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="rounded-lg border border-line bg-panel">
       <div className="flex items-center justify-between border-b border-line px-4 py-3">

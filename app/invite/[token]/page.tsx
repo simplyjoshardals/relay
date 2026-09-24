@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { AcceptInviteForm } from "@/app/invite/[token]/AcceptInviteForm";
+import { AcceptInviteForm } from "@/components/invite/AcceptInviteForm";
 import { previewInvitation } from "@/server/application/invitations";
 import { PATHS } from "@/utils/paths";
 

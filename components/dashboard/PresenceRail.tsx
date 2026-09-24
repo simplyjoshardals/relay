@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Avatar } from "./Avatar";
+import { SkeletonCircle, SkeletonText } from "@/components/shared/Skeleton";
 import { useOnlineUserIds } from "@/components/shared/RealtimeProvider";
 import { listOrgUsersAction } from "@/app/(dashboard)/tickets/actions";
 import type { User } from "@/types";
@@ -45,29 +46,35 @@ export function PresenceRail() {
       </div>
 
       <ul className="mt-3 flex flex-col gap-2">
-        {usersQuery.isLoading ? (
-          <li className="text-xs text-ink-faint">Loading…</li>
-        ) : (
-          sorted.map((user) => {
-            const online = onlineIds.has(user.id);
-            return (
-              <li key={user.id} className="flex items-center gap-2.5">
-                <Avatar
-                  initials={user.initials}
-                  seed={user.id}
-                  online={online}
-                />
-                <span
-                  className={
-                    online ? "text-xs text-ink" : "text-xs text-ink-faint"
-                  }
-                >
-                  {user.name}
-                </span>
+        {usersQuery.isLoading
+          ? // Milestone 9: skeleton rows in place of the old "Loading…"
+            // text line — same shared primitives every other dashboard
+            // panel's loading state now uses (components/shared/Skeleton).
+            [0, 1, 2].map((i) => (
+              <li key={i} className="flex items-center gap-2.5">
+                <SkeletonCircle />
+                <SkeletonText width="w-20" />
               </li>
-            );
-          })
-        )}
+            ))
+          : sorted.map((user) => {
+              const online = onlineIds.has(user.id);
+              return (
+                <li key={user.id} className="flex items-center gap-2.5">
+                  <Avatar
+                    initials={user.initials}
+                    seed={user.id}
+                    online={online}
+                  />
+                  <span
+                    className={
+                      online ? "text-xs text-ink" : "text-xs text-ink-faint"
+                    }
+                  >
+                    {user.name}
+                  </span>
+                </li>
+              );
+            })}
       </ul>
     </div>
   );
