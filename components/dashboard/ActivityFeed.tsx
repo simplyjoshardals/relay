@@ -12,12 +12,17 @@ interface ActivityFeedProps {
    *  still `isLoading` — see IncidentsPanel's `loading` prop for the
    *  same reasoning. */
   loading?: boolean;
+  /** The activity query failed. */
+  error?: boolean;
+  onRetry?: () => void;
 }
 
 export function ActivityFeed({
   activities,
   resolveUser,
   loading,
+  error,
+  onRetry,
 }: ActivityFeedProps) {
   if (loading) {
     return (
@@ -35,6 +40,24 @@ export function ActivityFeed({
             </li>
           ))}
         </ul>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-lg border border-line bg-panel p-4">
+        <h2 className="text-sm font-medium text-ink">Activity</h2>
+        <div className="mt-3 text-sm text-danger">
+          Couldn&apos;t load activity.{" "}
+          <button
+            type="button"
+            onClick={onRetry}
+            className="underline hover:text-ink"
+          >
+            Try again
+          </button>
+        </div>
       </div>
     );
   }

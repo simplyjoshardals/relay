@@ -40,6 +40,11 @@ interface IncidentsPanelProps {
    *  active incidents" empty state, which only applies once the real
    *  answer is known to be zero. */
   loading?: boolean;
+  /** Either the incidents or services query failed — shown instead of
+   *  the empty state, which would otherwise misread as "no active
+   *  incidents" rather than "couldn't check." */
+  error?: boolean;
+  onRetry?: () => void;
 }
 
 export function IncidentsPanel({
@@ -47,6 +52,8 @@ export function IncidentsPanel({
   services,
   resolveUser,
   loading,
+  error,
+  onRetry,
 }: IncidentsPanelProps) {
   const sorted = [...incidents].sort(
     (a, b) => severityOrder[a.severity] - severityOrder[b.severity],
@@ -77,6 +84,23 @@ export function IncidentsPanel({
             </li>
           ))}
         </ul>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-lg border border-line bg-panel p-5">
+        <div className="text-sm text-danger">
+          Couldn&apos;t load incidents.{" "}
+          <button
+            type="button"
+            onClick={onRetry}
+            className="underline hover:text-ink"
+          >
+            Try again
+          </button>
+        </div>
       </div>
     );
   }

@@ -59,6 +59,13 @@ const DASHBOARD_ACTIVITY_COUNT = 8;
  *
  * No props: nothing here needs `self` — every panel is read-only, no
  * mutations happen on the dashboard itself.
+ *
+ * Every query's `isError` is wired through to its panel(s) (and to the
+ * matching StatRow entries), each with its own "Try again" → `refetch()`
+ * — unlike TicketsView/IncidentsView/ServicesView/ActivityView/TeamView,
+ * which fail as a single page and so only need one error branch each,
+ * a failed query here must not read as "0 active incidents, everything
+ * healthy" just because the other four panels loaded fine.
  */
 export function DashboardView() {
   const ticketsQuery = useQuery({
@@ -126,20 +133,24 @@ export function DashboardView() {
           {
             label: "Open tickets",
             value: ticketsQuery.isLoading ? null : openTickets,
+            error: ticketsQuery.isError,
           },
           {
             label: "In progress",
             value: ticketsQuery.isLoading ? null : inProgressTickets,
+            error: ticketsQuery.isError,
           },
           {
             label: "Active incidents",
             value: incidentsQuery.isLoading ? null : activeIncidentsList.length,
             tone: "danger",
+            error: incidentsQuery.isError,
           },
           {
             label: "Degraded / outage",
             value: servicesQuery.isLoading ? null : unhealthyServices,
             tone: "warning",
+            error: servicesQuery.isError,
           },
           { label: "Online now", value: onlineIds.size },
         ]}
@@ -155,15 +166,24 @@ export function DashboardView() {
             services={services}
             resolveUser={resolveUser}
             loading={incidentsQuery.isLoading || servicesQuery.isLoading}
+            error={incidentsQuery.isError || servicesQuery.isError}
+            onRetry={() => {
+              incidentsQuery.refetch();
+              servicesQuery.refetch();
+            }}
           />
           <ServiceHealthGrid
             services={services}
             loading={servicesQuery.isLoading}
+            error={servicesQuery.isError}
+            onRetry={() => servicesQuery.refetch()}
           />
           <TicketBoard
             tickets={tickets}
             resolveUser={resolveUser}
             loading={ticketsQuery.isLoading}
+            error={ticketsQuery.isError}
+            onRetry={() => ticketsQuery.refetch()}
           />
         </div>
 
@@ -173,6 +193,8 @@ export function DashboardView() {
             activities={recentActivities}
             resolveUser={resolveUser}
             loading={activityQuery.isLoading}
+            error={activityQuery.isError}
+            onRetry={() => activityQuery.refetch()}
           />
         </div>
       </div>

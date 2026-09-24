@@ -32,12 +32,17 @@ interface TicketBoardProps {
    *  `isLoading` — see IncidentsPanel's `loading` prop for the same
    *  reasoning. */
   loading?: boolean;
+  /** The tickets query failed. */
+  error?: boolean;
+  onRetry?: () => void;
 }
 
 export function TicketBoard({
   tickets,
   resolveUser,
   loading,
+  error,
+  onRetry,
 }: TicketBoardProps) {
   if (loading) {
     return (
@@ -67,6 +72,23 @@ export function TicketBoard({
               </ul>
             </div>
           ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-lg border border-line bg-panel p-5">
+        <div className="text-sm text-danger">
+          Couldn&apos;t load tickets.{" "}
+          <button
+            type="button"
+            onClick={onRetry}
+            className="underline hover:text-ink"
+          >
+            Try again
+          </button>
         </div>
       </div>
     );

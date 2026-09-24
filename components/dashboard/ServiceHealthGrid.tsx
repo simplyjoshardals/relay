@@ -14,11 +14,16 @@ interface ServiceHealthGridProps {
    *  still `isLoading` — see IncidentsPanel's `loading` prop for the
    *  same reasoning. */
   loading?: boolean;
+  /** The services query failed. */
+  error?: boolean;
+  onRetry?: () => void;
 }
 
 export function ServiceHealthGrid({
   services,
   loading,
+  error,
+  onRetry,
 }: ServiceHealthGridProps) {
   if (loading) {
     return (
@@ -41,6 +46,23 @@ export function ServiceHealthGrid({
               </div>
             </div>
           ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-lg border border-line bg-panel p-5">
+        <div className="text-sm text-danger">
+          Couldn&apos;t load service health.{" "}
+          <button
+            type="button"
+            onClick={onRetry}
+            className="underline hover:text-ink"
+          >
+            Try again
+          </button>
         </div>
       </div>
     );
