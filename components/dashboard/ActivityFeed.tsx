@@ -1,6 +1,9 @@
+"use client";
+
 import { CpuIcon } from "@phosphor-icons/react/ssr";
 import { Avatar } from "./Avatar";
 import { describeActivity } from "@/components/shared/ActivityDescription";
+import { useNow } from "@/lib/use-now";
 import { SkeletonCircle, SkeletonText } from "@/components/shared/Skeleton";
 import type { Activity, User } from "@/types";
 import { relativeTime } from "@/lib/style";
@@ -17,6 +20,28 @@ interface ActivityFeedProps {
   onRetry?: () => void;
 }
 
+/** Extracted for reuse as this route's `loading.tsx` fallback — see
+ *  IncidentsPanelSkeleton's doc comment. */
+export function ActivityFeedSkeleton() {
+  return (
+    <div className="rounded-lg border border-line bg-panel p-4">
+      <h2 className="text-sm font-medium text-ink">Activity</h2>
+
+      <ul className="mt-3 flex flex-col gap-3">
+        {[0, 1, 2, 3].map((i) => (
+          <li key={i} className="flex items-start gap-2.5">
+            <SkeletonCircle />
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <SkeletonText width="w-4/5" />
+              <SkeletonText width="w-1/4" className="h-2.5" />
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function ActivityFeed({
   activities,
   resolveUser,
@@ -24,24 +49,13 @@ export function ActivityFeed({
   error,
   onRetry,
 }: ActivityFeedProps) {
-  if (loading) {
-    return (
-      <div className="rounded-lg border border-line bg-panel p-4">
-        <h2 className="text-sm font-medium text-ink">Activity</h2>
+  // Same hydration-safety reason as ServiceHealthGrid.tsx: this
+  // module runs on the client too (DashboardView, its parent, is
+  // a Client Component), so `new Date()` here isn't safe.
+  const now = useNow();
 
-        <ul className="mt-3 flex flex-col gap-3">
-          {[0, 1, 2, 3].map((i) => (
-            <li key={i} className="flex items-start gap-2.5">
-              <SkeletonCircle />
-              <div className="min-w-0 flex-1 space-y-1.5">
-                <SkeletonText width="w-4/5" />
-                <SkeletonText width="w-1/4" className="h-2.5" />
-              </div>
-            </li>
-          ))}
-        </ul>
-      </div>
-    );
+  if (loading) {
+    return <ActivityFeedSkeleton />;
   }
 
   if (error) {
@@ -99,10 +113,7 @@ export function ActivityFeed({
                   {describeActivity(activity)}
                 </span>
                 <div className="mt-0.5 text-[11px] text-ink-faint">
-                  {/* Server Component (no "use client") — this never
-                      hydrates/re-executes on the client, so a plain
-                      `new Date()` here is safe and doesn't need useNow(). */}
-                  {relativeTime(activity.createdAt, new Date())}
+                  {relativeTime(activity.createdAt, now)}
                 </div>
               </div>
             </li>

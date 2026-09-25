@@ -1,4 +1,7 @@
+"use client";
+
 import { Sparkline } from "@/components/shared/Sparkline";
+import { useNow } from "@/lib/use-now";
 import { Skeleton, SkeletonText } from "@/components/shared/Skeleton";
 import { serviceStatusMeta, type Service } from "@/types";
 import {
@@ -19,36 +22,51 @@ interface ServiceHealthGridProps {
   onRetry?: () => void;
 }
 
+/** Extracted for reuse as this route's `loading.tsx` fallback — see
+ *  IncidentsPanelSkeleton's doc comment. */
+export function ServiceHealthGridSkeleton() {
+  return (
+    <div className="rounded-lg border border-line bg-panel">
+      <div className="flex items-center justify-between border-b border-line px-4 py-3">
+        <h2 className="text-sm font-medium text-ink">Service health</h2>
+      </div>
+
+      <div className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2 lg:grid-cols-3">
+        {[0, 1, 2, 3, 4, 5].map((i) => (
+          <div key={i} className="bg-panel p-3.5">
+            <div className="flex items-center justify-between">
+              <SkeletonText width="w-20" />
+              <Skeleton className="size-1.5 rounded-full" />
+            </div>
+            <SkeletonText width="w-14" className="mt-2 h-2.5" />
+            <div className="mt-3 flex items-end justify-between">
+              <Skeleton className="h-7 w-10" />
+              <Skeleton className="h-5 w-16" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function ServiceHealthGrid({
   services,
   loading,
   error,
   onRetry,
 }: ServiceHealthGridProps) {
-  if (loading) {
-    return (
-      <div className="rounded-lg border border-line bg-panel">
-        <div className="flex items-center justify-between border-b border-line px-4 py-3">
-          <h2 className="text-sm font-medium text-ink">Service health</h2>
-        </div>
+  // This is actually part of the client bundle: DashboardView (which
+  // renders this) is a Client Component, so this module re-executes
+  // during hydration too, not just on the server. A bare `new Date()`
+  // here ran once at request time and again a moment later at
+  // hydration — enough to flip "just now" to "5s ago" and trigger a
+  // hydration mismatch. useNow() (lib/use-now.ts) returns null until
+  // after mount so both passes render identical text.
+  const now = useNow();
 
-        <div className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2 lg:grid-cols-3">
-          {[0, 1, 2, 3, 4, 5].map((i) => (
-            <div key={i} className="bg-panel p-3.5">
-              <div className="flex items-center justify-between">
-                <SkeletonText width="w-20" />
-                <Skeleton className="size-1.5 rounded-full" />
-              </div>
-              <SkeletonText width="w-14" className="mt-2 h-2.5" />
-              <div className="mt-3 flex items-end justify-between">
-                <Skeleton className="h-7 w-10" />
-                <Skeleton className="h-5 w-16" />
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
+  if (loading) {
+    return <ServiceHealthGridSkeleton />;
   }
 
   if (error) {
@@ -107,10 +125,7 @@ export function ServiceHealthGrid({
               </div>
 
               <div className="mt-2 text-[11px] text-ink-faint">
-                {/* Server Component (no "use client") — this never
-                    hydrates/re-executes on the client, so a plain
-                    `new Date()` here is safe and doesn't need useNow(). */}
-                Updated {relativeTime(service.updatedAt, new Date())}
+                Updated {relativeTime(service.updatedAt, now)}
               </div>
             </div>
           );

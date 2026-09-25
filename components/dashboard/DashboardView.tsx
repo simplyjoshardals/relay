@@ -8,7 +8,11 @@ import { ServiceHealthGrid } from "@/components/dashboard/ServiceHealthGrid";
 import { TicketBoard } from "@/components/dashboard/TicketBoard";
 import { PresenceRail } from "@/components/dashboard/PresenceRail";
 import { ActivityFeed } from "@/components/dashboard/ActivityFeed";
-import { useOnlineUserIds } from "@/components/shared/RealtimeProvider";
+import {
+  useOnlineUserIds,
+  usePresenceReady,
+  useRealtimeStatus,
+} from "@/components/shared/RealtimeProvider";
 import {
   listOrgUsersAction,
   listTicketsAction,
@@ -66,6 +70,13 @@ const DASHBOARD_ACTIVITY_COUNT = 8;
  * which fail as a single page and so only need one error branch each,
  * a failed query here must not read as "0 active incidents, everything
  * healthy" just because the other four panels loaded fine.
+ *
+ * Streaming SSR follow-up (STREAMING_SSR_TODO.md): `dashboard/page.tsx`
+ * now prefetches every query below on the server and hydrates this
+ * component's cache before it ever mounts client-side — see that
+ * file's doc comment for the mechanism. Nothing here changed for it;
+ * the same `useQuery` calls just find data already in cache on first
+ * render instead of fetching it.
  */
 export function DashboardView() {
   const ticketsQuery = useQuery({
@@ -94,6 +105,8 @@ export function DashboardView() {
   });
 
   const onlineIds = useOnlineUserIds();
+  const presenceReady = usePresenceReady();
+  const realtimeStatus = useRealtimeStatus();
 
   const tickets = ticketsQuery.data ?? EMPTY_TICKETS;
   const incidents = incidentsQuery.data ?? EMPTY_INCIDENTS;
@@ -152,7 +165,18 @@ export function DashboardView() {
             tone: "warning",
             error: servicesQuery.isError,
           },
-          { label: "Online now", value: onlineIds.size },
+          // Unlike the four stats above, this one can't be prefetched:
+          // presence is live socket state, so on a cold load there is
+          // genuinely nothing to show until the channel has joined and
+          // synced. Until then it's a skeleton (never "0" — that reads
+          // as "nobody's online" and then visibly corrects itself). If
+          // the connection is down instead of just starting up, "—"
+          // rather than a skeleton that would never resolve.
+          {
+            label: "Online now",
+            value: presenceReady ? onlineIds.size : null,
+            error: !presenceReady && realtimeStatus !== "connecting",
+          },
         ]}
       />
 

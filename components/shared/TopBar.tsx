@@ -7,7 +7,10 @@ import { usePathname } from "next/navigation";
 import { ListIcon, SignOutIcon, XIcon } from "@phosphor-icons/react";
 import { Avatar } from "@/components/dashboard/Avatar";
 import { LiveIndicator } from "@/components/dashboard/LiveIndicator";
-import { useRealtimeStatus } from "@/components/shared/RealtimeProvider";
+import {
+  useOnlineUserIds,
+  useRealtimeStatus,
+} from "@/components/shared/RealtimeProvider";
 import type { User } from "@/types";
 import { canManageTeam } from "@/lib/permissions";
 import { logoutAction } from "@/app/login/actions";
@@ -25,6 +28,16 @@ export function TopBar({ orgName, self }: { orgName: string; self: User }) {
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
   const realtimeStatus = useRealtimeStatus();
+  const onlineIds = useOnlineUserIds();
+
+  // The green dot means "you're online", so it has to be earned: the
+  // socket is joined *and* our own presence entry has come back in a
+  // sync. It used to be a hardcoded `online`, which lit up on the server
+  // render, before any connection existed, and stayed lit while
+  // reconnecting/offline. Server render and first client render both
+  // start at "connecting" with an empty Set, so no dot on either — no
+  // hydration mismatch.
+  const selfOnline = realtimeStatus === "connected" && onlineIds.has(self.id);
 
   // Team is the one nav-level permission boundary (README §3 / MVP RBAC
   // — see ROADMAP_ROLES.md): Manager-only, hidden entirely for Member
@@ -103,7 +116,7 @@ export function TopBar({ orgName, self }: { orgName: string; self: User }) {
         <Avatar
           initials={self.initials}
           seed={self.id}
-          online
+          online={selfOnline}
           size="sm"
           title={self.name}
         />

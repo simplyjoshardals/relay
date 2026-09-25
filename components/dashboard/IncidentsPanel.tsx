@@ -1,5 +1,8 @@
+"use client";
+
 import Link from "next/link";
 import { Avatar } from "./Avatar";
+import { useNow } from "@/lib/use-now";
 import {
   Skeleton,
   SkeletonCircle,
@@ -47,6 +50,37 @@ interface IncidentsPanelProps {
   onRetry?: () => void;
 }
 
+/** The panel's loading placeholder, extracted so it can also be reused
+ *  as this route's `loading.tsx` fallback (`DashboardSkeleton.tsx`) —
+ *  the same shape whether it's showing because the client query is
+ *  still `isLoading` or because the page itself is still streaming in
+ *  from the server. */
+export function IncidentsPanelSkeleton() {
+  return (
+    <div className="rounded-lg border border-line bg-panel">
+      <div className="flex items-center justify-between border-b border-line px-4 py-3">
+        <h2 className="text-sm font-medium text-ink">Active incidents</h2>
+      </div>
+
+      <ul>
+        {[0, 1, 2].map((i) => (
+          <li
+            key={i}
+            className="flex items-center gap-4 border-b border-line px-4 py-3 last:border-b-0"
+          >
+            <Skeleton className="h-5 w-16 shrink-0" />
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <SkeletonText width="w-2/3" />
+              <SkeletonText width="w-1/3" className="h-2.5" />
+            </div>
+            <SkeletonCircle />
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function IncidentsPanel({
   incidents,
   services,
@@ -55,6 +89,12 @@ export function IncidentsPanel({
   error,
   onRetry,
 }: IncidentsPanelProps) {
+  // Rendered inside DashboardView (a Client Component), so this
+  // re-executes during hydration too — a bare `new Date()` here
+  // is not safe (see ServiceHealthGrid.tsx). useNow() keeps the
+  // server and first-client-paint text identical.
+  const now = useNow();
+
   const sorted = [...incidents].sort(
     (a, b) => severityOrder[a.severity] - severityOrder[b.severity],
   );
@@ -63,29 +103,7 @@ export function IncidentsPanel({
   const serviceById = Object.fromEntries(services.map((s) => [s.id, s]));
 
   if (loading) {
-    return (
-      <div className="rounded-lg border border-line bg-panel">
-        <div className="flex items-center justify-between border-b border-line px-4 py-3">
-          <h2 className="text-sm font-medium text-ink">Active incidents</h2>
-        </div>
-
-        <ul>
-          {[0, 1, 2].map((i) => (
-            <li
-              key={i}
-              className="flex items-center gap-4 border-b border-line px-4 py-3 last:border-b-0"
-            >
-              <Skeleton className="h-5 w-16 shrink-0" />
-              <div className="min-w-0 flex-1 space-y-1.5">
-                <SkeletonText width="w-2/3" />
-                <SkeletonText width="w-1/3" className="h-2.5" />
-              </div>
-              <SkeletonCircle />
-            </li>
-          ))}
-        </ul>
-      </div>
-    );
+    return <IncidentsPanelSkeleton />;
   }
 
   if (error) {
@@ -151,10 +169,7 @@ export function IncidentsPanel({
                     {statusMeta.label}
                   </span>
                   <span>·</span>
-                  {/* Server Component (no "use client") — this never
-                      hydrates/re-executes on the client, so a plain
-                      `new Date()` here is safe and doesn't need useNow(). */}
-                  <span>{relativeTime(incident.createdAt, new Date())}</span>
+                  <span>{relativeTime(incident.createdAt, now)}</span>
                   {affectedServices.length > 0 && (
                     <>
                       <span>·</span>

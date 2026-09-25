@@ -37,6 +37,41 @@ interface TicketBoardProps {
   onRetry?: () => void;
 }
 
+/** Extracted for reuse as this route's `loading.tsx` fallback — see
+ *  IncidentsPanelSkeleton's doc comment. */
+export function TicketBoardSkeleton() {
+  return (
+    <div className="rounded-lg border border-line bg-panel">
+      <div className="border-b border-line px-4 py-3">
+        <h2 className="text-sm font-medium text-ink">Work</h2>
+      </div>
+
+      <div className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2 lg:grid-cols-4">
+        {columns.map((status) => (
+          <div key={status} className="bg-panel">
+            <div className="flex items-center gap-1.5 px-3 py-2.5">
+              <SkeletonText width="w-16" className="h-2.5" />
+            </div>
+
+            <ul>
+              {[0, 1].map((i) => (
+                <li
+                  key={i}
+                  className="flex items-start gap-2 border-t border-line px-3 py-2"
+                >
+                  <Skeleton className="mt-1 size-1.5 shrink-0 rounded-full" />
+                  <SkeletonText className="mt-0.5 flex-1" />
+                  <SkeletonCircle />
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function TicketBoard({
   tickets,
   resolveUser,
@@ -45,36 +80,7 @@ export function TicketBoard({
   onRetry,
 }: TicketBoardProps) {
   if (loading) {
-    return (
-      <div className="rounded-lg border border-line bg-panel">
-        <div className="border-b border-line px-4 py-3">
-          <h2 className="text-sm font-medium text-ink">Work</h2>
-        </div>
-
-        <div className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2 lg:grid-cols-4">
-          {columns.map((status) => (
-            <div key={status} className="bg-panel">
-              <div className="flex items-center gap-1.5 px-3 py-2.5">
-                <SkeletonText width="w-16" className="h-2.5" />
-              </div>
-
-              <ul>
-                {[0, 1].map((i) => (
-                  <li
-                    key={i}
-                    className="flex items-start gap-2 border-t border-line px-3 py-2"
-                  >
-                    <Skeleton className="mt-1 size-1.5 shrink-0 rounded-full" />
-                    <SkeletonText className="mt-0.5 flex-1" />
-                    <SkeletonCircle />
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
+    return <TicketBoardSkeleton />;
   }
 
   if (error) {

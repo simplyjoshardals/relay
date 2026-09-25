@@ -56,10 +56,43 @@ export function useRealtimeConnected(): boolean {
  * collapses to one entry here rather than needing de-duplication at
  * every call site.
  */
-const PresenceContext = createContext<Set<string>>(new Set());
+// One shared empty Set, only ever *replaced* in state, never mutated —
+// lets "nobody / unknown" resets bail out of a re-render when the state
+// is already empty.
+const NO_ONE_ONLINE: Set<string> = new Set();
+
+const PresenceContext = createContext<Set<string>>(NO_ONE_ONLINE);
 
 export function useOnlineUserIds(): Set<string> {
   return useContext(PresenceContext);
+}
+
+/**
+ * Whether `useOnlineUserIds()` is *known*, as opposed to just empty.
+ *
+ * Presence is pure client-side socket state: on first paint (and again
+ * after any drop) the Set is empty because nothing has been asked yet,
+ * not because nobody is online. Anything that renders a count or a
+ * per-user dot has to check this first, or it flashes "0 online" / "all
+ * offline" and then corrects itself once the first sync lands.
+ *
+ * Flips true only once the channel's own presence entry shows up in a
+ * sync (i.e. our `track()` landed, so the state we read includes
+ * ourselves), and back to false whenever the connection drops — a Set
+ * carried over from a dead socket is stale, not "still true".
+ */
+const PresenceReadyContext = createContext<boolean>(false);
+
+export function usePresenceReady(): boolean {
+  return useContext(PresenceReadyContext);
+}
+
+/** The signed-in user's id (the same one this provider keys Presence by).
+ *  Lets presence UIs pin "you" without threading `self` through props. */
+const CurrentUserIdContext = createContext<string | null>(null);
+
+export function useCurrentUserId(): string | null {
+  return useContext(CurrentUserIdContext);
 }
 
 // Backoff for reconnect attempts after a CHANNEL_ERROR/TIMED_OUT/CLOSED —
@@ -149,7 +182,10 @@ export function RealtimeProvider({
 }: RealtimeProviderProps) {
   const queryClient = useQueryClient();
   const [status, setStatus] = useState<RealtimeStatus>("connecting");
-  const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
+  const [onlineIds, setOnlineIds] = useState<Set<string>>(NO_ONE_ONLINE);
+  // See PresenceReadyContext: false until the first sync that includes
+  // this user's own entry, and false again after any drop.
+  const [presenceReady, setPresenceReady] = useState(false);
   // Whether this provider has ever reached SUBSCRIBED — distinguishes a
   // first "connecting" from a "reconnecting" after a drop.
   const hasConnectedRef = useRef(false);
@@ -222,6 +258,15 @@ export function RealtimeProvider({
       serviceDebounceTimersRef.current.clear();
     };
 
+    // The presence Set is only trustworthy while the socket that fed it
+    // is alive. On any drop (or the start of a fresh connect attempt)
+    // throw it away and mark it unknown, rather than leave the last
+    // roster on screen as if it were still current.
+    const resetPresence = () => {
+      setOnlineIds((prev) => (prev.size === 0 ? prev : NO_ONE_ONLINE));
+      setPresenceReady(false);
+    };
+
     const teardown = () => {
       if (channelRef.current) {
         // Best-effort, not awaited — teardown() is synchronous and runs
@@ -290,6 +335,10 @@ export function RealtimeProvider({
       const myAttempt = attemptRef.current;
       const isSuperseded = () => isStale() || myAttempt !== attemptRef.current;
 
+      // Every attempt starts from "presence unknown" — this is also what
+      // covers the early-return offline path just below.
+      resetPresence();
+
       // No network at all: nothing to attempt. The 'online' listener
       // below calls connect() again the moment it's back — retrying on a
       // backoff timer while offline would just burn failed token calls.
@@ -345,7 +394,14 @@ export function RealtimeProvider({
             // replacing state wholesale is correct, not a missed-event
             // risk the way an add/remove-one-id approach would be.
             if (isStale()) return;
-            setOnlineIds(new Set(Object.keys(channel.presenceState())));
+            const ids = new Set(Object.keys(channel.presenceState()));
+            setOnlineIds(ids);
+            // The first sync usually arrives *before* our own track()
+            // has landed (it's the roster as it stood when we joined —
+            // empty, if we're the first one in). Treating that as
+            // "known" would flash "0 online" and then jump to 1. Wait
+            // for a sync that includes ourselves.
+            if (ids.has(userId)) setPresenceReady(true);
           })
           .on("broadcast", { event: "ticket.updated" }, ({ payload }) => {
             if (isStale()) return;
@@ -433,9 +489,15 @@ export function RealtimeProvider({
                     console.warn(
                       `RealtimeProvider: presence track() failed: ${status}`,
                     );
+                    // We'll never appear in our own sync, so don't
+                    // hold "known" hostage to it: the roster others
+                    // have published is still the best answer there is.
+                    if (!isSuperseded()) setPresenceReady(true);
                   }
                 })
-                .catch(() => undefined);
+                .catch(() => {
+                  if (!isSuperseded()) setPresenceReady(true);
+                });
             } else {
               // CHANNEL_ERROR / TIMED_OUT / CLOSED. supabase-js's socket
               // does auto-reconnect at the transport level, but a
@@ -449,6 +511,9 @@ export function RealtimeProvider({
               // "came back online and it never went back to Live."
               // Reconnecting from scratch with a fresh token is what
               // actually resolves it.
+              // Whatever roster we had came from this socket; it's stale
+              // now, and may stay so through a long backoff.
+              resetPresence();
               if (!navigator.onLine) {
                 // The drop is because there's no network; the 'online'
                 // listener reconnects once it's back.
@@ -495,6 +560,7 @@ export function RealtimeProvider({
       if (isStale()) return;
       clearRetryTimer();
       clearConnectWatchdog();
+      resetPresence();
       setStatus("offline");
     };
 
@@ -564,7 +630,11 @@ export function RealtimeProvider({
   return (
     <RealtimeStatusContext.Provider value={status}>
       <PresenceContext.Provider value={onlineIds}>
-        {children}
+        <PresenceReadyContext.Provider value={presenceReady}>
+          <CurrentUserIdContext.Provider value={userId}>
+            {children}
+          </CurrentUserIdContext.Provider>
+        </PresenceReadyContext.Provider>
       </PresenceContext.Provider>
     </RealtimeStatusContext.Provider>
   );

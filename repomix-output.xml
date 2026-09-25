@@ -46,6 +46,7 @@ app/
       actions.ts
       page.tsx
     dashboard/
+      loading.tsx
       page.tsx
     incidents/
       actions.ts
@@ -63,7 +64,6 @@ app/
     layout.tsx
   invite/
     [token]/
-      AcceptInviteForm.tsx
       actions.ts
       page.tsx
   login/
@@ -80,6 +80,8 @@ components/
   dashboard/
     ActivityFeed.tsx
     Avatar.tsx
+    DashboardSkeleton.tsx
+    DashboardView.tsx
     IncidentsPanel.tsx
     LiveIndicator.tsx
     PresenceRail.tsx
@@ -89,6 +91,8 @@ components/
   incidents/
     IncidentModal.tsx
     IncidentsView.tsx
+  invite/
+    AcceptInviteForm.tsx
   services/
     ServiceModal.tsx
     ServicesView.tsx
@@ -102,6 +106,7 @@ components/
     RealtimeProvider.tsx
     SearchInput.tsx
     SelectField.tsx
+    Skeleton.tsx
     Sparkline.tsx
     TextField.tsx
     Toast.tsx
@@ -208,6 +213,74 @@ tsconfig.json
 
 <files>
 This section contains the contents of the repository's files.
+
+<file path="app/(dashboard)/dashboard/loading.tsx">
+import { DashboardSkeleton } from "@/components/dashboard/DashboardSkeleton";
+
+// Next's file convention for a route-level Suspense boundary: this
+// wraps `page.tsx` in a `<Suspense>` automatically, so the shared
+// layout (TopBar, nav) streams and paints immediately while
+// `dashboard/page.tsx`'s server-side query prefetch is still in
+// flight, showing this in the meantime instead of blocking the whole
+// document behind it.
+export default function DashboardLoading() {
+  return <DashboardSkeleton />;
+}
+</file>
+
+<file path="components/dashboard/DashboardSkeleton.tsx">
+import { StatRow } from "@/components/dashboard/StatRow";
+import { IncidentsPanelSkeleton } from "@/components/dashboard/IncidentsPanel";
+import { ServiceHealthGridSkeleton } from "@/components/dashboard/ServiceHealthGrid";
+import { TicketBoardSkeleton } from "@/components/dashboard/TicketBoard";
+import { PresenceRailSkeleton } from "@/components/dashboard/PresenceRail";
+import { ActivityFeedSkeleton } from "@/components/dashboard/ActivityFeed";
+
+/**
+ * The dashboard route's `loading.tsx` fallback. A plain Server
+ * Component, not `DashboardView` itself — it needs to be a static shell
+ * with zero queries of its own, shown the moment navigation starts
+ * while `dashboard/page.tsx`'s server-side prefetch is still in flight,
+ * then swapped out for the real, already-hydrated `DashboardView` once
+ * that resolves. Rendering `DashboardView` here instead would just
+ * recreate the original client-fetch flicker this route was built to
+ * avoid.
+ *
+ * Mirrors `DashboardView`'s exact layout (same grid, same panels in the
+ * same order) so nothing shifts position when the real content
+ * replaces it — every one of these skeleton pieces is the same
+ * component each panel already shows while its own query is
+ * `isLoading`, just reused here with no query behind it at all.
+ */
+export function DashboardSkeleton() {
+  return (
+    <>
+      <StatRow
+        stats={[
+          { label: "Open tickets", value: null },
+          { label: "In progress", value: null },
+          { label: "Active incidents", value: null, tone: "danger" },
+          { label: "Degraded / outage", value: null, tone: "warning" },
+          { label: "Online now", value: null },
+        ]}
+      />
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[2.2fr_1fr] lg:items-start">
+        <div className="flex flex-col gap-4 min-w-0">
+          <IncidentsPanelSkeleton />
+          <ServiceHealthGridSkeleton />
+          <TicketBoardSkeleton />
+        </div>
+
+        <div className="flex flex-col gap-4 min-w-0">
+          <PresenceRailSkeleton />
+          <ActivityFeedSkeleton />
+        </div>
+      </div>
+    </>
+  );
+}
+</file>
 
 <file path="app/(dashboard)/activity/actions.ts">
 "use server";
@@ -493,86 +566,6 @@ export async function getRealtimeTokenAction(): Promise<string> {
 }
 </file>
 
-<file path="app/invite/[token]/AcceptInviteForm.tsx">
-"use client";
-
-import { useActionState, useState } from "react";
-import { TextField } from "@/components/shared/TextField";
-import {
-  acceptInvitationAction,
-  type AcceptInviteFormState,
-} from "@/app/invite/[token]/actions";
-
-const initialState: AcceptInviteFormState = { error: null };
-
-interface AcceptInviteFormProps {
-  token: string;
-  /** Pre-filled from what the Manager typed; the invitee has the final
-   *  say over their own display name. */
-  defaultName: string;
-}
-
-export function AcceptInviteForm({
-  token,
-  defaultName,
-}: AcceptInviteFormProps) {
-  const [state, formAction, isPending] = useActionState(
-    acceptInvitationAction,
-    initialState,
-  );
-  const [name, setName] = useState(defaultName);
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-
-  return (
-    <form action={formAction} className="flex flex-col gap-3">
-      <input type="hidden" name="token" value={token} />
-
-      <TextField
-        label="Your name"
-        name="name"
-        autoFocus
-        value={name}
-        onChange={setName}
-        placeholder="Full name"
-      />
-
-      <TextField
-        label="Choose a password"
-        name="password"
-        type="password"
-        value={password}
-        onChange={setPassword}
-        placeholder="At least 8 characters"
-      />
-
-      <TextField
-        label="Confirm password"
-        name="confirmPassword"
-        type="password"
-        value={confirmPassword}
-        onChange={setConfirmPassword}
-        placeholder="Repeat your password"
-      />
-
-      {state.error && (
-        <p className="rounded-md bg-panel-raised px-2.5 py-1.5 text-xs text-danger">
-          {state.error}
-        </p>
-      )}
-
-      <button
-        type="submit"
-        disabled={isPending}
-        className="mt-1 rounded-md bg-ink px-3 py-1.5 text-sm font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-50"
-      >
-        {isPending ? "Joining…" : "Join the team"}
-      </button>
-    </form>
-  );
-}
-</file>
-
 <file path="app/invite/[token]/actions.ts">
 "use server";
 
@@ -649,80 +642,6 @@ export async function acceptInvitationAction(
   });
 
   redirect(PATHS.DASHBOARD);
-}
-</file>
-
-<file path="app/invite/[token]/page.tsx">
-import type { Metadata } from "next";
-import Link from "next/link";
-import { AcceptInviteForm } from "@/app/invite/[token]/AcceptInviteForm";
-import { previewInvitation } from "@/server/application/invitations";
-import { PATHS } from "@/utils/paths";
-
-// The link's token is a bearer credential: keep it out of search indexes
-// and out of `Referer` headers on anything the page might link to.
-export const metadata: Metadata = {
-  title: "Join the team — Relay",
-  robots: { index: false, follow: false },
-  referrer: "no-referrer",
-};
-
-/**
- * The public landing page for an invitation link (Milestone 10). Sits
- * outside the (dashboard) route group on purpose — the visitor has no
- * session yet, so that layout's sign-in gate would just bounce them to
- * /login. Deliberately does *not* redirect an already-signed-in visitor
- * away the way /login does: someone accepting a link in a browser that
- * happens to be signed in as somebody else should still be able to.
- */
-export default async function InvitePage({
-  params,
-}: {
-  params: Promise<{ token: string }>;
-}) {
-  const { token } = await params;
-  const invitation = await previewInvitation(token);
-
-  return (
-    <div className="flex h-full flex-col items-center justify-center px-4 py-10">
-      <div className="w-full max-w-sm">
-        {invitation.valid ? (
-          <>
-            <div className="mb-6 text-center">
-              <h1 className="text-lg font-medium text-ink">
-                Join {invitation.orgName}
-              </h1>
-              <p className="mt-1 text-sm text-ink-dim">
-                You&apos;ve been invited as a{" "}
-                {invitation.role === "MANAGER" ? "Manager" : "Member"} (
-                {invitation.email}).
-              </p>
-            </div>
-
-            <div className="rounded-lg border border-line bg-panel p-4">
-              <AcceptInviteForm token={token} defaultName={invitation.name} />
-            </div>
-          </>
-        ) : (
-          <div className="rounded-lg border border-line bg-panel p-4 text-center">
-            <h1 className="text-lg font-medium text-ink">
-              This link isn&apos;t valid
-            </h1>
-            <p className="mt-2 text-sm text-ink-dim">
-              It may have expired, already been used, or been withdrawn. Ask a
-              Manager to send you a new invitation.
-            </p>
-            <Link
-              href={PATHS.LOGIN}
-              className="mt-4 inline-block text-sm text-ink underline hover:text-ink-dim"
-            >
-              Go to sign in
-            </Link>
-          </div>
-        )}
-      </div>
-    </div>
-  );
 }
 </file>
 
@@ -852,6 +771,86 @@ export function LoginForm() {
         className="mt-1 rounded-md bg-ink px-3 py-1.5 text-sm font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-50"
       >
         {isPending ? "Signing in…" : "Sign in"}
+      </button>
+    </form>
+  );
+}
+</file>
+
+<file path="components/invite/AcceptInviteForm.tsx">
+"use client";
+
+import { useActionState, useState } from "react";
+import { TextField } from "@/components/shared/TextField";
+import {
+  acceptInvitationAction,
+  type AcceptInviteFormState,
+} from "@/app/invite/[token]/actions";
+
+const initialState: AcceptInviteFormState = { error: null };
+
+interface AcceptInviteFormProps {
+  token: string;
+  /** Pre-filled from what the Manager typed; the invitee has the final
+   *  say over their own display name. */
+  defaultName: string;
+}
+
+export function AcceptInviteForm({
+  token,
+  defaultName,
+}: AcceptInviteFormProps) {
+  const [state, formAction, isPending] = useActionState(
+    acceptInvitationAction,
+    initialState,
+  );
+  const [name, setName] = useState(defaultName);
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+
+  return (
+    <form action={formAction} className="flex flex-col gap-3">
+      <input type="hidden" name="token" value={token} />
+
+      <TextField
+        label="Your name"
+        name="name"
+        autoFocus
+        value={name}
+        onChange={setName}
+        placeholder="Full name"
+      />
+
+      <TextField
+        label="Choose a password"
+        name="password"
+        type="password"
+        value={password}
+        onChange={setPassword}
+        placeholder="At least 8 characters"
+      />
+
+      <TextField
+        label="Confirm password"
+        name="confirmPassword"
+        type="password"
+        value={confirmPassword}
+        onChange={setConfirmPassword}
+        placeholder="Repeat your password"
+      />
+
+      {state.error && (
+        <p className="rounded-md bg-panel-raised px-2.5 py-1.5 text-xs text-danger">
+          {state.error}
+        </p>
+      )}
+
+      <button
+        type="submit"
+        disabled={isPending}
+        className="mt-1 rounded-md bg-ink px-3 py-1.5 text-sm font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-50"
+      >
+        {isPending ? "Joining…" : "Join the team"}
       </button>
     </form>
   );
@@ -1006,6 +1005,66 @@ export function FilterPill({ active, onClick, label, count }: FilterPillProps) {
       {label} <span className="text-ink-faint">{count}</span>
     </button>
   );
+}
+</file>
+
+<file path="components/shared/Skeleton.tsx">
+/**
+ * Shared loading-placeholder primitives (Milestone 9). The dashboard is
+ * the first consumer — every panel (StatRow, IncidentsPanel,
+ * ServiceHealthGrid, TicketBoard, ActivityFeed, PresenceRail) renders
+ * one of these, shaped like its own content, while its query is still
+ * `isLoading` — instead of a plain "Loading…" line.
+ *
+ * Deliberately just three small building blocks rather than one
+ * skeleton per screen shape: every future loading state (tickets list,
+ * incidents list, services grid, activity feed, etc. — see
+ * BACKEND_ROADMAP.md's Milestone 9 note) should compose these the same
+ * way the dashboard panels below do, not add a new one-off component.
+ */
+
+interface SkeletonProps {
+  /** Extra classes — width/height, margins, rounding overrides. */
+  className?: string;
+}
+
+/** The base shimmering block. Every other skeleton shape is this with a
+ *  size and border-radius applied via `className`. */
+export function Skeleton({ className = "" }: SkeletonProps) {
+  return (
+    <div
+      aria-hidden="true"
+      className={`animate-pulse rounded-md bg-line-strong ${className}`}
+    />
+  );
+}
+
+interface SkeletonCircleProps extends SkeletonProps {
+  /** Tailwind size utility, e.g. "size-6" (Avatar's "sm") or "size-8"
+   *  ("md"). Matches Avatar's own sizing so a skeleton avatar lines up
+   *  exactly with the real one that replaces it. */
+  size?: string;
+}
+
+/** Avatar-shaped placeholder. */
+export function SkeletonCircle({
+  size = "size-6",
+  className = "",
+}: SkeletonCircleProps) {
+  return <Skeleton className={`${size} shrink-0 rounded-full ${className}`} />;
+}
+
+interface SkeletonTextProps extends SkeletonProps {
+  /** Tailwind width utility, e.g. "w-24", "w-full". */
+  width?: string;
+}
+
+/** A single line-of-text placeholder. */
+export function SkeletonText({
+  width = "w-full",
+  className = "",
+}: SkeletonTextProps) {
+  return <Skeleton className={`h-3 ${width} ${className}`} />;
 }
 </file>
 
@@ -3402,94 +3461,76 @@ export default function ActivityPage() {
 }
 </file>
 
-<file path="app/(dashboard)/dashboard/page.tsx">
-import { StatRow } from "@/components/dashboard/StatRow";
-import { IncidentsPanel } from "@/components/dashboard/IncidentsPanel";
-import { ServiceHealthGrid } from "@/components/dashboard/ServiceHealthGrid";
-import { TicketBoard } from "@/components/dashboard/TicketBoard";
-import { PresenceRail } from "@/components/dashboard/PresenceRail";
-import { ActivityFeed } from "@/components/dashboard/ActivityFeed";
-import {
-  activities,
-  incidents,
-  resolveUser,
-  services,
-  tickets,
-} from "@/lib/mock-data";
+<file path="app/invite/[token]/page.tsx">
+import type { Metadata } from "next";
+import Link from "next/link";
+import { AcceptInviteForm } from "@/components/invite/AcceptInviteForm";
+import { previewInvitation } from "@/server/application/invitations";
+import { PATHS } from "@/utils/paths";
 
-// TODO(milestone 9): replace the mock-data import above with real
-// org-scoped queries once auth + the API routes land (README §15 /
-// implementation plan). Every component below already takes its data as
-// props shaped like the query result, so that swap shouldn't touch JSX.
-//
-// Presence is the one exception, done for real in Milestone 7:
-// PresenceRail is now fully self-contained (real users +
-// useOnlineUserIds — see its own doc comment) rather than taking
-// `users`/`onlineIds` props, so this page no longer imports `users` or
-// `onlineUserIds` from mock-data, and the "Online now" stat below is
-// gone rather than left showing a number that would silently
-// contradict the real rail right below it. Restoring an "Online now"
-// stat card for real is straightforward once this whole page is real
-// (a small client component reading useOnlineUserIds(), or the count
-// PresenceRail already shows doubling as the summary) — just not a fit
-// for a server component still computing every *other* stat from mock
-// data.
+// The link's token is a bearer credential: keep it out of search indexes
+// and out of `Referer` headers on anything the page might link to.
+export const metadata: Metadata = {
+  title: "Join the team — Relay",
+  robots: { index: false, follow: false },
+  referrer: "no-referrer",
+};
 
-export default function DashboardPage() {
-  const openTickets = tickets.filter((t) => t.status === "OPEN").length;
-  const inProgressTickets = tickets.filter(
-    (t) => t.status === "IN_PROGRESS",
-  ).length;
-  // Resolved incidents now exist in the data (added for the standalone
-  // incidents page's history view), so this can no longer just be
-  // `incidents.length` — the dashboard only ever wants the ones still
-  // open. IncidentsPanel is built the same way: its "No active incidents"
-  // empty state assumes the caller already filtered, it doesn't re-check.
-  const activeIncidentsList = incidents.filter((i) => i.status !== "RESOLVED");
-  const activeIncidents = activeIncidentsList.length;
-  const unhealthyServices = services.filter(
-    (s) => s.status !== "OPERATIONAL",
-  ).length;
+/**
+ * The public landing page for an invitation link (Milestone 10). Sits
+ * outside the (dashboard) route group on purpose — the visitor has no
+ * session yet, so that layout's sign-in gate would just bounce them to
+ * /login. Deliberately does *not* redirect an already-signed-in visitor
+ * away the way /login does: someone accepting a link in a browser that
+ * happens to be signed in as somebody else should still be able to.
+ */
+export default async function InvitePage({
+  params,
+}: {
+  params: Promise<{ token: string }>;
+}) {
+  const { token } = await params;
+  const invitation = await previewInvitation(token);
 
   return (
-    <>
-      <StatRow
-        stats={[
-          { label: "Open tickets", value: openTickets },
-          { label: "In progress", value: inProgressTickets },
-          {
-            label: "Active incidents",
-            value: activeIncidents,
-            tone: "danger",
-          },
-          {
-            label: "Degraded / outage",
-            value: unhealthyServices,
-            tone: "warning",
-          },
-        ]}
-      />
+    <div className="flex h-full flex-col items-center justify-center px-4 py-10">
+      <div className="w-full max-w-sm">
+        {invitation.valid ? (
+          <>
+            <div className="mb-6 text-center">
+              <h1 className="text-lg font-medium text-ink">
+                Join {invitation.orgName}
+              </h1>
+              <p className="mt-1 text-sm text-ink-dim">
+                You&apos;ve been invited as a{" "}
+                {invitation.role === "MANAGER" ? "Manager" : "Member"} (
+                {invitation.email}).
+              </p>
+            </div>
 
-      {/* Side-by-side only once there's room for both columns to
-          breathe; below that, the rail just drops beneath the main
-          content instead of squeezing next to it. */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[2.2fr_1fr] lg:items-start">
-        <div className="flex flex-col gap-4 min-w-0">
-          <IncidentsPanel
-            incidents={activeIncidentsList}
-            services={services}
-            resolveUser={resolveUser}
-          />
-          <ServiceHealthGrid services={services} />
-          <TicketBoard tickets={tickets} resolveUser={resolveUser} />
-        </div>
-
-        <div className="flex flex-col gap-4 min-w-0">
-          <PresenceRail />
-          <ActivityFeed activities={activities} resolveUser={resolveUser} />
-        </div>
+            <div className="rounded-lg border border-line bg-panel p-4">
+              <AcceptInviteForm token={token} defaultName={invitation.name} />
+            </div>
+          </>
+        ) : (
+          <div className="rounded-lg border border-line bg-panel p-4 text-center">
+            <h1 className="text-lg font-medium text-ink">
+              This link isn&apos;t valid
+            </h1>
+            <p className="mt-2 text-sm text-ink-dim">
+              It may have expired, already been used, or been withdrawn. Ask a
+              Manager to send you a new invitation.
+            </p>
+            <Link
+              href={PATHS.LOGIN}
+              className="mt-4 inline-block text-sm text-ink underline hover:text-ink-dim"
+            >
+              Go to sign in
+            </Link>
+          </div>
+        )}
       </div>
-    </>
+    </div>
   );
 }
 </file>
@@ -3521,6 +3562,219 @@ export default async function LoginPage() {
         </div>
       </div>
     </div>
+  );
+}
+</file>
+
+<file path="components/dashboard/DashboardView.tsx">
+"use client";
+
+import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { StatRow } from "@/components/dashboard/StatRow";
+import { IncidentsPanel } from "@/components/dashboard/IncidentsPanel";
+import { ServiceHealthGrid } from "@/components/dashboard/ServiceHealthGrid";
+import { TicketBoard } from "@/components/dashboard/TicketBoard";
+import { PresenceRail } from "@/components/dashboard/PresenceRail";
+import { ActivityFeed } from "@/components/dashboard/ActivityFeed";
+import { useOnlineUserIds } from "@/components/shared/RealtimeProvider";
+import {
+  listOrgUsersAction,
+  listTicketsAction,
+} from "@/app/(dashboard)/tickets/actions";
+import { listIncidentsAction } from "@/app/(dashboard)/incidents/actions";
+import { listServicesAction } from "@/app/(dashboard)/services/actions";
+import { listActivityAction } from "@/app/(dashboard)/activity/actions";
+import type { Activity, Incident, Service, Ticket, User } from "@/types";
+
+// Stable empty-array fallbacks, same reasoning as TicketsView's
+// EMPTY_TICKETS/EMPTY_USERS: a fresh `?? []` every render would defeat
+// the useMemo()s below.
+const EMPTY_TICKETS: Ticket[] = [];
+const EMPTY_INCIDENTS: Incident[] = [];
+const EMPTY_SERVICES: Service[] = [];
+const EMPTY_USERS: User[] = [];
+const EMPTY_ACTIVITIES: Activity[] = [];
+
+// How many recent events the dashboard's compact Activity panel shows —
+// the full history lives on the dedicated Activity page
+// (components/activity/ActivityView.tsx); this panel is a glance, not
+// another feed to scroll.
+const DASHBOARD_ACTIVITY_COUNT = 8;
+
+/**
+ * Milestone 9: the dashboard was already fully built visually against
+ * mock data (every panel §15 asks for existed) — this is exactly the
+ * `TODO(milestone 9)` swap the old Server Component page anticipated,
+ * moved into its own client component because the query hooks it swaps
+ * in (`useQuery`) only run client-side.
+ *
+ * Every query below reuses the *exact* key each prior milestone's own
+ * view already established (TicketsView, IncidentsView, ServicesView,
+ * ActivityView, PresenceRail) — same cache entries, so this never
+ * double-fetches anything a user already has another tab of open, and
+ * `RealtimeProvider`'s existing per-domain invalidation
+ * (`ticket.updated`, `incident.updated`, `service.updated`,
+ * `activity.created`) keeps this page current for free, no new realtime
+ * wiring needed. The one new key, `["activity", "list", "recent"]`,
+ * still starts with `["activity", "list"]` so it's covered by that same
+ * `activity.created` invalidation (TanStack matches by prefix).
+ *
+ * Presence (Milestone 7) was already fully real and self-contained —
+ * `PresenceRail` renders itself — the only remaining piece is reading
+ * `useOnlineUserIds()` here too, to restore the "Online now" stat that
+ * M7 dropped rather than leave on stale mock data (its own doc comment
+ * flagged this as this milestone's job).
+ *
+ * No props: nothing here needs `self` — every panel is read-only, no
+ * mutations happen on the dashboard itself.
+ *
+ * Every query's `isError` is wired through to its panel(s) (and to the
+ * matching StatRow entries), each with its own "Try again" → `refetch()`
+ * — unlike TicketsView/IncidentsView/ServicesView/ActivityView/TeamView,
+ * which fail as a single page and so only need one error branch each,
+ * a failed query here must not read as "0 active incidents, everything
+ * healthy" just because the other four panels loaded fine.
+ *
+ * Streaming SSR follow-up (STREAMING_SSR_TODO.md): `dashboard/page.tsx`
+ * now prefetches every query below on the server and hydrates this
+ * component's cache before it ever mounts client-side — see that
+ * file's doc comment for the mechanism. Nothing here changed for it;
+ * the same `useQuery` calls just find data already in cache on first
+ * render instead of fetching it.
+ */
+export function DashboardView() {
+  const ticketsQuery = useQuery({
+    queryKey: ["tickets", "list"],
+    queryFn: listTicketsAction,
+  });
+
+  const incidentsQuery = useQuery({
+    queryKey: ["incidents", "list"],
+    queryFn: listIncidentsAction,
+  });
+
+  const servicesQuery = useQuery({
+    queryKey: ["services", "list"],
+    queryFn: listServicesAction,
+  });
+
+  const usersQuery = useQuery({
+    queryKey: ["org-users", "list"],
+    queryFn: listOrgUsersAction,
+  });
+
+  const activityQuery = useQuery({
+    queryKey: ["activity", "list", "recent"],
+    queryFn: () => listActivityAction(),
+  });
+
+  const onlineIds = useOnlineUserIds();
+
+  const tickets = ticketsQuery.data ?? EMPTY_TICKETS;
+  const incidents = incidentsQuery.data ?? EMPTY_INCIDENTS;
+  const services = servicesQuery.data ?? EMPTY_SERVICES;
+  const users = usersQuery.data ?? EMPTY_USERS;
+  const activities = activityQuery.data?.items ?? EMPTY_ACTIVITIES;
+
+  const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
+  const resolveUser = (id: string | null): User | null =>
+    id ? (userById.get(id) ?? null) : null;
+
+  // Same "the dashboard only ever wants the still-open ones" filter the
+  // old mock-data version used — IncidentsPanel's empty state assumes
+  // the caller already filtered.
+  const activeIncidentsList = useMemo(
+    () => incidents.filter((i) => i.status !== "RESOLVED"),
+    [incidents],
+  );
+
+  const recentActivities = useMemo(
+    () => activities.slice(0, DASHBOARD_ACTIVITY_COUNT),
+    [activities],
+  );
+
+  const openTickets = tickets.filter((t) => t.status === "OPEN").length;
+  const inProgressTickets = tickets.filter(
+    (t) => t.status === "IN_PROGRESS",
+  ).length;
+  const unhealthyServices = services.filter(
+    (s) => s.status !== "OPERATIONAL",
+  ).length;
+
+  return (
+    <>
+      <StatRow
+        stats={[
+          {
+            label: "Open tickets",
+            value: ticketsQuery.isLoading ? null : openTickets,
+            error: ticketsQuery.isError,
+          },
+          {
+            label: "In progress",
+            value: ticketsQuery.isLoading ? null : inProgressTickets,
+            error: ticketsQuery.isError,
+          },
+          {
+            label: "Active incidents",
+            value: incidentsQuery.isLoading ? null : activeIncidentsList.length,
+            tone: "danger",
+            error: incidentsQuery.isError,
+          },
+          {
+            label: "Degraded / outage",
+            value: servicesQuery.isLoading ? null : unhealthyServices,
+            tone: "warning",
+            error: servicesQuery.isError,
+          },
+          { label: "Online now", value: onlineIds.size },
+        ]}
+      />
+
+      {/* Side-by-side only once there's room for both columns to
+          breathe; below that, the rail just drops beneath the main
+          content instead of squeezing next to it. */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[2.2fr_1fr] lg:items-start">
+        <div className="flex flex-col gap-4 min-w-0">
+          <IncidentsPanel
+            incidents={activeIncidentsList}
+            services={services}
+            resolveUser={resolveUser}
+            loading={incidentsQuery.isLoading || servicesQuery.isLoading}
+            error={incidentsQuery.isError || servicesQuery.isError}
+            onRetry={() => {
+              incidentsQuery.refetch();
+              servicesQuery.refetch();
+            }}
+          />
+          <ServiceHealthGrid
+            services={services}
+            loading={servicesQuery.isLoading}
+            error={servicesQuery.isError}
+            onRetry={() => servicesQuery.refetch()}
+          />
+          <TicketBoard
+            tickets={tickets}
+            resolveUser={resolveUser}
+            loading={ticketsQuery.isLoading}
+            error={ticketsQuery.isError}
+            onRetry={() => ticketsQuery.refetch()}
+          />
+        </div>
+
+        <div className="flex flex-col gap-4 min-w-0">
+          <PresenceRail />
+          <ActivityFeed
+            activities={recentActivities}
+            resolveUser={resolveUser}
+            loading={activityQuery.isLoading}
+            error={activityQuery.isError}
+            onRetry={() => activityQuery.refetch()}
+          />
+        </div>
+      </div>
+    </>
   );
 }
 </file>
@@ -7506,6 +7760,85 @@ Each slice from #3 onward should re-run its relevant Playwright acceptance test 
 3. **Telemetry worker deployment target** — **resolved.** Long-lived process, in-process calls to the application layer (see §13).
 </file>
 
+<file path="app/(dashboard)/dashboard/page.tsx">
+import {
+  QueryClient,
+  HydrationBoundary,
+  dehydrate,
+} from "@tanstack/react-query";
+import { DashboardView } from "@/components/dashboard/DashboardView";
+import {
+  listOrgUsersAction,
+  listTicketsAction,
+} from "@/app/(dashboard)/tickets/actions";
+import { listIncidentsAction } from "@/app/(dashboard)/incidents/actions";
+import { listServicesAction } from "@/app/(dashboard)/services/actions";
+import { listActivityAction } from "@/app/(dashboard)/activity/actions";
+
+// Milestone 9 → streaming SSR follow-up (STREAMING_SSR_TODO.md): the
+// dashboard's 5 queries used to start with an empty client-side cache
+// every cold load — each panel would render its loading state, then
+// swap to real content once its `useQuery` resolved, causing the
+// layout flicker/shift this was written to fix. This page now
+// prefetches all 5 on the server, in parallel, into a request-scoped
+// `QueryClient` (never the shared client one from QueryProvider — a
+// fresh instance per request is the documented pattern, since this
+// runs during SSR, not in the browser), then dehydrates that cache
+// into `<HydrationBoundary>` around the unchanged `DashboardView`.
+//
+// `DashboardView` still calls `useQuery` with the exact same keys —
+// it finds the data already there on first client render instead of
+// fetching it, so `isLoading` is false immediately. If a prefetch
+// fails, `dehydrate()`'s default `shouldDehydrateQuery` only carries
+// over *successful* queries, so a failed one hydrates as empty and
+// `DashboardView`'s own `isLoading`/`isError` handling (see
+// StatRow/IncidentsPanel/ServiceHealthGrid/TicketBoard/ActivityFeed's
+// `error` props) takes over exactly as it already does today — no
+// special-casing needed here for that.
+//
+// The route's `loading.tsx` (DashboardSkeleton) is what actually makes
+// this "streaming": Next wraps this page in a Suspense boundary because
+// that file exists, so the shared layout (TopBar, nav) paints
+// immediately and that skeleton shows while the `Promise.all` below is
+// in flight, rather than the whole document waiting on it.
+//
+// No auth guard here either, same reasoning as before: DashboardLayout
+// (app/(dashboard)/layout.tsx) already gates every route in this group,
+// and none of these queries need `self` — every panel is read-only.
+export default async function DashboardPage() {
+  const queryClient = new QueryClient();
+
+  await Promise.all([
+    queryClient.prefetchQuery({
+      queryKey: ["tickets", "list"],
+      queryFn: listTicketsAction,
+    }),
+    queryClient.prefetchQuery({
+      queryKey: ["incidents", "list"],
+      queryFn: listIncidentsAction,
+    }),
+    queryClient.prefetchQuery({
+      queryKey: ["services", "list"],
+      queryFn: listServicesAction,
+    }),
+    queryClient.prefetchQuery({
+      queryKey: ["org-users", "list"],
+      queryFn: listOrgUsersAction,
+    }),
+    queryClient.prefetchQuery({
+      queryKey: ["activity", "list", "recent"],
+      queryFn: () => listActivityAction(),
+    }),
+  ]);
+
+  return (
+    <HydrationBoundary state={dehydrate(queryClient)}>
+      <DashboardView />
+    </HydrationBoundary>
+  );
+}
+</file>
+
 <file path="app/(dashboard)/team/page.tsx">
 import { redirect } from "next/navigation";
 import { TeamView } from "@/components/team/TeamView";
@@ -7635,260 +7968,6 @@ import { PATHS } from "@/utils/paths";
 
 export default async function RootPage() {
   redirect((await getSession()) ? PATHS.DASHBOARD : PATHS.LOGIN);
-}
-</file>
-
-<file path="components/dashboard/IncidentsPanel.tsx">
-import { Avatar } from "./Avatar";
-import {
-  incidentSeverityMeta,
-  incidentStatusMeta,
-  type Incident,
-  type Service,
-  type User,
-} from "@/types";
-import {
-  relativeTime,
-  statusBorderLeft,
-  statusChipBg,
-  statusText,
-} from "@/lib/style";
-
-const severityOrder = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
-
-interface IncidentsPanelProps {
-  incidents: Incident[];
-  services: Service[];
-  resolveUser: (id: string | null) => User | null;
-}
-
-export function IncidentsPanel({
-  incidents,
-  services,
-  resolveUser,
-}: IncidentsPanelProps) {
-  const sorted = [...incidents].sort(
-    (a, b) => severityOrder[a.severity] - severityOrder[b.severity],
-  );
-  const serviceById = Object.fromEntries(services.map((s) => [s.id, s]));
-
-  if (sorted.length === 0) {
-    return (
-      <div className="rounded-lg border border-line bg-panel p-5">
-        <div className="text-sm text-ink-dim">
-          No active incidents. Everything reporting normal.
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="rounded-lg border border-line bg-panel">
-      <div className="flex items-center justify-between border-b border-line px-4 py-3">
-        <h2 className="text-sm font-medium text-ink">Active incidents</h2>
-        <span className="text-xs text-ink-faint">Sorted by severity</span>
-      </div>
-
-      <ul>
-        {sorted.map((incident) => {
-          const sevMeta = incidentSeverityMeta[incident.severity];
-          const statusMeta = incidentStatusMeta[incident.status];
-          const responder = resolveUser(incident.responderId);
-          const affectedServices = incident.serviceIds
-            .map((id) => serviceById[id])
-            .filter((s): s is Service => Boolean(s));
-
-          return (
-            <li
-              key={incident.id}
-              className={`flex items-center gap-4 border-l-2 px-4 py-3 border-b border-line last:border-b-0 ${statusBorderLeft[sevMeta.color]}`}
-            >
-              <span
-                className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${statusChipBg[sevMeta.color]} ${statusText[sevMeta.color]}`}
-              >
-                {sevMeta.label}
-              </span>
-
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm text-ink">
-                  {incident.title}
-                </div>
-                <div className="mt-0.5 flex items-center gap-1.5 text-xs text-ink-faint">
-                  <span className={statusText[statusMeta.color]}>
-                    {statusMeta.label}
-                  </span>
-                  <span>·</span>
-                  {/* Server Component (no "use client") — this never
-                      hydrates/re-executes on the client, so a plain
-                      `new Date()` here is safe and doesn't need useNow(). */}
-                  <span>{relativeTime(incident.createdAt, new Date())}</span>
-                  {affectedServices.length > 0 && (
-                    <>
-                      <span>·</span>
-                      <span className="truncate">
-                        {affectedServices.map((s) => s.name).join(", ")}
-                      </span>
-                    </>
-                  )}
-                  {incident.ticketIds.length > 0 && (
-                    <>
-                      <span>·</span>
-                      <span>
-                        {incident.ticketIds.length}{" "}
-                        {incident.ticketIds.length === 1 ? "ticket" : "tickets"}
-                      </span>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {responder ? (
-                <Avatar
-                  initials={responder.initials}
-                  seed={responder.id}
-                  title={`${responder.name} responding`}
-                />
-              ) : (
-                <span className="shrink-0 text-xs text-ink-faint">
-                  Unassigned
-                </span>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-    </div>
-  );
-}
-</file>
-
-<file path="components/dashboard/StatRow.tsx">
-interface Stat {
-  label: string;
-  value: number;
-  tone?: "danger" | "warning";
-}
-
-export function StatRow({ stats }: { stats: Stat[] }) {
-  return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      {stats.map((stat) => {
-        const alert = stat.tone && stat.value > 0;
-        return (
-          <div
-            key={stat.label}
-            className={
-              alert
-                ? `rounded-lg border p-3.5 ${
-                    stat.tone === "danger"
-                      ? "border-danger/25 bg-danger/6"
-                      : "border-warning/25 bg-warning/6"
-                  }`
-                : "rounded-lg border border-line bg-panel p-3.5"
-            }
-          >
-            <div className="text-xs text-ink-dim">{stat.label}</div>
-            <div
-              className={`mt-1 font-mono text-2xl font-medium tabular-nums ${
-                alert
-                  ? stat.tone === "danger"
-                    ? "text-danger"
-                    : "text-warning"
-                  : "text-ink"
-              }`}
-            >
-              {stat.value}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-</file>
-
-<file path="components/dashboard/TicketBoard.tsx">
-import { Avatar } from "./Avatar";
-import {
-  ticketPriorityMeta,
-  ticketStatusMeta,
-  type Ticket,
-  type TicketStatus,
-  type User,
-} from "@/types";
-import { statusDot } from "@/lib/style";
-
-const columns: TicketStatus[] = ["OPEN", "IN_PROGRESS", "BLOCKED", "RESOLVED"];
-
-interface TicketBoardProps {
-  tickets: Ticket[];
-  resolveUser: (id: string | null) => User | null;
-}
-
-export function TicketBoard({ tickets, resolveUser }: TicketBoardProps) {
-  return (
-    <div className="rounded-lg border border-line bg-panel">
-      <div className="border-b border-line px-4 py-3">
-        <h2 className="text-sm font-medium text-ink">Work</h2>
-      </div>
-
-      <div className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2 lg:grid-cols-4">
-        {columns.map((status) => {
-          const items = tickets.filter((t) => t.status === status);
-          const meta = ticketStatusMeta[status];
-
-          return (
-            <div key={status} className="bg-panel">
-              <div className="flex items-center gap-1.5 px-3 py-2.5">
-                <span
-                  className={`size-1.5 rounded-full ${statusDot[meta.color]}`}
-                />
-                <span className="text-xs font-medium text-ink-dim">
-                  {meta.label}
-                </span>
-                <span className="text-xs text-ink-faint">{items.length}</span>
-              </div>
-
-              <ul>
-                {items.map((ticket) => {
-                  const priority = ticketPriorityMeta[ticket.priority];
-                  const assignee = resolveUser(ticket.assigneeId);
-                  return (
-                    <li
-                      key={ticket.id}
-                      className="flex items-start gap-2 px-3 py-2 border-t border-line"
-                    >
-                      <span
-                        className={`mt-1 size-1.5 shrink-0 rounded-full ${statusDot[priority.color]}`}
-                        title={`${priority.label} priority`}
-                      />
-                      <span className="min-w-0 flex-1 text-xs leading-snug text-ink-dim">
-                        {ticket.title}
-                      </span>
-                      {assignee ? (
-                        <Avatar
-                          initials={assignee.initials}
-                          seed={assignee.id}
-                          title={assignee.name}
-                        />
-                      ) : (
-                        <span className="size-6 shrink-0 rounded-full border border-dashed border-line-strong" />
-                      )}
-                    </li>
-                  );
-                })}
-                {items.length === 0 && (
-                  <li className="px-3 py-2 text-xs text-ink-faint border-t border-line">
-                    Nothing here
-                  </li>
-                )}
-              </ul>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
 }
 </file>
 
@@ -10234,147 +10313,6 @@ export default async function TicketsPage() {
 }
 </file>
 
-<file path="components/dashboard/PresenceRail.tsx">
-"use client";
-
-import { useQuery } from "@tanstack/react-query";
-import { Avatar } from "./Avatar";
-import { useOnlineUserIds } from "@/components/shared/RealtimeProvider";
-import { listOrgUsersAction } from "@/app/(dashboard)/tickets/actions";
-import type { User } from "@/types";
-
-const EMPTY_USERS: User[] = [];
-
-/**
- * Milestone 7 / PR-01: real presence, in place of the static mock
- * `onlineUserIds` set this used to take as a prop. Now fully
- * self-contained — no props — for a reason beyond the usual
- * self-fetching pattern (IncidentsView/ServicesView/ActivityView):
- * `onlineIds` (useOnlineUserIds, RealtimeProvider.tsx) is real Supabase
- * Presence keyed on real user ids, so the roster it's cross-referenced
- * against has to be real too, or every entry would show offline
- * regardless of actual presence — a mock `users` list with ids like
- * "u_maya" would never match. `listOrgUsersAction` is the same query
- * TicketModal/IncidentModal already use for assignee/responder pickers.
- */
-export function PresenceRail() {
-  const usersQuery = useQuery({
-    queryKey: ["org-users", "list"],
-    queryFn: listOrgUsersAction,
-  });
-  const onlineIds = useOnlineUserIds();
-
-  // Deactivated members stay in the query (history needs them) but
-  // aren't part of the roster.
-  const users = (usersQuery.data ?? EMPTY_USERS).filter((u) => u.active);
-
-  const sorted = [...users].sort((a, b) => {
-    const aOnline = onlineIds.has(a.id) ? 0 : 1;
-    const bOnline = onlineIds.has(b.id) ? 0 : 1;
-    return aOnline - bOnline;
-  });
-
-  return (
-    <div className="rounded-lg border border-line bg-panel p-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-medium text-ink">Team</h2>
-        <span className="text-xs text-ink-faint">{onlineIds.size} online</span>
-      </div>
-
-      <ul className="mt-3 flex flex-col gap-2">
-        {usersQuery.isLoading ? (
-          <li className="text-xs text-ink-faint">Loading…</li>
-        ) : (
-          sorted.map((user) => {
-            const online = onlineIds.has(user.id);
-            return (
-              <li key={user.id} className="flex items-center gap-2.5">
-                <Avatar
-                  initials={user.initials}
-                  seed={user.id}
-                  online={online}
-                />
-                <span
-                  className={
-                    online ? "text-xs text-ink" : "text-xs text-ink-faint"
-                  }
-                >
-                  {user.name}
-                </span>
-              </li>
-            );
-          })
-        )}
-      </ul>
-    </div>
-  );
-}
-</file>
-
-<file path="components/dashboard/ServiceHealthGrid.tsx">
-import { Sparkline } from "@/components/shared/Sparkline";
-import { serviceStatusMeta, type Service } from "@/types";
-import {
-  formatErrorRate,
-  relativeTime,
-  statusDot,
-  statusText,
-} from "@/lib/style";
-
-export function ServiceHealthGrid({ services }: { services: Service[] }) {
-  return (
-    <div className="rounded-lg border border-line bg-panel">
-      <div className="flex items-center justify-between border-b border-line px-4 py-3">
-        <h2 className="text-sm font-medium text-ink">Service health</h2>
-        <span className="text-xs text-ink-faint">Trend is since page load</span>
-      </div>
-
-      <div className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2 lg:grid-cols-3">
-        {services.map((service) => {
-          const meta = serviceStatusMeta[service.status];
-          const warn = service.status !== "OPERATIONAL";
-
-          return (
-            <div key={service.id} className="bg-panel p-3.5">
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-ink">{service.name}</span>
-                <span
-                  className={`size-1.5 rounded-full ${statusDot[meta.color]}`}
-                />
-              </div>
-              <div className={`mt-0.5 text-xs ${statusText[meta.color]}`}>
-                {meta.label}
-              </div>
-
-              <div className="mt-3 flex items-end justify-between">
-                <div className="font-mono text-xs text-ink-dim tabular-nums space-y-1">
-                  <div>
-                    {service.status === "OUTAGE"
-                      ? "—"
-                      : `${service.latencyMs}ms`}
-                  </div>
-                  <div className={service.errorRate > 1 ? "text-warning" : ""}>
-                    {formatErrorRate(service.errorRate)} err
-                  </div>
-                </div>
-                <Sparkline values={service.sessionLatencyTrend} warn={warn} />
-              </div>
-
-              <div className="mt-2 text-[11px] text-ink-faint">
-                {/* Server Component (no "use client") — this never
-                    hydrates/re-executes on the client, so a plain
-                    `new Date()` here is safe and doesn't need useNow(). */}
-                Updated {relativeTime(service.updatedAt, new Date())}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-</file>
-
 <file path="components/tickets/TicketModal.tsx">
 "use client";
 
@@ -11782,71 +11720,6 @@ export function ActivityView() {
 }
 </file>
 
-<file path="components/dashboard/ActivityFeed.tsx">
-import { CpuIcon } from "@phosphor-icons/react/ssr";
-import { Avatar } from "./Avatar";
-import { describeActivity } from "@/components/shared/ActivityDescription";
-import type { Activity, User } from "@/types";
-import { relativeTime } from "@/lib/style";
-
-interface ActivityFeedProps {
-  activities: Activity[];
-  resolveUser: (id: string | null) => User | null;
-}
-
-export function ActivityFeed({ activities, resolveUser }: ActivityFeedProps) {
-  const sorted = [...activities].sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-  );
-
-  return (
-    <div className="rounded-lg border border-line bg-panel p-4">
-      <h2 className="text-sm font-medium text-ink">Activity</h2>
-
-      <ul className="mt-3 flex flex-col gap-3">
-        {sorted.map((activity) => {
-          const actor = resolveUser(activity.actorId);
-          return (
-            <li key={activity.id} className="flex items-start gap-2.5">
-              {actor ? (
-                <Avatar
-                  initials={actor.initials}
-                  seed={actor.id}
-                  title={actor.name}
-                />
-              ) : (
-                <span
-                  className="flex size-6 shrink-0 items-center justify-center rounded-full bg-panel-raised text-ink-faint"
-                  title="Telemetry"
-                >
-                  <CpuIcon size={12} weight="bold" />
-                </span>
-              )}
-              <div className="min-w-0 text-xs leading-snug">
-                <span className="text-ink-dim">
-                  <span
-                    className={actor ? "text-ink" : "text-ink-faint font-mono"}
-                  >
-                    {actor ? actor.name : "telemetry"}
-                  </span>{" "}
-                  {describeActivity(activity)}
-                </span>
-                <div className="mt-0.5 text-[11px] text-ink-faint">
-                  {/* Server Component (no "use client") — this never
-                      hydrates/re-executes on the client, so a plain
-                      `new Date()` here is safe and doesn't need useNow(). */}
-                  {relativeTime(activity.createdAt, new Date())}
-                </div>
-              </div>
-            </li>
-          );
-        })}
-      </ul>
-    </div>
-  );
-}
-</file>
-
 <file path="components/dashboard/Avatar.tsx">
 interface AvatarProps {
   initials: string;
@@ -11922,6 +11795,593 @@ export function Avatar({
 }
 </file>
 
+<file path="components/dashboard/IncidentsPanel.tsx">
+import Link from "next/link";
+import { Avatar } from "./Avatar";
+import {
+  Skeleton,
+  SkeletonCircle,
+  SkeletonText,
+} from "@/components/shared/Skeleton";
+import {
+  incidentSeverityMeta,
+  incidentStatusMeta,
+  type Incident,
+  type Service,
+  type User,
+} from "@/types";
+import {
+  relativeTime,
+  statusBorderLeft,
+  statusChipBg,
+  statusText,
+} from "@/lib/style";
+import { PATHS } from "@/utils/paths";
+
+const severityOrder = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+
+// Milestone 9: "active incidents" is normally small, but nothing stops
+// it from piling up during a bad day at a real org — this is a glance
+// widget (the full history lives on the Incidents page), so show the
+// top few by severity and link out to the rest, same reasoning as
+// TicketBoard's COLUMN_LIMIT.
+const PANEL_LIMIT = 5;
+
+interface IncidentsPanelProps {
+  incidents: Incident[];
+  services: Service[];
+  resolveUser: (id: string | null) => User | null;
+  /** Milestone 9: the panel is a Server Component elsewhere in the app
+   *  (it never fetches on its own), so the client-side query owner
+   *  (DashboardView) passes this while its incidents/services queries
+   *  are still `isLoading`. Skeleton rows render instead of the "No
+   *  active incidents" empty state, which only applies once the real
+   *  answer is known to be zero. */
+  loading?: boolean;
+  /** Either the incidents or services query failed — shown instead of
+   *  the empty state, which would otherwise misread as "no active
+   *  incidents" rather than "couldn't check." */
+  error?: boolean;
+  onRetry?: () => void;
+}
+
+/** The panel's loading placeholder, extracted so it can also be reused
+ *  as this route's `loading.tsx` fallback (`DashboardSkeleton.tsx`) —
+ *  the same shape whether it's showing because the client query is
+ *  still `isLoading` or because the page itself is still streaming in
+ *  from the server. */
+export function IncidentsPanelSkeleton() {
+  return (
+    <div className="rounded-lg border border-line bg-panel">
+      <div className="flex items-center justify-between border-b border-line px-4 py-3">
+        <h2 className="text-sm font-medium text-ink">Active incidents</h2>
+      </div>
+
+      <ul>
+        {[0, 1, 2].map((i) => (
+          <li
+            key={i}
+            className="flex items-center gap-4 border-b border-line px-4 py-3 last:border-b-0"
+          >
+            <Skeleton className="h-5 w-16 shrink-0" />
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <SkeletonText width="w-2/3" />
+              <SkeletonText width="w-1/3" className="h-2.5" />
+            </div>
+            <SkeletonCircle />
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+export function IncidentsPanel({
+  incidents,
+  services,
+  resolveUser,
+  loading,
+  error,
+  onRetry,
+}: IncidentsPanelProps) {
+  const sorted = [...incidents].sort(
+    (a, b) => severityOrder[a.severity] - severityOrder[b.severity],
+  );
+  const shown = sorted.slice(0, PANEL_LIMIT);
+  const remaining = sorted.length - shown.length;
+  const serviceById = Object.fromEntries(services.map((s) => [s.id, s]));
+
+  if (loading) {
+    return <IncidentsPanelSkeleton />;
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-lg border border-line bg-panel p-5">
+        <div className="text-sm text-danger">
+          Couldn&apos;t load incidents.{" "}
+          <button
+            type="button"
+            onClick={onRetry}
+            className="underline hover:text-ink"
+          >
+            Try again
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (sorted.length === 0) {
+    return (
+      <div className="rounded-lg border border-line bg-panel p-5">
+        <div className="text-sm text-ink-dim">
+          No active incidents. Everything reporting normal.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-line bg-panel">
+      <div className="flex items-center justify-between border-b border-line px-4 py-3">
+        <h2 className="text-sm font-medium text-ink">Active incidents</h2>
+        <span className="text-xs text-ink-faint">Sorted by severity</span>
+      </div>
+
+      <ul>
+        {shown.map((incident) => {
+          const sevMeta = incidentSeverityMeta[incident.severity];
+          const statusMeta = incidentStatusMeta[incident.status];
+          const responder = resolveUser(incident.responderId);
+          const affectedServices = incident.serviceIds
+            .map((id) => serviceById[id])
+            .filter((s): s is Service => Boolean(s));
+
+          return (
+            <li
+              key={incident.id}
+              className={`flex items-center gap-4 border-l-2 px-4 py-3 border-b border-line last:border-b-0 ${statusBorderLeft[sevMeta.color]}`}
+            >
+              <span
+                className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${statusChipBg[sevMeta.color]} ${statusText[sevMeta.color]}`}
+              >
+                {sevMeta.label}
+              </span>
+
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm text-ink">
+                  {incident.title}
+                </div>
+                <div className="mt-0.5 flex items-center gap-1.5 text-xs text-ink-faint">
+                  <span className={statusText[statusMeta.color]}>
+                    {statusMeta.label}
+                  </span>
+                  <span>·</span>
+                  {/* Server Component (no "use client") — this never
+                      hydrates/re-executes on the client, so a plain
+                      `new Date()` here is safe and doesn't need useNow(). */}
+                  <span>{relativeTime(incident.createdAt, new Date())}</span>
+                  {affectedServices.length > 0 && (
+                    <>
+                      <span>·</span>
+                      <span className="truncate">
+                        {affectedServices.map((s) => s.name).join(", ")}
+                      </span>
+                    </>
+                  )}
+                  {incident.ticketIds.length > 0 && (
+                    <>
+                      <span>·</span>
+                      <span>
+                        {incident.ticketIds.length}{" "}
+                        {incident.ticketIds.length === 1 ? "ticket" : "tickets"}
+                      </span>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {responder ? (
+                <Avatar
+                  initials={responder.initials}
+                  seed={responder.id}
+                  title={`${responder.name} responding`}
+                />
+              ) : (
+                <span className="shrink-0 text-xs text-ink-faint">
+                  Unassigned
+                </span>
+              )}
+            </li>
+          );
+        })}
+        {remaining > 0 && (
+          <li className="px-4 py-2">
+            <Link
+              href={PATHS.INCIDENTS}
+              className="text-xs text-ink-faint underline-offset-2 hover:text-ink hover:underline"
+            >
+              +{remaining} more
+            </Link>
+          </li>
+        )}
+      </ul>
+    </div>
+  );
+}
+</file>
+
+<file path="components/dashboard/PresenceRail.tsx">
+"use client";
+
+import { useQuery } from "@tanstack/react-query";
+import { Avatar } from "./Avatar";
+import { SkeletonCircle, SkeletonText } from "@/components/shared/Skeleton";
+import { useOnlineUserIds } from "@/components/shared/RealtimeProvider";
+import { listOrgUsersAction } from "@/app/(dashboard)/tickets/actions";
+import type { User } from "@/types";
+
+const EMPTY_USERS: User[] = [];
+
+/**
+ * Milestone 7 / PR-01: real presence, in place of the static mock
+ * `onlineUserIds` set this used to take as a prop. Now fully
+ * self-contained — no props — for a reason beyond the usual
+ * self-fetching pattern (IncidentsView/ServicesView/ActivityView):
+ * `onlineIds` (useOnlineUserIds, RealtimeProvider.tsx) is real Supabase
+ * Presence keyed on real user ids, so the roster it's cross-referenced
+ * against has to be real too, or every entry would show offline
+ * regardless of actual presence — a mock `users` list with ids like
+ * "u_maya" would never match. `listOrgUsersAction` is the same query
+ * TicketModal/IncidentModal already use for assignee/responder pickers.
+ */
+/** Extracted for reuse as this route's `loading.tsx` fallback
+ *  (`DashboardSkeleton.tsx`) — same reasoning as
+ *  IncidentsPanelSkeleton/ServiceHealthGridSkeleton/etc., except this
+ *  one has to stand alone: unlike those, `PresenceRail` self-fetches
+ *  rather than taking a `loading` prop, so the skeleton fallback can't
+ *  just render `<PresenceRail loading />` — there's no such prop, and
+ *  the route's `loading.tsx` needs something with zero fetches of its
+ *  own while the real page streams in behind it. */
+export function PresenceRailSkeleton() {
+  return (
+    <div className="rounded-lg border border-line bg-panel p-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-medium text-ink">Team</h2>
+      </div>
+
+      <ul className="mt-3 flex flex-col gap-2">
+        {[0, 1, 2].map((i) => (
+          <li key={i} className="flex items-center gap-2.5">
+            <SkeletonCircle />
+            <SkeletonText width="w-20" />
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+export function PresenceRail() {
+  const usersQuery = useQuery({
+    queryKey: ["org-users", "list"],
+    queryFn: listOrgUsersAction,
+  });
+  const onlineIds = useOnlineUserIds();
+
+  // Deactivated members stay in the query (history needs them) but
+  // aren't part of the roster.
+  const users = (usersQuery.data ?? EMPTY_USERS).filter((u) => u.active);
+
+  const sorted = [...users].sort((a, b) => {
+    const aOnline = onlineIds.has(a.id) ? 0 : 1;
+    const bOnline = onlineIds.has(b.id) ? 0 : 1;
+    return aOnline - bOnline;
+  });
+
+  return (
+    <div className="rounded-lg border border-line bg-panel p-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-medium text-ink">Team</h2>
+        <span className="text-xs text-ink-faint">{onlineIds.size} online</span>
+      </div>
+
+      <ul className="mt-3 flex flex-col gap-2">
+        {usersQuery.isLoading
+          ? // Milestone 9: skeleton rows in place of the old "Loading…"
+            // text line — same shared primitives every other dashboard
+            // panel's loading state now uses (components/shared/Skeleton).
+            [0, 1, 2].map((i) => (
+              <li key={i} className="flex items-center gap-2.5">
+                <SkeletonCircle />
+                <SkeletonText width="w-20" />
+              </li>
+            ))
+          : sorted.map((user) => {
+              const online = onlineIds.has(user.id);
+              return (
+                <li key={user.id} className="flex items-center gap-2.5">
+                  <Avatar
+                    initials={user.initials}
+                    seed={user.id}
+                    online={online}
+                  />
+                  <span
+                    className={
+                      online ? "text-xs text-ink" : "text-xs text-ink-faint"
+                    }
+                  >
+                    {user.name}
+                  </span>
+                </li>
+              );
+            })}
+      </ul>
+    </div>
+  );
+}
+</file>
+
+<file path="components/dashboard/StatRow.tsx">
+import { Skeleton } from "@/components/shared/Skeleton";
+
+interface Stat {
+  label: string;
+  /** `null` means "still loading" — renders a skeleton in place of the
+   *  number (Milestone 9: each stat is derived from a different query,
+   *  so they can resolve at different times). Ignored when `error` is
+   *  true. */
+  value: number | null;
+  tone?: "danger" | "warning";
+  /** The query this stat is derived from failed. Takes priority over
+   *  `value`/loading — the corresponding panel below has the actual
+   *  "Try again" retry affordance, so this is just a glance-level
+   *  signal that the number isn't trustworthy right now, not another
+   *  place to retry from. */
+  error?: boolean;
+}
+
+export function StatRow({ stats }: { stats: Stat[] }) {
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      {stats.map((stat) => {
+        const { value, error } = stat;
+        const loading = !error && value === null;
+        const alert = !error && value !== null && stat.tone && value > 0;
+        return (
+          <div
+            key={stat.label}
+            className={
+              alert
+                ? `rounded-lg border p-3.5 ${
+                    stat.tone === "danger"
+                      ? "border-danger/25 bg-danger/6"
+                      : "border-warning/25 bg-warning/6"
+                  }`
+                : "rounded-lg border border-line bg-panel p-3.5"
+            }
+          >
+            <div className="text-xs text-ink-dim">{stat.label}</div>
+            {error ? (
+              <div
+                className="mt-1 font-mono text-2xl font-medium text-ink-faint"
+                title="Couldn't load"
+              >
+                —
+              </div>
+            ) : loading ? (
+              <Skeleton className="mt-1.5 h-7 w-10" />
+            ) : (
+              <div
+                className={`mt-1 font-mono text-2xl font-medium tabular-nums ${
+                  alert
+                    ? stat.tone === "danger"
+                      ? "text-danger"
+                      : "text-warning"
+                    : "text-ink"
+                }`}
+              >
+                {value}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+</file>
+
+<file path="components/dashboard/TicketBoard.tsx">
+import Link from "next/link";
+import { Avatar } from "./Avatar";
+import {
+  Skeleton,
+  SkeletonCircle,
+  SkeletonText,
+} from "@/components/shared/Skeleton";
+import {
+  ticketPriorityMeta,
+  ticketStatusMeta,
+  type Ticket,
+  type TicketStatus,
+  type User,
+} from "@/types";
+import { statusDot } from "@/lib/style";
+import { PATHS } from "@/utils/paths";
+
+const columns: TicketStatus[] = ["OPEN", "IN_PROGRESS", "BLOCKED", "RESOLVED"];
+
+// Milestone 9: `tickets` is now the org's *entire* ticket history, not
+// a fixed handful of mock rows — a RESOLVED column in particular only
+// ever grows. This is a glance widget, not the Tickets page (which has
+// its own search/filter/pagination), so each column shows only its
+// most-recently-updated items; anything past that links out to the
+// full page instead of rendering unbounded.
+const COLUMN_LIMIT = 5;
+
+interface TicketBoardProps {
+  tickets: Ticket[];
+  resolveUser: (id: string | null) => User | null;
+  /** Milestone 9: set by DashboardView while its tickets query is still
+   *  `isLoading` — see IncidentsPanel's `loading` prop for the same
+   *  reasoning. */
+  loading?: boolean;
+  /** The tickets query failed. */
+  error?: boolean;
+  onRetry?: () => void;
+}
+
+/** Extracted for reuse as this route's `loading.tsx` fallback — see
+ *  IncidentsPanelSkeleton's doc comment. */
+export function TicketBoardSkeleton() {
+  return (
+    <div className="rounded-lg border border-line bg-panel">
+      <div className="border-b border-line px-4 py-3">
+        <h2 className="text-sm font-medium text-ink">Work</h2>
+      </div>
+
+      <div className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2 lg:grid-cols-4">
+        {columns.map((status) => (
+          <div key={status} className="bg-panel">
+            <div className="flex items-center gap-1.5 px-3 py-2.5">
+              <SkeletonText width="w-16" className="h-2.5" />
+            </div>
+
+            <ul>
+              {[0, 1].map((i) => (
+                <li
+                  key={i}
+                  className="flex items-start gap-2 border-t border-line px-3 py-2"
+                >
+                  <Skeleton className="mt-1 size-1.5 shrink-0 rounded-full" />
+                  <SkeletonText className="mt-0.5 flex-1" />
+                  <SkeletonCircle />
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function TicketBoard({
+  tickets,
+  resolveUser,
+  loading,
+  error,
+  onRetry,
+}: TicketBoardProps) {
+  if (loading) {
+    return <TicketBoardSkeleton />;
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-lg border border-line bg-panel p-5">
+        <div className="text-sm text-danger">
+          Couldn&apos;t load tickets.{" "}
+          <button
+            type="button"
+            onClick={onRetry}
+            className="underline hover:text-ink"
+          >
+            Try again
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-line bg-panel">
+      <div className="border-b border-line px-4 py-3">
+        <h2 className="text-sm font-medium text-ink">Work</h2>
+      </div>
+
+      <div className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2 lg:grid-cols-4">
+        {columns.map((status) => {
+          const columnTickets = tickets
+            .filter((t) => t.status === status)
+            .sort(
+              (a, b) =>
+                new Date(b.updatedAt).getTime() -
+                new Date(a.updatedAt).getTime(),
+            );
+          const items = columnTickets.slice(0, COLUMN_LIMIT);
+          const remaining = columnTickets.length - items.length;
+          const meta = ticketStatusMeta[status];
+
+          return (
+            <div key={status} className="bg-panel">
+              <div className="flex items-center gap-1.5 px-3 py-2.5">
+                <span
+                  className={`size-1.5 rounded-full ${statusDot[meta.color]}`}
+                />
+                <span className="text-xs font-medium text-ink-dim">
+                  {meta.label}
+                </span>
+                <span className="text-xs text-ink-faint">
+                  {columnTickets.length}
+                </span>
+              </div>
+
+              <ul>
+                {items.map((ticket) => {
+                  const priority = ticketPriorityMeta[ticket.priority];
+                  const assignee = resolveUser(ticket.assigneeId);
+                  return (
+                    <li
+                      key={ticket.id}
+                      className="flex items-start gap-2 px-3 py-2 border-t border-line"
+                    >
+                      <span
+                        className={`mt-1 size-1.5 shrink-0 rounded-full ${statusDot[priority.color]}`}
+                        title={`${priority.label} priority`}
+                      />
+                      <span className="min-w-0 flex-1 text-xs leading-snug text-ink-dim">
+                        {ticket.title}
+                      </span>
+                      {assignee ? (
+                        <Avatar
+                          initials={assignee.initials}
+                          seed={assignee.id}
+                          title={assignee.name}
+                        />
+                      ) : (
+                        <span className="size-6 shrink-0 rounded-full border border-dashed border-line-strong" />
+                      )}
+                    </li>
+                  );
+                })}
+                {items.length === 0 && (
+                  <li className="px-3 py-2 text-xs text-ink-faint border-t border-line">
+                    Nothing here
+                  </li>
+                )}
+                {remaining > 0 && (
+                  <li className="border-t border-line px-3 py-2">
+                    <Link
+                      href={PATHS.TICKETS}
+                      className="text-xs text-ink-faint underline-offset-2 hover:text-ink hover:underline"
+                    >
+                      +{remaining} more
+                    </Link>
+                  </li>
+                )}
+              </ul>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+</file>
+
 <file path="package.json">
 {
   "name": "relay",
@@ -11964,6 +12424,136 @@ export function Avatar({
     "typescript": "^5"
   },
   "packageManager": "yarn@4.12.0"
+}
+</file>
+
+<file path="components/dashboard/ServiceHealthGrid.tsx">
+import { Sparkline } from "@/components/shared/Sparkline";
+import { Skeleton, SkeletonText } from "@/components/shared/Skeleton";
+import { serviceStatusMeta, type Service } from "@/types";
+import {
+  formatErrorRate,
+  relativeTime,
+  statusDot,
+  statusText,
+} from "@/lib/style";
+
+interface ServiceHealthGridProps {
+  services: Service[];
+  /** Milestone 9: set by DashboardView while its services query is
+   *  still `isLoading` — see IncidentsPanel's `loading` prop for the
+   *  same reasoning. */
+  loading?: boolean;
+  /** The services query failed. */
+  error?: boolean;
+  onRetry?: () => void;
+}
+
+/** Extracted for reuse as this route's `loading.tsx` fallback — see
+ *  IncidentsPanelSkeleton's doc comment. */
+export function ServiceHealthGridSkeleton() {
+  return (
+    <div className="rounded-lg border border-line bg-panel">
+      <div className="flex items-center justify-between border-b border-line px-4 py-3">
+        <h2 className="text-sm font-medium text-ink">Service health</h2>
+      </div>
+
+      <div className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2 lg:grid-cols-3">
+        {[0, 1, 2, 3, 4, 5].map((i) => (
+          <div key={i} className="bg-panel p-3.5">
+            <div className="flex items-center justify-between">
+              <SkeletonText width="w-20" />
+              <Skeleton className="size-1.5 rounded-full" />
+            </div>
+            <SkeletonText width="w-14" className="mt-2 h-2.5" />
+            <div className="mt-3 flex items-end justify-between">
+              <Skeleton className="h-7 w-10" />
+              <Skeleton className="h-5 w-16" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function ServiceHealthGrid({
+  services,
+  loading,
+  error,
+  onRetry,
+}: ServiceHealthGridProps) {
+  if (loading) {
+    return <ServiceHealthGridSkeleton />;
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-lg border border-line bg-panel p-5">
+        <div className="text-sm text-danger">
+          Couldn&apos;t load service health.{" "}
+          <button
+            type="button"
+            onClick={onRetry}
+            className="underline hover:text-ink"
+          >
+            Try again
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-line bg-panel">
+      <div className="flex items-center justify-between border-b border-line px-4 py-3">
+        <h2 className="text-sm font-medium text-ink">Service health</h2>
+        <span className="text-xs text-ink-faint">Trend is since page load</span>
+      </div>
+
+      <div className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2 lg:grid-cols-3">
+        {services.map((service) => {
+          const meta = serviceStatusMeta[service.status];
+          const warn = service.status !== "OPERATIONAL";
+
+          return (
+            <div key={service.id} className="bg-panel p-3.5">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-ink">{service.name}</span>
+                <span
+                  className={`size-1.5 rounded-full ${statusDot[meta.color]}`}
+                />
+              </div>
+              <div className={`mt-0.5 text-xs ${statusText[meta.color]}`}>
+                {meta.label}
+              </div>
+
+              <div className="mt-3 flex items-end justify-between">
+                <div className="font-mono text-xs text-ink-dim tabular-nums space-y-1">
+                  <div>
+                    {service.status === "OUTAGE"
+                      ? "—"
+                      : `${service.latencyMs}ms`}
+                  </div>
+                  <div className={service.errorRate > 1 ? "text-warning" : ""}>
+                    {formatErrorRate(service.errorRate)} err
+                  </div>
+                </div>
+                <Sparkline values={service.sessionLatencyTrend} warn={warn} />
+              </div>
+
+              <div className="mt-2 text-[11px] text-ink-faint">
+                {/* Server Component (no "use client") — this never
+                    hydrates/re-executes on the client, so a plain
+                    `new Date()` here is safe and doesn't need useNow(). */}
+                Updated {relativeTime(service.updatedAt, new Date())}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 </file>
 
@@ -13275,6 +13865,129 @@ export default async function DashboardLayout({
         </ToastProvider>
       </RealtimeProvider>
     </QueryProvider>
+  );
+}
+</file>
+
+<file path="components/dashboard/ActivityFeed.tsx">
+import { CpuIcon } from "@phosphor-icons/react/ssr";
+import { Avatar } from "./Avatar";
+import { describeActivity } from "@/components/shared/ActivityDescription";
+import { SkeletonCircle, SkeletonText } from "@/components/shared/Skeleton";
+import type { Activity, User } from "@/types";
+import { relativeTime } from "@/lib/style";
+
+interface ActivityFeedProps {
+  activities: Activity[];
+  resolveUser: (id: string | null) => User | null;
+  /** Milestone 9: set by DashboardView while its activity query is
+   *  still `isLoading` — see IncidentsPanel's `loading` prop for the
+   *  same reasoning. */
+  loading?: boolean;
+  /** The activity query failed. */
+  error?: boolean;
+  onRetry?: () => void;
+}
+
+/** Extracted for reuse as this route's `loading.tsx` fallback — see
+ *  IncidentsPanelSkeleton's doc comment. */
+export function ActivityFeedSkeleton() {
+  return (
+    <div className="rounded-lg border border-line bg-panel p-4">
+      <h2 className="text-sm font-medium text-ink">Activity</h2>
+
+      <ul className="mt-3 flex flex-col gap-3">
+        {[0, 1, 2, 3].map((i) => (
+          <li key={i} className="flex items-start gap-2.5">
+            <SkeletonCircle />
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <SkeletonText width="w-4/5" />
+              <SkeletonText width="w-1/4" className="h-2.5" />
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+export function ActivityFeed({
+  activities,
+  resolveUser,
+  loading,
+  error,
+  onRetry,
+}: ActivityFeedProps) {
+  if (loading) {
+    return <ActivityFeedSkeleton />;
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-lg border border-line bg-panel p-4">
+        <h2 className="text-sm font-medium text-ink">Activity</h2>
+        <div className="mt-3 text-sm text-danger">
+          Couldn&apos;t load activity.{" "}
+          <button
+            type="button"
+            onClick={onRetry}
+            className="underline hover:text-ink"
+          >
+            Try again
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const sorted = [...activities].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+
+  return (
+    <div className="rounded-lg border border-line bg-panel p-4">
+      <h2 className="text-sm font-medium text-ink">Activity</h2>
+
+      <ul className="mt-3 flex flex-col gap-3">
+        {sorted.map((activity) => {
+          const actor = resolveUser(activity.actorId);
+          return (
+            <li key={activity.id} className="flex items-start gap-2.5">
+              {actor ? (
+                <Avatar
+                  initials={actor.initials}
+                  seed={actor.id}
+                  title={actor.name}
+                />
+              ) : (
+                <span
+                  className="flex size-6 shrink-0 items-center justify-center rounded-full bg-panel-raised text-ink-faint"
+                  title="Telemetry"
+                >
+                  <CpuIcon size={12} weight="bold" />
+                </span>
+              )}
+              <div className="min-w-0 text-xs leading-snug">
+                <span className="text-ink-dim">
+                  <span
+                    className={actor ? "text-ink" : "text-ink-faint font-mono"}
+                  >
+                    {actor ? actor.name : "telemetry"}
+                  </span>{" "}
+                  {describeActivity(activity)}
+                </span>
+                <div className="mt-0.5 text-[11px] text-ink-faint">
+                  {/* Server Component (no "use client") — this never
+                      hydrates/re-executes on the client, so a plain
+                      `new Date()` here is safe and doesn't need useNow(). */}
+                  {relativeTime(activity.createdAt, new Date())}
+                </div>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 </file>
