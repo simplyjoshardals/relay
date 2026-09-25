@@ -26,9 +26,10 @@ import { listActivityAction } from "@/app/(dashboard)/activity/actions";
 // `DashboardView` still calls `useQuery` with the exact same keys —
 // it finds the data already there on first client render instead of
 // fetching it, so `isLoading` is false immediately. If a prefetch
-// fails, `dehydrate()`'s default `shouldDehydrateQuery` only carries
-// over *successful* queries, so a failed one hydrates as empty and
-// `DashboardView`'s own `isLoading`/`isError` handling (see
+// fails, the `.catch(noop)` below swallows it so `Promise.all` still
+// resolves; that query then hydrates as empty (dehydrate() only
+// carries over successful queries) and `DashboardView`'s own
+// `isLoading`/`isError` handling (see
 // StatRow/IncidentsPanel/ServiceHealthGrid/TicketBoard/ActivityFeed's
 // `error` props) takes over exactly as it already does today — no
 // special-casing needed here for that.
@@ -42,30 +43,49 @@ import { listActivityAction } from "@/app/(dashboard)/activity/actions";
 // No auth guard here either, same reasoning as before: DashboardLayout
 // (app/(dashboard)/layout.tsx) already gates every route in this group,
 // and none of these queries need `self` — every panel is read-only.
+//
+// `queryClient.prefetchQuery` is deprecated as of the installed
+// TanStack Query version (5.103.2) in favor of `queryClient.query`,
+// which fetches/caches the same way but *throws* on failure instead of
+// swallowing the error — hence the `.catch(noop)` on each call below,
+// which is exactly what the deprecation notice itself recommends to
+// keep one failed query from sinking the whole `Promise.all`.
+const noop = () => {};
+
 export default async function DashboardPage() {
   const queryClient = new QueryClient();
 
   await Promise.all([
-    queryClient.prefetchQuery({
-      queryKey: ["tickets", "list"],
-      queryFn: listTicketsAction,
-    }),
-    queryClient.prefetchQuery({
-      queryKey: ["incidents", "list"],
-      queryFn: listIncidentsAction,
-    }),
-    queryClient.prefetchQuery({
-      queryKey: ["services", "list"],
-      queryFn: listServicesAction,
-    }),
-    queryClient.prefetchQuery({
-      queryKey: ["org-users", "list"],
-      queryFn: listOrgUsersAction,
-    }),
-    queryClient.prefetchQuery({
-      queryKey: ["activity", "list", "recent"],
-      queryFn: () => listActivityAction(),
-    }),
+    queryClient
+      .query({
+        queryKey: ["tickets", "list"],
+        queryFn: listTicketsAction,
+      })
+      .catch(noop),
+    queryClient
+      .query({
+        queryKey: ["incidents", "list"],
+        queryFn: listIncidentsAction,
+      })
+      .catch(noop),
+    queryClient
+      .query({
+        queryKey: ["services", "list"],
+        queryFn: listServicesAction,
+      })
+      .catch(noop),
+    queryClient
+      .query({
+        queryKey: ["org-users", "list"],
+        queryFn: listOrgUsersAction,
+      })
+      .catch(noop),
+    queryClient
+      .query({
+        queryKey: ["activity", "list", "recent"],
+        queryFn: () => listActivityAction(),
+      })
+      .catch(noop),
   ]);
 
   return (

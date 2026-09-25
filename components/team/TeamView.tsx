@@ -106,8 +106,16 @@ export function TeamView({ self }: TeamViewProps) {
         )
       : members;
 
-    return [...list].sort((a, b) => a.name.localeCompare(b.name));
-  }, [members, query]);
+    // You first, same convention as PresenceRail ("You first, then
+    // everyone online, then everyone else" — no presence here, so
+    // just "You first"), then everyone else alphabetically. Array#sort
+    // is stable, so the `|| a.name.localeCompare(b.name)` only breaks
+    // ties within each rank rather than re-ordering the whole list.
+    const rank = (u: User) => (u.id === self.id ? 0 : 1);
+    return [...list].sort(
+      (a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name),
+    );
+  }, [members, query, self.id]);
 
   const filteredInvitations = useMemo(
     () =>

@@ -214,74 +214,6 @@ tsconfig.json
 <files>
 This section contains the contents of the repository's files.
 
-<file path="app/(dashboard)/dashboard/loading.tsx">
-import { DashboardSkeleton } from "@/components/dashboard/DashboardSkeleton";
-
-// Next's file convention for a route-level Suspense boundary: this
-// wraps `page.tsx` in a `<Suspense>` automatically, so the shared
-// layout (TopBar, nav) streams and paints immediately while
-// `dashboard/page.tsx`'s server-side query prefetch is still in
-// flight, showing this in the meantime instead of blocking the whole
-// document behind it.
-export default function DashboardLoading() {
-  return <DashboardSkeleton />;
-}
-</file>
-
-<file path="components/dashboard/DashboardSkeleton.tsx">
-import { StatRow } from "@/components/dashboard/StatRow";
-import { IncidentsPanelSkeleton } from "@/components/dashboard/IncidentsPanel";
-import { ServiceHealthGridSkeleton } from "@/components/dashboard/ServiceHealthGrid";
-import { TicketBoardSkeleton } from "@/components/dashboard/TicketBoard";
-import { PresenceRailSkeleton } from "@/components/dashboard/PresenceRail";
-import { ActivityFeedSkeleton } from "@/components/dashboard/ActivityFeed";
-
-/**
- * The dashboard route's `loading.tsx` fallback. A plain Server
- * Component, not `DashboardView` itself — it needs to be a static shell
- * with zero queries of its own, shown the moment navigation starts
- * while `dashboard/page.tsx`'s server-side prefetch is still in flight,
- * then swapped out for the real, already-hydrated `DashboardView` once
- * that resolves. Rendering `DashboardView` here instead would just
- * recreate the original client-fetch flicker this route was built to
- * avoid.
- *
- * Mirrors `DashboardView`'s exact layout (same grid, same panels in the
- * same order) so nothing shifts position when the real content
- * replaces it — every one of these skeleton pieces is the same
- * component each panel already shows while its own query is
- * `isLoading`, just reused here with no query behind it at all.
- */
-export function DashboardSkeleton() {
-  return (
-    <>
-      <StatRow
-        stats={[
-          { label: "Open tickets", value: null },
-          { label: "In progress", value: null },
-          { label: "Active incidents", value: null, tone: "danger" },
-          { label: "Degraded / outage", value: null, tone: "warning" },
-          { label: "Online now", value: null },
-        ]}
-      />
-
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[2.2fr_1fr] lg:items-start">
-        <div className="flex flex-col gap-4 min-w-0">
-          <IncidentsPanelSkeleton />
-          <ServiceHealthGridSkeleton />
-          <TicketBoardSkeleton />
-        </div>
-
-        <div className="flex flex-col gap-4 min-w-0">
-          <PresenceRailSkeleton />
-          <ActivityFeedSkeleton />
-        </div>
-      </div>
-    </>
-  );
-}
-</file>
-
 <file path="app/(dashboard)/activity/actions.ts">
 "use server";
 
@@ -298,6 +230,20 @@ export async function listActivityAction(
 ): Promise<ActivityPage> {
   const session = await requireSession();
   return listActivity(session, cursor);
+}
+</file>
+
+<file path="app/(dashboard)/dashboard/loading.tsx">
+import { DashboardSkeleton } from "@/components/dashboard/DashboardSkeleton";
+
+// Next's file convention for a route-level Suspense boundary: this
+// wraps `page.tsx` in a `<Suspense>` automatically, so the shared
+// layout (TopBar, nav) streams and paints immediately while
+// `dashboard/page.tsx`'s server-side query prefetch is still in
+// flight, showing this in the meantime instead of blocking the whole
+// document behind it.
+export default function DashboardLoading() {
+  return <DashboardSkeleton />;
 }
 </file>
 
@@ -773,6 +719,60 @@ export function LoginForm() {
         {isPending ? "Signing in…" : "Sign in"}
       </button>
     </form>
+  );
+}
+</file>
+
+<file path="components/dashboard/DashboardSkeleton.tsx">
+import { StatRow } from "@/components/dashboard/StatRow";
+import { IncidentsPanelSkeleton } from "@/components/dashboard/IncidentsPanel";
+import { ServiceHealthGridSkeleton } from "@/components/dashboard/ServiceHealthGrid";
+import { TicketBoardSkeleton } from "@/components/dashboard/TicketBoard";
+import { PresenceRailSkeleton } from "@/components/dashboard/PresenceRail";
+import { ActivityFeedSkeleton } from "@/components/dashboard/ActivityFeed";
+
+/**
+ * The dashboard route's `loading.tsx` fallback. A plain Server
+ * Component, not `DashboardView` itself — it needs to be a static shell
+ * with zero queries of its own, shown the moment navigation starts
+ * while `dashboard/page.tsx`'s server-side prefetch is still in flight,
+ * then swapped out for the real, already-hydrated `DashboardView` once
+ * that resolves. Rendering `DashboardView` here instead would just
+ * recreate the original client-fetch flicker this route was built to
+ * avoid.
+ *
+ * Mirrors `DashboardView`'s exact layout (same grid, same panels in the
+ * same order) so nothing shifts position when the real content
+ * replaces it — every one of these skeleton pieces is the same
+ * component each panel already shows while its own query is
+ * `isLoading`, just reused here with no query behind it at all.
+ */
+export function DashboardSkeleton() {
+  return (
+    <>
+      <StatRow
+        stats={[
+          { label: "Open tickets", value: null },
+          { label: "In progress", value: null },
+          { label: "Active incidents", value: null, tone: "danger" },
+          { label: "Degraded / outage", value: null, tone: "warning" },
+          { label: "Online now", value: null },
+        ]}
+      />
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[2.2fr_1fr] lg:items-start">
+        <div className="flex flex-col gap-4 min-w-0">
+          <IncidentsPanelSkeleton />
+          <ServiceHealthGridSkeleton />
+          <TicketBoardSkeleton />
+        </div>
+
+        <div className="flex flex-col gap-4 min-w-0">
+          <PresenceRailSkeleton />
+          <ActivityFeedSkeleton />
+        </div>
+      </div>
+    </>
   );
 }
 </file>
@@ -3348,16 +3348,6 @@ const eslintConfig = defineConfig([
 export default eslintConfig;
 </file>
 
-<file path="next.config.ts">
-import type { NextConfig } from "next";
-
-const nextConfig: NextConfig = {
-  /* config options here */
-};
-
-export default nextConfig;
-</file>
-
 <file path="postcss.config.mjs">
 const config = {
   plugins: {
@@ -3562,219 +3552,6 @@ export default async function LoginPage() {
         </div>
       </div>
     </div>
-  );
-}
-</file>
-
-<file path="components/dashboard/DashboardView.tsx">
-"use client";
-
-import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { StatRow } from "@/components/dashboard/StatRow";
-import { IncidentsPanel } from "@/components/dashboard/IncidentsPanel";
-import { ServiceHealthGrid } from "@/components/dashboard/ServiceHealthGrid";
-import { TicketBoard } from "@/components/dashboard/TicketBoard";
-import { PresenceRail } from "@/components/dashboard/PresenceRail";
-import { ActivityFeed } from "@/components/dashboard/ActivityFeed";
-import { useOnlineUserIds } from "@/components/shared/RealtimeProvider";
-import {
-  listOrgUsersAction,
-  listTicketsAction,
-} from "@/app/(dashboard)/tickets/actions";
-import { listIncidentsAction } from "@/app/(dashboard)/incidents/actions";
-import { listServicesAction } from "@/app/(dashboard)/services/actions";
-import { listActivityAction } from "@/app/(dashboard)/activity/actions";
-import type { Activity, Incident, Service, Ticket, User } from "@/types";
-
-// Stable empty-array fallbacks, same reasoning as TicketsView's
-// EMPTY_TICKETS/EMPTY_USERS: a fresh `?? []` every render would defeat
-// the useMemo()s below.
-const EMPTY_TICKETS: Ticket[] = [];
-const EMPTY_INCIDENTS: Incident[] = [];
-const EMPTY_SERVICES: Service[] = [];
-const EMPTY_USERS: User[] = [];
-const EMPTY_ACTIVITIES: Activity[] = [];
-
-// How many recent events the dashboard's compact Activity panel shows —
-// the full history lives on the dedicated Activity page
-// (components/activity/ActivityView.tsx); this panel is a glance, not
-// another feed to scroll.
-const DASHBOARD_ACTIVITY_COUNT = 8;
-
-/**
- * Milestone 9: the dashboard was already fully built visually against
- * mock data (every panel §15 asks for existed) — this is exactly the
- * `TODO(milestone 9)` swap the old Server Component page anticipated,
- * moved into its own client component because the query hooks it swaps
- * in (`useQuery`) only run client-side.
- *
- * Every query below reuses the *exact* key each prior milestone's own
- * view already established (TicketsView, IncidentsView, ServicesView,
- * ActivityView, PresenceRail) — same cache entries, so this never
- * double-fetches anything a user already has another tab of open, and
- * `RealtimeProvider`'s existing per-domain invalidation
- * (`ticket.updated`, `incident.updated`, `service.updated`,
- * `activity.created`) keeps this page current for free, no new realtime
- * wiring needed. The one new key, `["activity", "list", "recent"]`,
- * still starts with `["activity", "list"]` so it's covered by that same
- * `activity.created` invalidation (TanStack matches by prefix).
- *
- * Presence (Milestone 7) was already fully real and self-contained —
- * `PresenceRail` renders itself — the only remaining piece is reading
- * `useOnlineUserIds()` here too, to restore the "Online now" stat that
- * M7 dropped rather than leave on stale mock data (its own doc comment
- * flagged this as this milestone's job).
- *
- * No props: nothing here needs `self` — every panel is read-only, no
- * mutations happen on the dashboard itself.
- *
- * Every query's `isError` is wired through to its panel(s) (and to the
- * matching StatRow entries), each with its own "Try again" → `refetch()`
- * — unlike TicketsView/IncidentsView/ServicesView/ActivityView/TeamView,
- * which fail as a single page and so only need one error branch each,
- * a failed query here must not read as "0 active incidents, everything
- * healthy" just because the other four panels loaded fine.
- *
- * Streaming SSR follow-up (STREAMING_SSR_TODO.md): `dashboard/page.tsx`
- * now prefetches every query below on the server and hydrates this
- * component's cache before it ever mounts client-side — see that
- * file's doc comment for the mechanism. Nothing here changed for it;
- * the same `useQuery` calls just find data already in cache on first
- * render instead of fetching it.
- */
-export function DashboardView() {
-  const ticketsQuery = useQuery({
-    queryKey: ["tickets", "list"],
-    queryFn: listTicketsAction,
-  });
-
-  const incidentsQuery = useQuery({
-    queryKey: ["incidents", "list"],
-    queryFn: listIncidentsAction,
-  });
-
-  const servicesQuery = useQuery({
-    queryKey: ["services", "list"],
-    queryFn: listServicesAction,
-  });
-
-  const usersQuery = useQuery({
-    queryKey: ["org-users", "list"],
-    queryFn: listOrgUsersAction,
-  });
-
-  const activityQuery = useQuery({
-    queryKey: ["activity", "list", "recent"],
-    queryFn: () => listActivityAction(),
-  });
-
-  const onlineIds = useOnlineUserIds();
-
-  const tickets = ticketsQuery.data ?? EMPTY_TICKETS;
-  const incidents = incidentsQuery.data ?? EMPTY_INCIDENTS;
-  const services = servicesQuery.data ?? EMPTY_SERVICES;
-  const users = usersQuery.data ?? EMPTY_USERS;
-  const activities = activityQuery.data?.items ?? EMPTY_ACTIVITIES;
-
-  const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
-  const resolveUser = (id: string | null): User | null =>
-    id ? (userById.get(id) ?? null) : null;
-
-  // Same "the dashboard only ever wants the still-open ones" filter the
-  // old mock-data version used — IncidentsPanel's empty state assumes
-  // the caller already filtered.
-  const activeIncidentsList = useMemo(
-    () => incidents.filter((i) => i.status !== "RESOLVED"),
-    [incidents],
-  );
-
-  const recentActivities = useMemo(
-    () => activities.slice(0, DASHBOARD_ACTIVITY_COUNT),
-    [activities],
-  );
-
-  const openTickets = tickets.filter((t) => t.status === "OPEN").length;
-  const inProgressTickets = tickets.filter(
-    (t) => t.status === "IN_PROGRESS",
-  ).length;
-  const unhealthyServices = services.filter(
-    (s) => s.status !== "OPERATIONAL",
-  ).length;
-
-  return (
-    <>
-      <StatRow
-        stats={[
-          {
-            label: "Open tickets",
-            value: ticketsQuery.isLoading ? null : openTickets,
-            error: ticketsQuery.isError,
-          },
-          {
-            label: "In progress",
-            value: ticketsQuery.isLoading ? null : inProgressTickets,
-            error: ticketsQuery.isError,
-          },
-          {
-            label: "Active incidents",
-            value: incidentsQuery.isLoading ? null : activeIncidentsList.length,
-            tone: "danger",
-            error: incidentsQuery.isError,
-          },
-          {
-            label: "Degraded / outage",
-            value: servicesQuery.isLoading ? null : unhealthyServices,
-            tone: "warning",
-            error: servicesQuery.isError,
-          },
-          { label: "Online now", value: onlineIds.size },
-        ]}
-      />
-
-      {/* Side-by-side only once there's room for both columns to
-          breathe; below that, the rail just drops beneath the main
-          content instead of squeezing next to it. */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[2.2fr_1fr] lg:items-start">
-        <div className="flex flex-col gap-4 min-w-0">
-          <IncidentsPanel
-            incidents={activeIncidentsList}
-            services={services}
-            resolveUser={resolveUser}
-            loading={incidentsQuery.isLoading || servicesQuery.isLoading}
-            error={incidentsQuery.isError || servicesQuery.isError}
-            onRetry={() => {
-              incidentsQuery.refetch();
-              servicesQuery.refetch();
-            }}
-          />
-          <ServiceHealthGrid
-            services={services}
-            loading={servicesQuery.isLoading}
-            error={servicesQuery.isError}
-            onRetry={() => servicesQuery.refetch()}
-          />
-          <TicketBoard
-            tickets={tickets}
-            resolveUser={resolveUser}
-            loading={ticketsQuery.isLoading}
-            error={ticketsQuery.isError}
-            onRetry={() => ticketsQuery.refetch()}
-          />
-        </div>
-
-        <div className="flex flex-col gap-4 min-w-0">
-          <PresenceRail />
-          <ActivityFeed
-            activities={recentActivities}
-            resolveUser={resolveUser}
-            loading={activityQuery.isLoading}
-            error={activityQuery.isError}
-            onRetry={() => activityQuery.refetch()}
-          />
-        </div>
-      </div>
-    </>
   );
 }
 </file>
@@ -5898,6 +5675,74 @@ export const updateIncidentInputSchema = z
 export type UpdateIncidentInput = z.infer<typeof updateIncidentInputSchema>;
 </file>
 
+<file path="next.config.ts">
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+  experimental: {
+    // Every route under app/(dashboard) is dynamically rendered (`ƒ`,
+    // not `○`) — inherent to real per-user auth, not a bug: the layout's
+    // `getCurrentUser()` (server/auth/session.ts) reads the session
+    // cookie via `cookies()`, and any segment that touches a
+    // request-time API like that can't be statically prerendered. That
+    // part isn't something to "fix" here without a much bigger
+    // restructure (Partial Prerendering / Cache Components, splitting
+    // the auth check into its own Suspense-wrapped slice) — out of
+    // scope for this.
+    //
+    // What *is* fixable at this layer: Next's Client Router Cache
+    // treats every dynamic route's RSC payload as stale the instant
+    // it's fetched (`staleTimes.dynamic` defaults to 0s), so a client-
+    // side navigation away from /dashboard and back — Link, back
+    // button, router.push, no full reload — re-requests the whole page
+    // from the server every time: the layout re-runs, `getCurrentUser()`
+    // re-resolves the session, and `dashboard/page.tsx`'s 5
+    // `prefetchQuery` calls re-fetch from the DB, all before any of the
+    // STREAMING_SSR_TODO.md/QueryProvider work downstream even gets a
+    // say. That's the "no longer static" refetch-on-every-visit this
+    // was reported as — a different layer from QueryProvider's
+    // `staleTime` (which only governs whether the *browser* re-fetches
+    // once it already has the RSC-hydrated data; it can't stop the RSC
+    // request itself from happening).
+    //
+    // 24 hours, not a literal "forever" — Next doesn't offer an
+    // Infinity/off setting for this, just a number of seconds, and an
+    // arbitrarily huge magic number (some projects use 4294967294) buys
+    // nothing real over a value already longer than any session:
+    // this cache is in-memory per tab and is gone on the next hard
+    // reload or new tab regardless of what it's set to.
+    //
+    // A long value is safe specifically *because* of how this app is
+    // built, not despite it:
+    //   - RealtimeProvider lives in the shared (dashboard) layout, so
+    //     it keeps invalidating queries (per-broadcast, plus everything
+    //     on reconnect, §35) the whole time you're in the app, no
+    //     matter which page is on screen or how old this cache thinks
+    //     that page's render is.
+    //   - TanStack's own `hydrate()` only overwrites a query if the
+    //     incoming snapshot is newer than what's already live in the
+    //     browser's QueryClient — replaying an old cached RSC render
+    //     here can't push already-fresher realtime data backwards.
+    //   - Per Next's docs, shared layouts (where the session check —
+    //     `getCurrentUser()` — actually lives) are never re-fetched on
+    //     soft navigation regardless of this setting; that's a
+    //     separate, always-on behavior, not something this value
+    //     changes or newly relies on.
+    //   - Any hard reload or fresh tab bypasses this cache completely
+    //     and re-validates the session from scratch, same as today.
+    // So the actual freshness guarantee is coming from the socket, not
+    // from keeping this number small — a long value here just stops
+    // Next from redundantly re-running the page's own `prefetchQuery`
+    // calls when nothing real has changed.
+    staleTimes: {
+      dynamic: 60 * 60 * 24,
+    },
+  },
+};
+
+export default nextConfig;
+</file>
+
 <file path="playwright.config.ts">
 import { defineConfig, devices } from "@playwright/test";
 
@@ -7760,85 +7605,6 @@ Each slice from #3 onward should re-run its relevant Playwright acceptance test 
 3. **Telemetry worker deployment target** — **resolved.** Long-lived process, in-process calls to the application layer (see §13).
 </file>
 
-<file path="app/(dashboard)/dashboard/page.tsx">
-import {
-  QueryClient,
-  HydrationBoundary,
-  dehydrate,
-} from "@tanstack/react-query";
-import { DashboardView } from "@/components/dashboard/DashboardView";
-import {
-  listOrgUsersAction,
-  listTicketsAction,
-} from "@/app/(dashboard)/tickets/actions";
-import { listIncidentsAction } from "@/app/(dashboard)/incidents/actions";
-import { listServicesAction } from "@/app/(dashboard)/services/actions";
-import { listActivityAction } from "@/app/(dashboard)/activity/actions";
-
-// Milestone 9 → streaming SSR follow-up (STREAMING_SSR_TODO.md): the
-// dashboard's 5 queries used to start with an empty client-side cache
-// every cold load — each panel would render its loading state, then
-// swap to real content once its `useQuery` resolved, causing the
-// layout flicker/shift this was written to fix. This page now
-// prefetches all 5 on the server, in parallel, into a request-scoped
-// `QueryClient` (never the shared client one from QueryProvider — a
-// fresh instance per request is the documented pattern, since this
-// runs during SSR, not in the browser), then dehydrates that cache
-// into `<HydrationBoundary>` around the unchanged `DashboardView`.
-//
-// `DashboardView` still calls `useQuery` with the exact same keys —
-// it finds the data already there on first client render instead of
-// fetching it, so `isLoading` is false immediately. If a prefetch
-// fails, `dehydrate()`'s default `shouldDehydrateQuery` only carries
-// over *successful* queries, so a failed one hydrates as empty and
-// `DashboardView`'s own `isLoading`/`isError` handling (see
-// StatRow/IncidentsPanel/ServiceHealthGrid/TicketBoard/ActivityFeed's
-// `error` props) takes over exactly as it already does today — no
-// special-casing needed here for that.
-//
-// The route's `loading.tsx` (DashboardSkeleton) is what actually makes
-// this "streaming": Next wraps this page in a Suspense boundary because
-// that file exists, so the shared layout (TopBar, nav) paints
-// immediately and that skeleton shows while the `Promise.all` below is
-// in flight, rather than the whole document waiting on it.
-//
-// No auth guard here either, same reasoning as before: DashboardLayout
-// (app/(dashboard)/layout.tsx) already gates every route in this group,
-// and none of these queries need `self` — every panel is read-only.
-export default async function DashboardPage() {
-  const queryClient = new QueryClient();
-
-  await Promise.all([
-    queryClient.prefetchQuery({
-      queryKey: ["tickets", "list"],
-      queryFn: listTicketsAction,
-    }),
-    queryClient.prefetchQuery({
-      queryKey: ["incidents", "list"],
-      queryFn: listIncidentsAction,
-    }),
-    queryClient.prefetchQuery({
-      queryKey: ["services", "list"],
-      queryFn: listServicesAction,
-    }),
-    queryClient.prefetchQuery({
-      queryKey: ["org-users", "list"],
-      queryFn: listOrgUsersAction,
-    }),
-    queryClient.prefetchQuery({
-      queryKey: ["activity", "list", "recent"],
-      queryFn: () => listActivityAction(),
-    }),
-  ]);
-
-  return (
-    <HydrationBoundary state={dehydrate(queryClient)}>
-      <DashboardView />
-    </HydrationBoundary>
-  );
-}
-</file>
-
 <file path="app/(dashboard)/team/page.tsx">
 import { redirect } from "next/navigation";
 import { TeamView } from "@/components/team/TeamView";
@@ -7968,6 +7734,236 @@ import { PATHS } from "@/utils/paths";
 
 export default async function RootPage() {
   redirect((await getSession()) ? PATHS.DASHBOARD : PATHS.LOGIN);
+}
+</file>
+
+<file path="components/dashboard/DashboardView.tsx">
+"use client";
+
+import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { StatRow } from "@/components/dashboard/StatRow";
+import { IncidentsPanel } from "@/components/dashboard/IncidentsPanel";
+import { ServiceHealthGrid } from "@/components/dashboard/ServiceHealthGrid";
+import { TicketBoard } from "@/components/dashboard/TicketBoard";
+import { PresenceRail } from "@/components/dashboard/PresenceRail";
+import { ActivityFeed } from "@/components/dashboard/ActivityFeed";
+import {
+  useOnlineUserIds,
+  usePresenceReady,
+  useRealtimeStatus,
+} from "@/components/shared/RealtimeProvider";
+import {
+  listOrgUsersAction,
+  listTicketsAction,
+} from "@/app/(dashboard)/tickets/actions";
+import { listIncidentsAction } from "@/app/(dashboard)/incidents/actions";
+import { listServicesAction } from "@/app/(dashboard)/services/actions";
+import { listActivityAction } from "@/app/(dashboard)/activity/actions";
+import type { Activity, Incident, Service, Ticket, User } from "@/types";
+
+// Stable empty-array fallbacks, same reasoning as TicketsView's
+// EMPTY_TICKETS/EMPTY_USERS: a fresh `?? []` every render would defeat
+// the useMemo()s below.
+const EMPTY_TICKETS: Ticket[] = [];
+const EMPTY_INCIDENTS: Incident[] = [];
+const EMPTY_SERVICES: Service[] = [];
+const EMPTY_USERS: User[] = [];
+const EMPTY_ACTIVITIES: Activity[] = [];
+
+// How many recent events the dashboard's compact Activity panel shows —
+// the full history lives on the dedicated Activity page
+// (components/activity/ActivityView.tsx); this panel is a glance, not
+// another feed to scroll.
+const DASHBOARD_ACTIVITY_COUNT = 8;
+
+/**
+ * Milestone 9: the dashboard was already fully built visually against
+ * mock data (every panel §15 asks for existed) — this is exactly the
+ * `TODO(milestone 9)` swap the old Server Component page anticipated,
+ * moved into its own client component because the query hooks it swaps
+ * in (`useQuery`) only run client-side.
+ *
+ * Every query below reuses the *exact* key each prior milestone's own
+ * view already established (TicketsView, IncidentsView, ServicesView,
+ * ActivityView, PresenceRail) — same cache entries, so this never
+ * double-fetches anything a user already has another tab of open, and
+ * `RealtimeProvider`'s existing per-domain invalidation
+ * (`ticket.updated`, `incident.updated`, `service.updated`,
+ * `activity.created`) keeps this page current for free, no new realtime
+ * wiring needed. The one new key, `["activity", "list", "recent"]`,
+ * still starts with `["activity", "list"]` so it's covered by that same
+ * `activity.created` invalidation (TanStack matches by prefix).
+ *
+ * Presence (Milestone 7) was already fully real and self-contained —
+ * `PresenceRail` renders itself — the only remaining piece is reading
+ * `useOnlineUserIds()` here too, to restore the "Online now" stat that
+ * M7 dropped rather than leave on stale mock data (its own doc comment
+ * flagged this as this milestone's job).
+ *
+ * No props: nothing here needs `self` — every panel is read-only, no
+ * mutations happen on the dashboard itself.
+ *
+ * Every query's `isError` is wired through to its panel(s) (and to the
+ * matching StatRow entries), each with its own "Try again" → `refetch()`
+ * — unlike TicketsView/IncidentsView/ServicesView/ActivityView/TeamView,
+ * which fail as a single page and so only need one error branch each,
+ * a failed query here must not read as "0 active incidents, everything
+ * healthy" just because the other four panels loaded fine.
+ *
+ * Streaming SSR follow-up (STREAMING_SSR_TODO.md): `dashboard/page.tsx`
+ * now prefetches every query below on the server and hydrates this
+ * component's cache before it ever mounts client-side — see that
+ * file's doc comment for the mechanism. Nothing here changed for it;
+ * the same `useQuery` calls just find data already in cache on first
+ * render instead of fetching it.
+ */
+export function DashboardView() {
+  const ticketsQuery = useQuery({
+    queryKey: ["tickets", "list"],
+    queryFn: listTicketsAction,
+  });
+
+  const incidentsQuery = useQuery({
+    queryKey: ["incidents", "list"],
+    queryFn: listIncidentsAction,
+  });
+
+  const servicesQuery = useQuery({
+    queryKey: ["services", "list"],
+    queryFn: listServicesAction,
+  });
+
+  const usersQuery = useQuery({
+    queryKey: ["org-users", "list"],
+    queryFn: listOrgUsersAction,
+  });
+
+  const activityQuery = useQuery({
+    queryKey: ["activity", "list", "recent"],
+    queryFn: () => listActivityAction(),
+  });
+
+  const onlineIds = useOnlineUserIds();
+  const presenceReady = usePresenceReady();
+  const realtimeStatus = useRealtimeStatus();
+
+  const tickets = ticketsQuery.data ?? EMPTY_TICKETS;
+  const incidents = incidentsQuery.data ?? EMPTY_INCIDENTS;
+  const services = servicesQuery.data ?? EMPTY_SERVICES;
+  const users = usersQuery.data ?? EMPTY_USERS;
+  const activities = activityQuery.data?.items ?? EMPTY_ACTIVITIES;
+
+  const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
+  const resolveUser = (id: string | null): User | null =>
+    id ? (userById.get(id) ?? null) : null;
+
+  // Same "the dashboard only ever wants the still-open ones" filter the
+  // old mock-data version used — IncidentsPanel's empty state assumes
+  // the caller already filtered.
+  const activeIncidentsList = useMemo(
+    () => incidents.filter((i) => i.status !== "RESOLVED"),
+    [incidents],
+  );
+
+  const recentActivities = useMemo(
+    () => activities.slice(0, DASHBOARD_ACTIVITY_COUNT),
+    [activities],
+  );
+
+  const openTickets = tickets.filter((t) => t.status === "OPEN").length;
+  const inProgressTickets = tickets.filter(
+    (t) => t.status === "IN_PROGRESS",
+  ).length;
+  const unhealthyServices = services.filter(
+    (s) => s.status !== "OPERATIONAL",
+  ).length;
+
+  return (
+    <>
+      <StatRow
+        stats={[
+          {
+            label: "Open tickets",
+            value: ticketsQuery.isLoading ? null : openTickets,
+            error: ticketsQuery.isError,
+          },
+          {
+            label: "In progress",
+            value: ticketsQuery.isLoading ? null : inProgressTickets,
+            error: ticketsQuery.isError,
+          },
+          {
+            label: "Active incidents",
+            value: incidentsQuery.isLoading ? null : activeIncidentsList.length,
+            tone: "danger",
+            error: incidentsQuery.isError,
+          },
+          {
+            label: "Degraded / outage",
+            value: servicesQuery.isLoading ? null : unhealthyServices,
+            tone: "warning",
+            error: servicesQuery.isError,
+          },
+          // Unlike the four stats above, this one can't be prefetched:
+          // presence is live socket state, so on a cold load there is
+          // genuinely nothing to show until the channel has joined and
+          // synced. Until then it's a skeleton (never "0" — that reads
+          // as "nobody's online" and then visibly corrects itself). If
+          // the connection is down instead of just starting up, "—"
+          // rather than a skeleton that would never resolve.
+          {
+            label: "Online now",
+            value: presenceReady ? onlineIds.size : null,
+            error: !presenceReady && realtimeStatus !== "connecting",
+          },
+        ]}
+      />
+
+      {/* Side-by-side only once there's room for both columns to
+          breathe; below that, the rail just drops beneath the main
+          content instead of squeezing next to it. */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[2.2fr_1fr] lg:items-start">
+        <div className="flex flex-col gap-4 min-w-0">
+          <IncidentsPanel
+            incidents={activeIncidentsList}
+            services={services}
+            resolveUser={resolveUser}
+            loading={incidentsQuery.isLoading || servicesQuery.isLoading}
+            error={incidentsQuery.isError || servicesQuery.isError}
+            onRetry={() => {
+              incidentsQuery.refetch();
+              servicesQuery.refetch();
+            }}
+          />
+          <ServiceHealthGrid
+            services={services}
+            loading={servicesQuery.isLoading}
+            error={servicesQuery.isError}
+            onRetry={() => servicesQuery.refetch()}
+          />
+          <TicketBoard
+            tickets={tickets}
+            resolveUser={resolveUser}
+            loading={ticketsQuery.isLoading}
+            error={ticketsQuery.isError}
+            onRetry={() => ticketsQuery.refetch()}
+          />
+        </div>
+
+        <div className="flex flex-col gap-4 min-w-0">
+          <PresenceRail />
+          <ActivityFeed
+            activities={recentActivities}
+            resolveUser={resolveUser}
+            loading={activityQuery.isLoading}
+            error={activityQuery.isError}
+            onRetry={() => activityQuery.refetch()}
+          />
+        </div>
+      </div>
+    </>
+  );
 }
 </file>
 
@@ -10272,6 +10268,85 @@ export const PATHS = {
 };
 </file>
 
+<file path="app/(dashboard)/dashboard/page.tsx">
+import {
+  QueryClient,
+  HydrationBoundary,
+  dehydrate,
+} from "@tanstack/react-query";
+import { DashboardView } from "@/components/dashboard/DashboardView";
+import {
+  listOrgUsersAction,
+  listTicketsAction,
+} from "@/app/(dashboard)/tickets/actions";
+import { listIncidentsAction } from "@/app/(dashboard)/incidents/actions";
+import { listServicesAction } from "@/app/(dashboard)/services/actions";
+import { listActivityAction } from "@/app/(dashboard)/activity/actions";
+
+// Milestone 9 → streaming SSR follow-up (STREAMING_SSR_TODO.md): the
+// dashboard's 5 queries used to start with an empty client-side cache
+// every cold load — each panel would render its loading state, then
+// swap to real content once its `useQuery` resolved, causing the
+// layout flicker/shift this was written to fix. This page now
+// prefetches all 5 on the server, in parallel, into a request-scoped
+// `QueryClient` (never the shared client one from QueryProvider — a
+// fresh instance per request is the documented pattern, since this
+// runs during SSR, not in the browser), then dehydrates that cache
+// into `<HydrationBoundary>` around the unchanged `DashboardView`.
+//
+// `DashboardView` still calls `useQuery` with the exact same keys —
+// it finds the data already there on first client render instead of
+// fetching it, so `isLoading` is false immediately. If a prefetch
+// fails, `dehydrate()`'s default `shouldDehydrateQuery` only carries
+// over *successful* queries, so a failed one hydrates as empty and
+// `DashboardView`'s own `isLoading`/`isError` handling (see
+// StatRow/IncidentsPanel/ServiceHealthGrid/TicketBoard/ActivityFeed's
+// `error` props) takes over exactly as it already does today — no
+// special-casing needed here for that.
+//
+// The route's `loading.tsx` (DashboardSkeleton) is what actually makes
+// this "streaming": Next wraps this page in a Suspense boundary because
+// that file exists, so the shared layout (TopBar, nav) paints
+// immediately and that skeleton shows while the `Promise.all` below is
+// in flight, rather than the whole document waiting on it.
+//
+// No auth guard here either, same reasoning as before: DashboardLayout
+// (app/(dashboard)/layout.tsx) already gates every route in this group,
+// and none of these queries need `self` — every panel is read-only.
+export default async function DashboardPage() {
+  const queryClient = new QueryClient();
+
+  await Promise.all([
+    queryClient.prefetchQuery({
+      queryKey: ["tickets", "list"],
+      queryFn: listTicketsAction,
+    }),
+    queryClient.prefetchQuery({
+      queryKey: ["incidents", "list"],
+      queryFn: listIncidentsAction,
+    }),
+    queryClient.prefetchQuery({
+      queryKey: ["services", "list"],
+      queryFn: listServicesAction,
+    }),
+    queryClient.prefetchQuery({
+      queryKey: ["org-users", "list"],
+      queryFn: listOrgUsersAction,
+    }),
+    queryClient.prefetchQuery({
+      queryKey: ["activity", "list", "recent"],
+      queryFn: () => listActivityAction(),
+    }),
+  ]);
+
+  return (
+    <HydrationBoundary state={dehydrate(queryClient)}>
+      <DashboardView />
+    </HydrationBoundary>
+  );
+}
+</file>
+
 <file path="app/(dashboard)/incidents/page.tsx">
 import { redirect } from "next/navigation";
 import { IncidentsView } from "@/components/incidents/IncidentsView";
@@ -11795,9 +11870,127 @@ export function Avatar({
 }
 </file>
 
+<file path="components/dashboard/StatRow.tsx">
+import { Skeleton } from "@/components/shared/Skeleton";
+
+interface Stat {
+  label: string;
+  /** `null` means "still loading" — renders a skeleton in place of the
+   *  number (Milestone 9: each stat is derived from a different query,
+   *  so they can resolve at different times). Ignored when `error` is
+   *  true. */
+  value: number | null;
+  tone?: "danger" | "warning";
+  /** The query this stat is derived from failed. Takes priority over
+   *  `value`/loading — the corresponding panel below has the actual
+   *  "Try again" retry affordance, so this is just a glance-level
+   *  signal that the number isn't trustworthy right now, not another
+   *  place to retry from. */
+  error?: boolean;
+}
+
+export function StatRow({ stats }: { stats: Stat[] }) {
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      {stats.map((stat) => {
+        const { value, error } = stat;
+        const loading = !error && value === null;
+        const alert = !error && value !== null && stat.tone && value > 0;
+        return (
+          <div
+            key={stat.label}
+            className={
+              alert
+                ? `rounded-lg border p-3.5 ${
+                    stat.tone === "danger"
+                      ? "border-danger/25 bg-danger/6"
+                      : "border-warning/25 bg-warning/6"
+                  }`
+                : "rounded-lg border border-line bg-panel p-3.5"
+            }
+          >
+            <div className="text-xs text-ink-dim">{stat.label}</div>
+            {error ? (
+              <div
+                className="mt-1 font-mono text-2xl font-medium text-ink-faint"
+                title="Couldn't load"
+              >
+                —
+              </div>
+            ) : loading ? (
+              <Skeleton className="mt-1.5 h-7 w-10" />
+            ) : (
+              <div
+                className={`mt-1 font-mono text-2xl font-medium tabular-nums ${
+                  alert
+                    ? stat.tone === "danger"
+                      ? "text-danger"
+                      : "text-warning"
+                    : "text-ink"
+                }`}
+              >
+                {value}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+</file>
+
+<file path="package.json">
+{
+  "name": "relay",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && next build",
+    "start": "next start",
+    "lint": "eslint",
+    "worker:telemetry": "tsx workers/telemetry.ts",
+    "postinstall": "prisma skills sync || exit 0"
+  },
+  "dependencies": {
+    "@phosphor-icons/react": "^2.1.10",
+    "@playwright/test": "^1.63.0",
+    "@prisma/adapter-pg": "^7.10.0",
+    "@prisma/client": "7.10.0",
+    "@supabase/supabase-js": "^2.116.0",
+    "@tanstack/react-query": "^5.103.1",
+    "@tanstack/react-query-devtools": "^5.103.1",
+    "dotenv": "^17.4.2",
+    "jose": "^6.2.12",
+    "next": "16.3.4",
+    "pg": "^8.23.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.4",
+    "prisma": "7.10.0",
+    "tailwindcss": "^4",
+    "tsx": "^4.23.13",
+    "typescript": "^5"
+  },
+  "packageManager": "yarn@4.12.0"
+}
+</file>
+
 <file path="components/dashboard/IncidentsPanel.tsx">
+"use client";
+
 import Link from "next/link";
 import { Avatar } from "./Avatar";
+import { useNow } from "@/lib/use-now";
 import {
   Skeleton,
   SkeletonCircle,
@@ -11884,6 +12077,12 @@ export function IncidentsPanel({
   error,
   onRetry,
 }: IncidentsPanelProps) {
+  // Rendered inside DashboardView (a Client Component), so this
+  // re-executes during hydration too — a bare `new Date()` here
+  // is not safe (see ServiceHealthGrid.tsx). useNow() keeps the
+  // server and first-client-paint text identical.
+  const now = useNow();
+
   const sorted = [...incidents].sort(
     (a, b) => severityOrder[a.severity] - severityOrder[b.severity],
   );
@@ -11958,10 +12157,7 @@ export function IncidentsPanel({
                     {statusMeta.label}
                   </span>
                   <span>·</span>
-                  {/* Server Component (no "use client") — this never
-                      hydrates/re-executes on the client, so a plain
-                      `new Date()` here is safe and doesn't need useNow(). */}
-                  <span>{relativeTime(incident.createdAt, new Date())}</span>
+                  <span>{relativeTime(incident.createdAt, now)}</span>
                   {affectedServices.length > 0 && (
                     <>
                       <span>·</span>
@@ -12018,7 +12214,12 @@ export function IncidentsPanel({
 import { useQuery } from "@tanstack/react-query";
 import { Avatar } from "./Avatar";
 import { SkeletonCircle, SkeletonText } from "@/components/shared/Skeleton";
-import { useOnlineUserIds } from "@/components/shared/RealtimeProvider";
+import {
+  useCurrentUserId,
+  useOnlineUserIds,
+  usePresenceReady,
+  useRealtimeStatus,
+} from "@/components/shared/RealtimeProvider";
 import { listOrgUsersAction } from "@/app/(dashboard)/tickets/actions";
 import type { User } from "@/types";
 
@@ -12069,26 +12270,50 @@ export function PresenceRail() {
     queryFn: listOrgUsersAction,
   });
   const onlineIds = useOnlineUserIds();
+  const presenceReady = usePresenceReady();
+  const realtimeStatus = useRealtimeStatus();
+  const selfId = useCurrentUserId();
+
+  // Presence is only meaningful once it's *known* (see
+  // usePresenceReady): before that, "not in the Set" means "haven't
+  // heard yet", not "offline", so nobody gets a dot or an online count.
+  const isOnline = (id: string) => presenceReady && onlineIds.has(id);
+
+  // First connect still in flight: hold the skeleton (rather than
+  // painting the roster all-offline and then re-sorting it a moment
+  // later when presence arrives). If we're reconnecting/offline instead,
+  // show the roster without dots — waiting on a socket that may be down
+  // for a while would leave the panel blank.
+  const awaitingFirstPresence =
+    !presenceReady && realtimeStatus === "connecting";
+  const loading = usersQuery.isLoading || awaitingFirstPresence;
 
   // Deactivated members stay in the query (history needs them) but
   // aren't part of the roster.
   const users = (usersQuery.data ?? EMPTY_USERS).filter((u) => u.active);
 
-  const sorted = [...users].sort((a, b) => {
-    const aOnline = onlineIds.has(a.id) ? 0 : 1;
-    const bOnline = onlineIds.has(b.id) ? 0 : 1;
-    return aOnline - bOnline;
-  });
+  // You first, then everyone online, then everyone else. Array#sort is
+  // stable, so within each group the roster keeps its server order.
+  const rank = (id: string) => (id === selfId ? 0 : isOnline(id) ? 1 : 2);
+  const sorted = [...users].sort((a, b) => rank(a.id) - rank(b.id));
 
   return (
     <div className="rounded-lg border border-line bg-panel p-4">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-medium text-ink">Team</h2>
-        <span className="text-xs text-ink-faint">{onlineIds.size} online</span>
+        {presenceReady ? (
+          <span className="text-xs text-ink-faint">
+            {onlineIds.size} online
+          </span>
+        ) : awaitingFirstPresence ? (
+          <SkeletonText width="w-12" />
+        ) : (
+          <span className="text-xs text-ink-faint">—</span>
+        )}
       </div>
 
       <ul className="mt-3 flex flex-col gap-2">
-        {usersQuery.isLoading
+        {loading
           ? // Milestone 9: skeleton rows in place of the old "Loading…"
             // text line — same shared primitives every other dashboard
             // panel's loading state now uses (components/shared/Skeleton).
@@ -12099,7 +12324,7 @@ export function PresenceRail() {
               </li>
             ))
           : sorted.map((user) => {
-              const online = onlineIds.has(user.id);
+              const online = isOnline(user.id);
               return (
                 <li key={user.id} className="flex items-center gap-2.5">
                   <Avatar
@@ -12118,76 +12343,6 @@ export function PresenceRail() {
               );
             })}
       </ul>
-    </div>
-  );
-}
-</file>
-
-<file path="components/dashboard/StatRow.tsx">
-import { Skeleton } from "@/components/shared/Skeleton";
-
-interface Stat {
-  label: string;
-  /** `null` means "still loading" — renders a skeleton in place of the
-   *  number (Milestone 9: each stat is derived from a different query,
-   *  so they can resolve at different times). Ignored when `error` is
-   *  true. */
-  value: number | null;
-  tone?: "danger" | "warning";
-  /** The query this stat is derived from failed. Takes priority over
-   *  `value`/loading — the corresponding panel below has the actual
-   *  "Try again" retry affordance, so this is just a glance-level
-   *  signal that the number isn't trustworthy right now, not another
-   *  place to retry from. */
-  error?: boolean;
-}
-
-export function StatRow({ stats }: { stats: Stat[] }) {
-  return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-      {stats.map((stat) => {
-        const { value, error } = stat;
-        const loading = !error && value === null;
-        const alert = !error && value !== null && stat.tone && value > 0;
-        return (
-          <div
-            key={stat.label}
-            className={
-              alert
-                ? `rounded-lg border p-3.5 ${
-                    stat.tone === "danger"
-                      ? "border-danger/25 bg-danger/6"
-                      : "border-warning/25 bg-warning/6"
-                  }`
-                : "rounded-lg border border-line bg-panel p-3.5"
-            }
-          >
-            <div className="text-xs text-ink-dim">{stat.label}</div>
-            {error ? (
-              <div
-                className="mt-1 font-mono text-2xl font-medium text-ink-faint"
-                title="Couldn't load"
-              >
-                —
-              </div>
-            ) : loading ? (
-              <Skeleton className="mt-1.5 h-7 w-10" />
-            ) : (
-              <div
-                className={`mt-1 font-mono text-2xl font-medium tabular-nums ${
-                  alert
-                    ? stat.tone === "danger"
-                      ? "text-danger"
-                      : "text-warning"
-                    : "text-ink"
-                }`}
-              >
-                {value}
-              </div>
-            )}
-          </div>
-        );
-      })}
     </div>
   );
 }
@@ -12373,181 +12528,6 @@ export function TicketBoard({
                   </li>
                 )}
               </ul>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-</file>
-
-<file path="package.json">
-{
-  "name": "relay",
-  "version": "0.1.0",
-  "private": true,
-  "scripts": {
-    "dev": "next dev",
-    "build": "prisma generate && next build",
-    "start": "next start",
-    "lint": "eslint",
-    "worker:telemetry": "tsx workers/telemetry.ts",
-    "postinstall": "prisma skills sync || exit 0"
-  },
-  "dependencies": {
-    "@phosphor-icons/react": "^2.1.10",
-    "@playwright/test": "^1.63.0",
-    "@prisma/adapter-pg": "^7.10.0",
-    "@prisma/client": "7.10.0",
-    "@supabase/supabase-js": "^2.116.0",
-    "@tanstack/react-query": "^5.103.1",
-    "@tanstack/react-query-devtools": "^5.103.1",
-    "dotenv": "^17.4.2",
-    "jose": "^6.2.12",
-    "next": "16.3.4",
-    "pg": "^8.23.0",
-    "react": "19.2.8",
-    "react-dom": "19.2.8"
-  },
-  "devDependencies": {
-    "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
-    "@types/pg": "^8.23.1",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.3.4",
-    "prisma": "7.10.0",
-    "tailwindcss": "^4",
-    "tsx": "^4.23.13",
-    "typescript": "^5"
-  },
-  "packageManager": "yarn@4.12.0"
-}
-</file>
-
-<file path="components/dashboard/ServiceHealthGrid.tsx">
-import { Sparkline } from "@/components/shared/Sparkline";
-import { Skeleton, SkeletonText } from "@/components/shared/Skeleton";
-import { serviceStatusMeta, type Service } from "@/types";
-import {
-  formatErrorRate,
-  relativeTime,
-  statusDot,
-  statusText,
-} from "@/lib/style";
-
-interface ServiceHealthGridProps {
-  services: Service[];
-  /** Milestone 9: set by DashboardView while its services query is
-   *  still `isLoading` — see IncidentsPanel's `loading` prop for the
-   *  same reasoning. */
-  loading?: boolean;
-  /** The services query failed. */
-  error?: boolean;
-  onRetry?: () => void;
-}
-
-/** Extracted for reuse as this route's `loading.tsx` fallback — see
- *  IncidentsPanelSkeleton's doc comment. */
-export function ServiceHealthGridSkeleton() {
-  return (
-    <div className="rounded-lg border border-line bg-panel">
-      <div className="flex items-center justify-between border-b border-line px-4 py-3">
-        <h2 className="text-sm font-medium text-ink">Service health</h2>
-      </div>
-
-      <div className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2 lg:grid-cols-3">
-        {[0, 1, 2, 3, 4, 5].map((i) => (
-          <div key={i} className="bg-panel p-3.5">
-            <div className="flex items-center justify-between">
-              <SkeletonText width="w-20" />
-              <Skeleton className="size-1.5 rounded-full" />
-            </div>
-            <SkeletonText width="w-14" className="mt-2 h-2.5" />
-            <div className="mt-3 flex items-end justify-between">
-              <Skeleton className="h-7 w-10" />
-              <Skeleton className="h-5 w-16" />
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-export function ServiceHealthGrid({
-  services,
-  loading,
-  error,
-  onRetry,
-}: ServiceHealthGridProps) {
-  if (loading) {
-    return <ServiceHealthGridSkeleton />;
-  }
-
-  if (error) {
-    return (
-      <div className="rounded-lg border border-line bg-panel p-5">
-        <div className="text-sm text-danger">
-          Couldn&apos;t load service health.{" "}
-          <button
-            type="button"
-            onClick={onRetry}
-            className="underline hover:text-ink"
-          >
-            Try again
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="rounded-lg border border-line bg-panel">
-      <div className="flex items-center justify-between border-b border-line px-4 py-3">
-        <h2 className="text-sm font-medium text-ink">Service health</h2>
-        <span className="text-xs text-ink-faint">Trend is since page load</span>
-      </div>
-
-      <div className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2 lg:grid-cols-3">
-        {services.map((service) => {
-          const meta = serviceStatusMeta[service.status];
-          const warn = service.status !== "OPERATIONAL";
-
-          return (
-            <div key={service.id} className="bg-panel p-3.5">
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-ink">{service.name}</span>
-                <span
-                  className={`size-1.5 rounded-full ${statusDot[meta.color]}`}
-                />
-              </div>
-              <div className={`mt-0.5 text-xs ${statusText[meta.color]}`}>
-                {meta.label}
-              </div>
-
-              <div className="mt-3 flex items-end justify-between">
-                <div className="font-mono text-xs text-ink-dim tabular-nums space-y-1">
-                  <div>
-                    {service.status === "OUTAGE"
-                      ? "—"
-                      : `${service.latencyMs}ms`}
-                  </div>
-                  <div className={service.errorRate > 1 ? "text-warning" : ""}>
-                    {formatErrorRate(service.errorRate)} err
-                  </div>
-                </div>
-                <Sparkline values={service.sessionLatencyTrend} warn={warn} />
-              </div>
-
-              <div className="mt-2 text-[11px] text-ink-faint">
-                {/* Server Component (no "use client") — this never
-                    hydrates/re-executes on the client, so a plain
-                    `new Date()` here is safe and doesn't need useNow(). */}
-                Updated {relativeTime(service.updatedAt, new Date())}
-              </div>
             </div>
           );
         })}
@@ -13082,163 +13062,6 @@ export function IncidentsView({ self }: IncidentsViewProps) {
         />
       )}
     </div>
-  );
-}
-</file>
-
-<file path="components/shared/TopBar.tsx">
-"use client";
-
-import { useState } from "react";
-import Image from "next/image";
-import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { ListIcon, SignOutIcon, XIcon } from "@phosphor-icons/react";
-import { Avatar } from "@/components/dashboard/Avatar";
-import { LiveIndicator } from "@/components/dashboard/LiveIndicator";
-import { useRealtimeStatus } from "@/components/shared/RealtimeProvider";
-import type { User } from "@/types";
-import { canManageTeam } from "@/lib/permissions";
-import { logoutAction } from "@/app/login/actions";
-import { PATHS } from "@/utils/paths";
-
-const baseNavItems = [
-  { label: "Dashboard", href: PATHS.DASHBOARD },
-  { label: "Tickets", href: PATHS.TICKETS },
-  { label: "Incidents", href: PATHS.INCIDENTS },
-  { label: "Services", href: PATHS.SERVICES },
-  { label: "Activity", href: PATHS.ACTIVITY },
-];
-
-export function TopBar({ orgName, self }: { orgName: string; self: User }) {
-  const pathname = usePathname();
-  const [menuOpen, setMenuOpen] = useState(false);
-  const realtimeStatus = useRealtimeStatus();
-
-  // Team is the one nav-level permission boundary (README §3 / MVP RBAC
-  // — see ROADMAP_ROLES.md): Manager-only, hidden entirely for Member
-  // rather than shown disabled. The /team page itself also redirects a
-  // Member who visits it directly, so hiding the link is a UX nicety,
-  // not the actual enforcement.
-  const navItems = canManageTeam(self.role)
-    ? [...baseNavItems, { label: "Team", href: PATHS.TEAM }]
-    : baseNavItems;
-
-  const isActive = (href: string) =>
-    pathname === href || pathname.startsWith(`${href}/`);
-  const activeLabel =
-    navItems.find((item) => isActive(item.href))?.label ?? "Menu";
-
-  return (
-    <header className="relative flex h-14 shrink-0 items-center justify-between gap-3 border-b border-line px-3 sm:px-6">
-      <div className="flex min-w-0 items-center gap-3 sm:gap-6">
-        <div className="flex shrink-0 items-center gap-2">
-          <span className="flex items-center justify-center size-5">
-            <Image
-              src="/assets/logo.png"
-              alt="Logo"
-              width={20}
-              height={20}
-              priority
-              className="size-5"
-            />
-          </span>
-          <span className="hidden text-sm font-medium text-ink sm:inline">
-            {orgName}
-          </span>
-        </div>
-
-        {/* Tablet and up: room for all five tabs side by side. */}
-        <nav className="hidden items-center gap-1 md:flex">
-          {navItems.map((item) => {
-            const active = isActive(item.href);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={
-                  active
-                    ? "rounded-md px-3 py-1.5 text-sm font-medium text-ink bg-panel-raised"
-                    : "rounded-md px-3 py-1.5 text-sm text-ink-dim hover:text-ink transition-colors"
-                }
-              >
-                {item.label}
-              </Link>
-            );
-          })}
-        </nav>
-
-        {/* Phone: one button naming the page you're on. Tap it to see the
-            other four — nothing to scroll to find, nothing squeezed. */}
-        <button
-          type="button"
-          onClick={() => setMenuOpen((open) => !open)}
-          aria-expanded={menuOpen}
-          aria-label="Open navigation menu"
-          className="flex items-center gap-1.5 rounded-md bg-panel-raised px-2.5 py-1.5 text-sm font-medium text-ink md:hidden"
-        >
-          {menuOpen ? (
-            <XIcon size={14} weight="bold" />
-          ) : (
-            <ListIcon size={14} weight="bold" />
-          )}
-          {activeLabel}
-        </button>
-      </div>
-
-      <div className="flex shrink-0 items-center gap-2 sm:gap-4">
-        <LiveIndicator status={realtimeStatus} />
-
-        <Avatar
-          initials={self.initials}
-          seed={self.id}
-          online
-          size="sm"
-          title={self.name}
-        />
-
-        <form action={logoutAction}>
-          <button
-            type="submit"
-            title="Sign out"
-            aria-label="Sign out"
-            className="flex items-center justify-center rounded-md p-1.5 text-ink-faint transition-colors hover:text-ink"
-          >
-            <SignOutIcon size={16} />
-          </button>
-        </form>
-      </div>
-
-      {menuOpen && (
-        <>
-          {/* Invisible tap-outside-to-close catcher, not a page-darkening
-              overlay — this is a small menu, not a full mobile drawer. */}
-          <div
-            className="fixed inset-0 z-10 md:hidden"
-            onClick={() => setMenuOpen(false)}
-          />
-          <div className="absolute left-3 top-full z-20 mt-1.5 flex w-44 flex-col gap-0.5 rounded-lg border border-line bg-panel-raised p-1 shadow-lg md:hidden">
-            {navItems.map((item) => {
-              const active = isActive(item.href);
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  onClick={() => setMenuOpen(false)}
-                  className={
-                    active
-                      ? "rounded-md bg-panel px-3 py-2 text-left text-sm font-medium text-ink"
-                      : "rounded-md px-3 py-2 text-left text-sm text-ink-dim hover:text-ink"
-                  }
-                >
-                  {item.label}
-                </Link>
-              );
-            })}
-          </div>
-        </>
-      )}
-    </header>
   );
 }
 </file>
@@ -13869,65 +13692,83 @@ export default async function DashboardLayout({
 }
 </file>
 
-<file path="components/dashboard/ActivityFeed.tsx">
-import { CpuIcon } from "@phosphor-icons/react/ssr";
-import { Avatar } from "./Avatar";
-import { describeActivity } from "@/components/shared/ActivityDescription";
-import { SkeletonCircle, SkeletonText } from "@/components/shared/Skeleton";
-import type { Activity, User } from "@/types";
-import { relativeTime } from "@/lib/style";
+<file path="components/dashboard/ServiceHealthGrid.tsx">
+"use client";
 
-interface ActivityFeedProps {
-  activities: Activity[];
-  resolveUser: (id: string | null) => User | null;
-  /** Milestone 9: set by DashboardView while its activity query is
+import { Sparkline } from "@/components/shared/Sparkline";
+import { useNow } from "@/lib/use-now";
+import { Skeleton, SkeletonText } from "@/components/shared/Skeleton";
+import { serviceStatusMeta, type Service } from "@/types";
+import {
+  formatErrorRate,
+  relativeTime,
+  statusDot,
+  statusText,
+} from "@/lib/style";
+
+interface ServiceHealthGridProps {
+  services: Service[];
+  /** Milestone 9: set by DashboardView while its services query is
    *  still `isLoading` — see IncidentsPanel's `loading` prop for the
    *  same reasoning. */
   loading?: boolean;
-  /** The activity query failed. */
+  /** The services query failed. */
   error?: boolean;
   onRetry?: () => void;
 }
 
 /** Extracted for reuse as this route's `loading.tsx` fallback — see
  *  IncidentsPanelSkeleton's doc comment. */
-export function ActivityFeedSkeleton() {
+export function ServiceHealthGridSkeleton() {
   return (
-    <div className="rounded-lg border border-line bg-panel p-4">
-      <h2 className="text-sm font-medium text-ink">Activity</h2>
+    <div className="rounded-lg border border-line bg-panel">
+      <div className="flex items-center justify-between border-b border-line px-4 py-3">
+        <h2 className="text-sm font-medium text-ink">Service health</h2>
+      </div>
 
-      <ul className="mt-3 flex flex-col gap-3">
-        {[0, 1, 2, 3].map((i) => (
-          <li key={i} className="flex items-start gap-2.5">
-            <SkeletonCircle />
-            <div className="min-w-0 flex-1 space-y-1.5">
-              <SkeletonText width="w-4/5" />
-              <SkeletonText width="w-1/4" className="h-2.5" />
+      <div className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2 lg:grid-cols-3">
+        {[0, 1, 2, 3, 4, 5].map((i) => (
+          <div key={i} className="bg-panel p-3.5">
+            <div className="flex items-center justify-between">
+              <SkeletonText width="w-20" />
+              <Skeleton className="size-1.5 rounded-full" />
             </div>
-          </li>
+            <SkeletonText width="w-14" className="mt-2 h-2.5" />
+            <div className="mt-3 flex items-end justify-between">
+              <Skeleton className="h-7 w-10" />
+              <Skeleton className="h-5 w-16" />
+            </div>
+          </div>
         ))}
-      </ul>
+      </div>
     </div>
   );
 }
 
-export function ActivityFeed({
-  activities,
-  resolveUser,
+export function ServiceHealthGrid({
+  services,
   loading,
   error,
   onRetry,
-}: ActivityFeedProps) {
+}: ServiceHealthGridProps) {
+  // This is actually part of the client bundle: DashboardView (which
+  // renders this) is a Client Component, so this module re-executes
+  // during hydration too, not just on the server. A bare `new Date()`
+  // here ran once at request time and again a moment later at
+  // hydration — enough to flip "just now" to "5s ago" and trigger a
+  // hydration mismatch. useNow() (lib/use-now.ts) returns null until
+  // after mount so both passes render identical text.
+  const now = useNow();
+
   if (loading) {
-    return <ActivityFeedSkeleton />;
+    return <ServiceHealthGridSkeleton />;
   }
 
   if (error) {
     return (
-      <div className="rounded-lg border border-line bg-panel p-4">
-        <h2 className="text-sm font-medium text-ink">Activity</h2>
-        <div className="mt-3 text-sm text-danger">
-          Couldn&apos;t load activity.{" "}
+      <div className="rounded-lg border border-line bg-panel p-5">
+        <div className="text-sm text-danger">
+          Couldn&apos;t load service health.{" "}
           <button
             type="button"
             onClick={onRetry}
@@ -13940,53 +13781,51 @@ export function ActivityFeed({
     );
   }
 
-  const sorted = [...activities].sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-  );
-
   return (
-    <div className="rounded-lg border border-line bg-panel p-4">
-      <h2 className="text-sm font-medium text-ink">Activity</h2>
+    <div className="rounded-lg border border-line bg-panel">
+      <div className="flex items-center justify-between border-b border-line px-4 py-3">
+        <h2 className="text-sm font-medium text-ink">Service health</h2>
+        <span className="text-xs text-ink-faint">Trend is since page load</span>
+      </div>
 
-      <ul className="mt-3 flex flex-col gap-3">
-        {sorted.map((activity) => {
-          const actor = resolveUser(activity.actorId);
+      <div className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2 lg:grid-cols-3">
+        {services.map((service) => {
+          const meta = serviceStatusMeta[service.status];
+          const warn = service.status !== "OPERATIONAL";
+
           return (
-            <li key={activity.id} className="flex items-start gap-2.5">
-              {actor ? (
-                <Avatar
-                  initials={actor.initials}
-                  seed={actor.id}
-                  title={actor.name}
-                />
-              ) : (
+            <div key={service.id} className="bg-panel p-3.5">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-ink">{service.name}</span>
                 <span
-                  className="flex size-6 shrink-0 items-center justify-center rounded-full bg-panel-raised text-ink-faint"
-                  title="Telemetry"
-                >
-                  <CpuIcon size={12} weight="bold" />
-                </span>
-              )}
-              <div className="min-w-0 text-xs leading-snug">
-                <span className="text-ink-dim">
-                  <span
-                    className={actor ? "text-ink" : "text-ink-faint font-mono"}
-                  >
-                    {actor ? actor.name : "telemetry"}
-                  </span>{" "}
-                  {describeActivity(activity)}
-                </span>
-                <div className="mt-0.5 text-[11px] text-ink-faint">
-                  {/* Server Component (no "use client") — this never
-                      hydrates/re-executes on the client, so a plain
-                      `new Date()` here is safe and doesn't need useNow(). */}
-                  {relativeTime(activity.createdAt, new Date())}
-                </div>
+                  className={`size-1.5 rounded-full ${statusDot[meta.color]}`}
+                />
               </div>
-            </li>
+              <div className={`mt-0.5 text-xs ${statusText[meta.color]}`}>
+                {meta.label}
+              </div>
+
+              <div className="mt-3 flex items-end justify-between">
+                <div className="font-mono text-xs text-ink-dim tabular-nums space-y-1">
+                  <div>
+                    {service.status === "OUTAGE"
+                      ? "—"
+                      : `${service.latencyMs}ms`}
+                  </div>
+                  <div className={service.errorRate > 1 ? "text-warning" : ""}>
+                    {formatErrorRate(service.errorRate)} err
+                  </div>
+                </div>
+                <Sparkline values={service.sessionLatencyTrend} warn={warn} />
+              </div>
+
+              <div className="mt-2 text-[11px] text-ink-faint">
+                Updated {relativeTime(service.updatedAt, now)}
+              </div>
+            </div>
           );
         })}
-      </ul>
+      </div>
     </div>
   );
 }
@@ -14556,6 +14395,304 @@ export function ServicesView({ self }: ServicesViewProps) {
 }
 </file>
 
+<file path="components/shared/TopBar.tsx">
+"use client";
+
+import { useState } from "react";
+import Image from "next/image";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { ListIcon, SignOutIcon, XIcon } from "@phosphor-icons/react";
+import { Avatar } from "@/components/dashboard/Avatar";
+import { LiveIndicator } from "@/components/dashboard/LiveIndicator";
+import {
+  useOnlineUserIds,
+  useRealtimeStatus,
+} from "@/components/shared/RealtimeProvider";
+import type { User } from "@/types";
+import { canManageTeam } from "@/lib/permissions";
+import { logoutAction } from "@/app/login/actions";
+import { PATHS } from "@/utils/paths";
+
+const baseNavItems = [
+  { label: "Dashboard", href: PATHS.DASHBOARD },
+  { label: "Tickets", href: PATHS.TICKETS },
+  { label: "Incidents", href: PATHS.INCIDENTS },
+  { label: "Services", href: PATHS.SERVICES },
+  { label: "Activity", href: PATHS.ACTIVITY },
+];
+
+export function TopBar({ orgName, self }: { orgName: string; self: User }) {
+  const pathname = usePathname();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const realtimeStatus = useRealtimeStatus();
+  const onlineIds = useOnlineUserIds();
+
+  // The green dot means "you're online", so it has to be earned: the
+  // socket is joined *and* our own presence entry has come back in a
+  // sync. It used to be a hardcoded `online`, which lit up on the server
+  // render, before any connection existed, and stayed lit while
+  // reconnecting/offline. Server render and first client render both
+  // start at "connecting" with an empty Set, so no dot on either — no
+  // hydration mismatch.
+  const selfOnline = realtimeStatus === "connected" && onlineIds.has(self.id);
+
+  // Team is the one nav-level permission boundary (README §3 / MVP RBAC
+  // — see ROADMAP_ROLES.md): Manager-only, hidden entirely for Member
+  // rather than shown disabled. The /team page itself also redirects a
+  // Member who visits it directly, so hiding the link is a UX nicety,
+  // not the actual enforcement.
+  const navItems = canManageTeam(self.role)
+    ? [...baseNavItems, { label: "Team", href: PATHS.TEAM }]
+    : baseNavItems;
+
+  const isActive = (href: string) =>
+    pathname === href || pathname.startsWith(`${href}/`);
+  const activeLabel =
+    navItems.find((item) => isActive(item.href))?.label ?? "Menu";
+
+  return (
+    <header className="relative flex h-14 shrink-0 items-center justify-between gap-3 border-b border-line px-3 sm:px-6">
+      <div className="flex min-w-0 items-center gap-3 sm:gap-6">
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="flex items-center justify-center size-5">
+            <Image
+              src="/assets/logo.png"
+              alt="Logo"
+              width={20}
+              height={20}
+              priority
+              className="size-5"
+            />
+          </span>
+          <span className="hidden text-sm font-medium text-ink sm:inline">
+            {orgName}
+          </span>
+        </div>
+
+        {/* Tablet and up: room for all five tabs side by side. */}
+        <nav className="hidden items-center gap-1 md:flex">
+          {navItems.map((item) => {
+            const active = isActive(item.href);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={
+                  active
+                    ? "rounded-md px-3 py-1.5 text-sm font-medium text-ink bg-panel-raised"
+                    : "rounded-md px-3 py-1.5 text-sm text-ink-dim hover:text-ink transition-colors"
+                }
+              >
+                {item.label}
+              </Link>
+            );
+          })}
+        </nav>
+
+        {/* Phone: one button naming the page you're on. Tap it to see the
+            other four — nothing to scroll to find, nothing squeezed. */}
+        <button
+          type="button"
+          onClick={() => setMenuOpen((open) => !open)}
+          aria-expanded={menuOpen}
+          aria-label="Open navigation menu"
+          className="flex items-center gap-1.5 rounded-md bg-panel-raised px-2.5 py-1.5 text-sm font-medium text-ink md:hidden"
+        >
+          {menuOpen ? (
+            <XIcon size={14} weight="bold" />
+          ) : (
+            <ListIcon size={14} weight="bold" />
+          )}
+          {activeLabel}
+        </button>
+      </div>
+
+      <div className="flex shrink-0 items-center gap-2 sm:gap-4">
+        <LiveIndicator status={realtimeStatus} />
+
+        <Avatar
+          initials={self.initials}
+          seed={self.id}
+          online={selfOnline}
+          size="sm"
+          title={self.name}
+        />
+
+        <form action={logoutAction}>
+          <button
+            type="submit"
+            title="Sign out"
+            aria-label="Sign out"
+            className="flex items-center justify-center rounded-md p-1.5 text-ink-faint transition-colors hover:text-ink"
+          >
+            <SignOutIcon size={16} />
+          </button>
+        </form>
+      </div>
+
+      {menuOpen && (
+        <>
+          {/* Invisible tap-outside-to-close catcher, not a page-darkening
+              overlay — this is a small menu, not a full mobile drawer. */}
+          <div
+            className="fixed inset-0 z-10 md:hidden"
+            onClick={() => setMenuOpen(false)}
+          />
+          <div className="absolute left-3 top-full z-20 mt-1.5 flex w-44 flex-col gap-0.5 rounded-lg border border-line bg-panel-raised p-1 shadow-lg md:hidden">
+            {navItems.map((item) => {
+              const active = isActive(item.href);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={() => setMenuOpen(false)}
+                  className={
+                    active
+                      ? "rounded-md bg-panel px-3 py-2 text-left text-sm font-medium text-ink"
+                      : "rounded-md px-3 py-2 text-left text-sm text-ink-dim hover:text-ink"
+                  }
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </header>
+  );
+}
+</file>
+
+<file path="components/dashboard/ActivityFeed.tsx">
+"use client";
+
+import { CpuIcon } from "@phosphor-icons/react/ssr";
+import { Avatar } from "./Avatar";
+import { describeActivity } from "@/components/shared/ActivityDescription";
+import { useNow } from "@/lib/use-now";
+import { SkeletonCircle, SkeletonText } from "@/components/shared/Skeleton";
+import type { Activity, User } from "@/types";
+import { relativeTime } from "@/lib/style";
+
+interface ActivityFeedProps {
+  activities: Activity[];
+  resolveUser: (id: string | null) => User | null;
+  /** Milestone 9: set by DashboardView while its activity query is
+   *  still `isLoading` — see IncidentsPanel's `loading` prop for the
+   *  same reasoning. */
+  loading?: boolean;
+  /** The activity query failed. */
+  error?: boolean;
+  onRetry?: () => void;
+}
+
+/** Extracted for reuse as this route's `loading.tsx` fallback — see
+ *  IncidentsPanelSkeleton's doc comment. */
+export function ActivityFeedSkeleton() {
+  return (
+    <div className="rounded-lg border border-line bg-panel p-4">
+      <h2 className="text-sm font-medium text-ink">Activity</h2>
+
+      <ul className="mt-3 flex flex-col gap-3">
+        {[0, 1, 2, 3].map((i) => (
+          <li key={i} className="flex items-start gap-2.5">
+            <SkeletonCircle />
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <SkeletonText width="w-4/5" />
+              <SkeletonText width="w-1/4" className="h-2.5" />
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+export function ActivityFeed({
+  activities,
+  resolveUser,
+  loading,
+  error,
+  onRetry,
+}: ActivityFeedProps) {
+  // Same hydration-safety reason as ServiceHealthGrid.tsx: this
+  // module runs on the client too (DashboardView, its parent, is
+  // a Client Component), so `new Date()` here isn't safe.
+  const now = useNow();
+
+  if (loading) {
+    return <ActivityFeedSkeleton />;
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-lg border border-line bg-panel p-4">
+        <h2 className="text-sm font-medium text-ink">Activity</h2>
+        <div className="mt-3 text-sm text-danger">
+          Couldn&apos;t load activity.{" "}
+          <button
+            type="button"
+            onClick={onRetry}
+            className="underline hover:text-ink"
+          >
+            Try again
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const sorted = [...activities].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+
+  return (
+    <div className="rounded-lg border border-line bg-panel p-4">
+      <h2 className="text-sm font-medium text-ink">Activity</h2>
+
+      <ul className="mt-3 flex flex-col gap-3">
+        {sorted.map((activity) => {
+          const actor = resolveUser(activity.actorId);
+          return (
+            <li key={activity.id} className="flex items-start gap-2.5">
+              {actor ? (
+                <Avatar
+                  initials={actor.initials}
+                  seed={actor.id}
+                  title={actor.name}
+                />
+              ) : (
+                <span
+                  className="flex size-6 shrink-0 items-center justify-center rounded-full bg-panel-raised text-ink-faint"
+                  title="Telemetry"
+                >
+                  <CpuIcon size={12} weight="bold" />
+                </span>
+              )}
+              <div className="min-w-0 text-xs leading-snug">
+                <span className="text-ink-dim">
+                  <span
+                    className={actor ? "text-ink" : "text-ink-faint font-mono"}
+                  >
+                    {actor ? actor.name : "telemetry"}
+                  </span>{" "}
+                  {describeActivity(activity)}
+                </span>
+                <div className="mt-0.5 text-[11px] text-ink-faint">
+                  {relativeTime(activity.createdAt, now)}
+                </div>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+</file>
+
 <file path="components/tickets/TicketsView.tsx">
 "use client";
 
@@ -15004,10 +15141,43 @@ export function useRealtimeConnected(): boolean {
  * collapses to one entry here rather than needing de-duplication at
  * every call site.
  */
-const PresenceContext = createContext<Set<string>>(new Set());
+// One shared empty Set, only ever *replaced* in state, never mutated —
+// lets "nobody / unknown" resets bail out of a re-render when the state
+// is already empty.
+const NO_ONE_ONLINE: Set<string> = new Set();
+
+const PresenceContext = createContext<Set<string>>(NO_ONE_ONLINE);
 
 export function useOnlineUserIds(): Set<string> {
   return useContext(PresenceContext);
+}
+
+/**
+ * Whether `useOnlineUserIds()` is *known*, as opposed to just empty.
+ *
+ * Presence is pure client-side socket state: on first paint (and again
+ * after any drop) the Set is empty because nothing has been asked yet,
+ * not because nobody is online. Anything that renders a count or a
+ * per-user dot has to check this first, or it flashes "0 online" / "all
+ * offline" and then corrects itself once the first sync lands.
+ *
+ * Flips true only once the channel's own presence entry shows up in a
+ * sync (i.e. our `track()` landed, so the state we read includes
+ * ourselves), and back to false whenever the connection drops — a Set
+ * carried over from a dead socket is stale, not "still true".
+ */
+const PresenceReadyContext = createContext<boolean>(false);
+
+export function usePresenceReady(): boolean {
+  return useContext(PresenceReadyContext);
+}
+
+/** The signed-in user's id (the same one this provider keys Presence by).
+ *  Lets presence UIs pin "you" without threading `self` through props. */
+const CurrentUserIdContext = createContext<string | null>(null);
+
+export function useCurrentUserId(): string | null {
+  return useContext(CurrentUserIdContext);
 }
 
 // Backoff for reconnect attempts after a CHANNEL_ERROR/TIMED_OUT/CLOSED —
@@ -15097,7 +15267,10 @@ export function RealtimeProvider({
 }: RealtimeProviderProps) {
   const queryClient = useQueryClient();
   const [status, setStatus] = useState<RealtimeStatus>("connecting");
-  const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
+  const [onlineIds, setOnlineIds] = useState<Set<string>>(NO_ONE_ONLINE);
+  // See PresenceReadyContext: false until the first sync that includes
+  // this user's own entry, and false again after any drop.
+  const [presenceReady, setPresenceReady] = useState(false);
   // Whether this provider has ever reached SUBSCRIBED — distinguishes a
   // first "connecting" from a "reconnecting" after a drop.
   const hasConnectedRef = useRef(false);
@@ -15170,6 +15343,15 @@ export function RealtimeProvider({
       serviceDebounceTimersRef.current.clear();
     };
 
+    // The presence Set is only trustworthy while the socket that fed it
+    // is alive. On any drop (or the start of a fresh connect attempt)
+    // throw it away and mark it unknown, rather than leave the last
+    // roster on screen as if it were still current.
+    const resetPresence = () => {
+      setOnlineIds((prev) => (prev.size === 0 ? prev : NO_ONE_ONLINE));
+      setPresenceReady(false);
+    };
+
     const teardown = () => {
       if (channelRef.current) {
         // Best-effort, not awaited — teardown() is synchronous and runs
@@ -15238,6 +15420,10 @@ export function RealtimeProvider({
       const myAttempt = attemptRef.current;
       const isSuperseded = () => isStale() || myAttempt !== attemptRef.current;
 
+      // Every attempt starts from "presence unknown" — this is also what
+      // covers the early-return offline path just below.
+      resetPresence();
+
       // No network at all: nothing to attempt. The 'online' listener
       // below calls connect() again the moment it's back — retrying on a
       // backoff timer while offline would just burn failed token calls.
@@ -15293,7 +15479,14 @@ export function RealtimeProvider({
             // replacing state wholesale is correct, not a missed-event
             // risk the way an add/remove-one-id approach would be.
             if (isStale()) return;
-            setOnlineIds(new Set(Object.keys(channel.presenceState())));
+            const ids = new Set(Object.keys(channel.presenceState()));
+            setOnlineIds(ids);
+            // The first sync usually arrives *before* our own track()
+            // has landed (it's the roster as it stood when we joined —
+            // empty, if we're the first one in). Treating that as
+            // "known" would flash "0 online" and then jump to 1. Wait
+            // for a sync that includes ourselves.
+            if (ids.has(userId)) setPresenceReady(true);
           })
           .on("broadcast", { event: "ticket.updated" }, ({ payload }) => {
             if (isStale()) return;
@@ -15381,9 +15574,15 @@ export function RealtimeProvider({
                     console.warn(
                       `RealtimeProvider: presence track() failed: ${status}`,
                     );
+                    // We'll never appear in our own sync, so don't
+                    // hold "known" hostage to it: the roster others
+                    // have published is still the best answer there is.
+                    if (!isSuperseded()) setPresenceReady(true);
                   }
                 })
-                .catch(() => undefined);
+                .catch(() => {
+                  if (!isSuperseded()) setPresenceReady(true);
+                });
             } else {
               // CHANNEL_ERROR / TIMED_OUT / CLOSED. supabase-js's socket
               // does auto-reconnect at the transport level, but a
@@ -15397,6 +15596,9 @@ export function RealtimeProvider({
               // "came back online and it never went back to Live."
               // Reconnecting from scratch with a fresh token is what
               // actually resolves it.
+              // Whatever roster we had came from this socket; it's stale
+              // now, and may stay so through a long backoff.
+              resetPresence();
               if (!navigator.onLine) {
                 // The drop is because there's no network; the 'online'
                 // listener reconnects once it's back.
@@ -15443,6 +15645,7 @@ export function RealtimeProvider({
       if (isStale()) return;
       clearRetryTimer();
       clearConnectWatchdog();
+      resetPresence();
       setStatus("offline");
     };
 
@@ -15512,7 +15715,11 @@ export function RealtimeProvider({
   return (
     <RealtimeStatusContext.Provider value={status}>
       <PresenceContext.Provider value={onlineIds}>
-        {children}
+        <PresenceReadyContext.Provider value={presenceReady}>
+          <CurrentUserIdContext.Provider value={userId}>
+            {children}
+          </CurrentUserIdContext.Provider>
+        </PresenceReadyContext.Provider>
       </PresenceContext.Provider>
     </RealtimeStatusContext.Provider>
   );
